@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QProgressBar,
+    QPlainTextEdit,
     QPushButton,
     QSizePolicy,
     QScrollArea,
@@ -2332,7 +2333,7 @@ class MainWindow(QMainWindow):
                 self._update_timeline_batch_scan_button()
 
     def _on_manual_mark_in(self):
-        if isinstance(QApplication.focusWidget(), (QLineEdit, QTextEdit)):
+        if isinstance(QApplication.focusWidget(), (QLineEdit, QTextEdit, QPlainTextEdit)):
             return
         self._manual_mark_in_ms = self._get_current_playhead_ms()
         if hasattr(self, "timeline_widget") and hasattr(self.timeline_widget, "container") and hasattr(self.timeline_widget.container, "waveform"):
@@ -2344,7 +2345,7 @@ class MainWindow(QMainWindow):
         )
 
     def _on_manual_mark_out(self):
-        if isinstance(QApplication.focusWidget(), (QLineEdit, QTextEdit)):
+        if isinstance(QApplication.focusWidget(), (QLineEdit, QTextEdit, QPlainTextEdit)):
             return
         out_ms = self._get_current_playhead_ms()
         if self._manual_mark_in_ms is not None and out_ms > self._manual_mark_in_ms + 50:
@@ -2359,16 +2360,19 @@ class MainWindow(QMainWindow):
 
     def eventFilter(self, obj, event):
         if event.type() == QEvent.KeyPress and (not hasattr(self, "isActiveWindow") or self.isActiveWindow()):
-            focus_widget = QApplication.focusWidget()
-            is_typing = isinstance(focus_widget, (QTextEdit, QLineEdit))
-            if event.key() == Qt.Key_Space and not is_typing:
-                self.video_player.toggle_playback()
-                return True
-            if event.key() == Qt.Key_Delete and not is_typing:
-                self.sub_editor.trigger_delete()
-                return True
-            if not is_typing:
-                if not hasattr(self, "stack") or self.stack.currentIndex() == 1:
+            # AUD-UX-002: Chỉ bắt phím tắt điều khiển Playback/SubEditor khi người dùng ĐANG Ở TAB 1 (Video Workspace)
+            if hasattr(self, "stack") and self.stack.currentIndex() == 1:
+                focus_widget = QApplication.focusWidget()
+                is_typing = isinstance(focus_widget, (QTextEdit, QLineEdit, QPlainTextEdit)) or (
+                    focus_widget is not None and "QuickWidget" in focus_widget.metaObject().className()
+                )
+                if not is_typing:
+                    if event.key() == Qt.Key_Space:
+                        self.video_player.toggle_playback()
+                        return True
+                    if event.key() == Qt.Key_Delete:
+                        self.sub_editor.trigger_delete()
+                        return True
                     if event.key() == Qt.Key_Insert:
                         self._on_add_manual_timing_triggered()
                         return True
@@ -2378,13 +2382,13 @@ class MainWindow(QMainWindow):
                     if event.key() == Qt.Key_BracketRight:
                         self._on_manual_mark_out()
                         return True
-                if (event.key() == Qt.Key_X and event.modifiers() == Qt.NoModifier) or \
-                   (event.key() == Qt.Key_K and event.modifiers() == Qt.ControlModifier):
-                    self.trigger_split_at_playhead()
-                    return True
-                if event.key() == Qt.Key_R and event.modifiers() == Qt.NoModifier:
-                    self.replay_focused_segment()
-                    return True
+                    if (event.key() == Qt.Key_X and event.modifiers() == Qt.NoModifier) or \
+                       (event.key() == Qt.Key_K and event.modifiers() == Qt.ControlModifier):
+                        self.trigger_split_at_playhead()
+                        return True
+                    if event.key() == Qt.Key_R and event.modifiers() == Qt.NoModifier:
+                        self.replay_focused_segment()
+                        return True
         if hasattr(self, "centralWidget") and obj == self.centralWidget() and event.type() == QEvent.Resize:
             self._update_drawer_handle_position()
         try:

@@ -187,3 +187,79 @@ def test_gui_segment_scan_finished_invalidation(qapp):
             pass
         win.close()
         win.deleteLater()
+
+
+def test_translation_controller_dynamic_progress_and_timer():
+    """AUD-UX-001: Kiểm tra timer tiến độ suy luận động và tiến độ token streaming."""
+    model = SubtitleModel()
+    model.load_data([
+        {"index": 1, "original": "This is a long sentence for translation testing.", "translation": "", "status": "PENDING"},
+    ])
+    mock_worker = MagicMock()
+    mock_factory = MagicMock(return_value=mock_worker)
+
+    controller = TranslationController(model, worker_factory=mock_factory)
+    controller.loadSubtitle(0)
+
+    # Khởi động dịch
+    controller.requestTranslation(0, "English", "Vietnamese", "Summary")
+    assert controller.translationProgress == 10
+    assert controller._progress_timer.isActive() is True
+
+    # Giả lập tick của timer khi đang nạp model / suy luận
+    controller._on_thinking_progress_tick()
+    assert controller.translationProgress == 12
+
+    for _ in range(20):
+        controller._on_thinking_progress_tick()
+    assert controller.translationProgress == 35
+    assert controller._progress_timer.isActive() is False
+
+    # Khi token đầu tiên được stream về qua on_progress
+    controller.on_progress(0, "Đây là một câu dài")
+    assert controller.translationProgress >= 35
+    assert controller._progress_timer.isActive() is False
+
+    # Khi hoàn tất dịch
+    controller.on_finished(0, "Đây là một câu dài để kiểm thử dịch thuật.")
+    assert controller.translationProgress == 100
+    assert controller.status == "TRANSLATED"
+
+
+def test_mainwindow_shortcut_isolation_between_tabs(qapp):
+    """AUD-UX-002: Kiểm tra phím tắt Playback/SubEditor không rò rỉ sang Tab khác."""
+    from PySide6.QtCore import Qt, QEvent
+    from PySide6.QtGui import QKeyEvent
+
+    win = MainWindow()
+    try:
+        win.isActiveWindow = MagicMock(return_value=True)
+        # Ở Tab 0 (Dashboard)
+        win.stack.setCurrentIndex(0)
+        win.video_player.toggle_playback = MagicMock()
+        win.sub_editor.trigger_delete = MagicMock()
+
+        space_evt = QKeyEvent(QEvent.Type.KeyPress, Qt.Key_Space, Qt.KeyboardModifier.NoModifier)
+        handled = win.eventFilter(win, space_evt)
+        assert handled is None or handled is False
+        win.video_player.toggle_playback.assert_not_called()
+
+        del_evt = QKeyEvent(QEvent.Type.KeyPress, Qt.Key_Delete, Qt.KeyboardModifier.NoModifier)
+        handled = win.eventFilter(win, del_evt)
+        assert handled is None or handled is False
+        win.sub_editor.trigger_delete.assert_not_called()
+
+        # Ở Tab 1 (Workspace)
+        win.stack.setCurrentIndex(1)
+        handled = win.eventFilter(win, space_evt)
+        assert handled is True
+        win.video_player.toggle_playback.assert_called_once()
+    finally:
+        try:
+            if hasattr(win, "video_player") and hasattr(win.video_player, "cleanup"):
+                win.video_player.cleanup()
+        except Exception:
+            pass
+        win.close()
+        win.deleteLater()
+

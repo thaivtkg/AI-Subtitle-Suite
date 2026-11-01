@@ -59,3 +59,17 @@ def test_flow_cat_studio_action_buttons_visibility(cat_studio_driver):
     btn_model = cat_page.btn_model_manager_item
     assert btn_model is not None, "btnModelManager must be present in QML Header"
     driver.assert_visible(btn_model, True)
+
+
+def test_flow_cat_studio_hotkeys_button(cat_studio_driver):
+    """
+    AUD-UX-003: Verify btnHotkeys exists and is clickable in CAT Studio action bar.
+    """
+    page_widget, cat_page, driver = cat_studio_driver
+
+    btn_hotkeys = cat_page.btn_hotkeys_item
+    assert btn_hotkeys is not None, "btnHotkeys must be present in QML Workspace footer"
+    driver.assert_visible(btn_hotkeys, True)
+    cat_page.click_hotkeys()
+    driver.wait_ms(100)
+

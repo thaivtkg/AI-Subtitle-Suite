@@ -480,7 +480,7 @@ Item {
                             }
                         }
 
-                        // Scramble Decoder Overlay
+                        // Neural Status Overlay (AUD-UX-001)
                         Item {
                             id: scrambleOverlay
                             anchors.fill: parent
@@ -488,73 +488,29 @@ Item {
                             visible: translationController.status === "TRANSLATING" && translationInput.text.trim().length === 0
                             z: 5
 
-                            property var phrases: [
-                                "ĐANG GIẢI MÃ BỐI CẢNH & PHỤ ĐỀ...",
-                                "NEURAL MODEL CONNECTED...",
-                                "KHỞI TẠO DÒNG BẢN DỊCH TIẾNG VIỆT...",
-                                "TỐI ƯU HÓA ĐỘ DÀI & CPS..."
-                            ]
-                            property int phraseIndex: 0
-                            property string currentTarget: phrases[phraseIndex]
-                            property string displayText: ""
-                            property real progress: 0.0
-                            readonly property string glyphs: "ABCDEFGHJKLMNOPQRSTUVWXYZ0123456789#@$%&*+=<>_~░▒▓█"
-
-                            Timer {
-                                id: scrambleTimer
-                                interval: 40
-                                running: scrambleOverlay.visible
-                                repeat: true
-                                onTriggered: {
-                                    scrambleOverlay.progress += 0.55
-                                    var target = scrambleOverlay.currentTarget
-                                    var len = target.length
-                                    var chars = scrambleOverlay.glyphs
-                                    var cutoff = Math.floor(scrambleOverlay.progress)
-
-                                    var res = ""
-                                    for (var i = 0; i < len; i++) {
-                                        var ch = target.charAt(i)
-                                        if (ch === " " || ch === "." || ch === "&" || ch === ",") {
-                                            res += ch
-                                        } else if (i < cutoff) {
-                                            res += ch
-                                        } else {
-                                            var randIdx = Math.floor(Math.random() * chars.length)
-                                            res += chars.charAt(randIdx)
-                                        }
-                                    }
-                                    scrambleOverlay.displayText = res
-
-                                    if (cutoff >= len + 16) {
-                                        scrambleOverlay.progress = 0
-                                        scrambleOverlay.phraseIndex = (scrambleOverlay.phraseIndex + 1) % scrambleOverlay.phrases.length
-                                    }
-                                }
-                            }
+                            property int currentProgress: typeof translationController !== "undefined" ? translationController.translationProgress : 10
 
                             ColumnLayout {
                                 anchors.centerIn: parent
-                                spacing: 6
+                                spacing: 10
 
                                 RowLayout {
                                     Layout.alignment: Qt.AlignHCenter
                                     spacing: 8
 
                                     Text {
-                                        text: "⚡"
+                                        text: scrambleOverlay.currentProgress < 25 ? "⚡" : "🧠"
                                         color: Theme.accentCyan
-                                        font.pixelSize: 15
+                                        font.pixelSize: 16
                                         font.bold: true
                                     }
 
                                     Text {
-                                        text: scrambleOverlay.displayText
+                                        text: scrambleOverlay.currentProgress < 25 ? "ĐANG KHỞI TẠO BỐI CẢNH & NẠP MODEL..." : "AI ĐANG SUY LUẬN NGỮ NGHĨA & DỊCH THUẬT..."
                                         color: Theme.accentCyan
                                         font.pixelSize: 13
-                                        font.family: "Consolas, 'Courier New', monospace"
                                         font.bold: true
-                                        font.letterSpacing: 1.1
+                                        font.letterSpacing: 0.8
                                     }
 
                                     // Blinking cyber block cursor
@@ -565,15 +521,37 @@ Item {
                                         radius: 1
                                         SequentialAnimation on opacity {
                                             loops: Animation.Infinite
-                                            NumberAnimation { from: 1.0; to: 0.15; duration: 280 }
-                                            NumberAnimation { from: 0.15; to: 1.0; duration: 280 }
+                                            NumberAnimation { from: 1.0; to: 0.15; duration: 320 }
+                                            NumberAnimation { from: 0.15; to: 1.0; duration: 320 }
                                         }
+                                    }
+                                }
+
+                                // Thanh tiến trình trực quan
+                                Rectangle {
+                                    Layout.alignment: Qt.AlignHCenter
+                                    implicitWidth: 260
+                                    implicitHeight: 4
+                                    radius: 2
+                                    color: Qt.rgba(1, 1, 1, 0.12)
+                                    clip: true
+
+                                    Rectangle {
+                                        height: parent.height
+                                        width: parent.width * Math.min(1.0, Math.max(0.1, scrambleOverlay.currentProgress / 100.0))
+                                        radius: 2
+                                        gradient: Gradient {
+                                            orientation: Gradient.Horizontal
+                                            GradientStop { position: 0.0; color: Theme.accentSapphire }
+                                            GradientStop { position: 1.0; color: Theme.accentCyan }
+                                        }
+                                        Behavior on width { NumberAnimation { duration: 200 } }
                                     }
                                 }
 
                                 Text {
                                     Layout.alignment: Qt.AlignHCenter
-                                    text: "AI Neural Engine đang giải mã token đầu tiên..."
+                                    text: "Tiến trình: " + scrambleOverlay.currentProgress + "% — Bản dịch sẽ xuất hiện trực tiếp ngay khi có token đầu tiên."
                                     color: Theme.textMuted
                                     font.pixelSize: 11
                                 }
@@ -1127,6 +1105,16 @@ Item {
                 }
 
                 AppButton {
+                    objectName: "btnHotkeys"
+                    text: "⌨ Phím tắt (F1)"
+                    Layout.alignment: Qt.AlignVCenter
+                    Layout.preferredWidth: 120
+                    Layout.minimumWidth: 85
+                    isDarkGlass: true
+                    onClicked: workspace.hotkeysRequested()
+                }
+
+                AppButton {
                     objectName: "btnRetry"
                     text: "⚡ Dịch lại"
                     Layout.alignment: Qt.AlignVCenter
@@ -1219,6 +1207,11 @@ Item {
             var tgt = (typeof translationInput !== "undefined" && translationInput.selectedText) ? translationInput.selectedText.trim() : ""
             workspace.addGlossaryRequested(src, tgt)
         }
+    }
+
+    Shortcut {
+        sequence: "F1"
+        onActivated: workspace.hotkeysRequested()
     }
 
     Menu {

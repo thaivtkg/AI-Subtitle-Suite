@@ -53,11 +53,16 @@ class TranslationController(QObject):
         self._subtitle_model.dataChanged.connect(self._emit_progress)
         self._subtitle_model.modelReset.connect(self._emit_qa_status)
         self._subtitle_model.dataChanged.connect(self._emit_qa_status)
+        self._progress_timer = QTimer(self)
+        self._progress_timer.setInterval(250)
+        self._progress_timer.timeout.connect(self._on_thinking_progress_tick)
         app = QCoreApplication.instance()
         if app:
             app.aboutToQuit.connect(self.shutdown)
 
     def shutdown(self):
+        if hasattr(self, "_progress_timer") and self._progress_timer.isActive():
+            self._progress_timer.stop()
         for w in (self.worker, self.alt_worker, self._extract_worker):
             if w is not None:
                 try:
@@ -95,6 +100,23 @@ class TranslationController(QObject):
                 except (RuntimeError, Exception):
                     pass
         return False
+
+    def _on_thinking_progress_tick(self):
+        """AUD-UX-001: Tăng tiến độ động từ 10% đến 35% trong giai đoạn suy luận / nạp model."""
+        if self._status == "TRANSLATING" and self._translation_progress < 35:
+            self._translation_progress = min(35, self._translation_progress + 2)
+            self.translationProgressChanged.emit(self._translation_progress)
+            if self._translation_progress >= 35:
+                self._progress_timer.stop()
+        else:
+            self._progress_timer.stop()
+
+    @Slot()
+    def openHotkeys(self):
+        """AUD-UX-003: Mở Bảng tra cứu phím tắt từ CAT Studio."""
+        from ui.dialogs.hotkeys_cheatsheet_dialog import HotkeysCheatsheetDialog
+        dialog = HotkeysCheatsheetDialog()
+        dialog.exec()
 
     def _emit_qa_status(self, *args):
         self.qaStatusChanged.emit()
@@ -423,6 +445,7 @@ class TranslationController(QObject):
         self.worker.progress.connect(self.on_progress)
         self.worker.finished.connect(self.on_finished)
         self.worker.error.connect(self.on_error)
+        self._progress_timer.start()
         self.worker.start()
 
     @Slot(int, list)
@@ -438,6 +461,8 @@ class TranslationController(QObject):
         sender = self.sender()
         if sender is not None and sender is not self.worker:
             return
+        if hasattr(self, "_progress_timer") and self._progress_timer.isActive():
+            self._progress_timer.stop()
         self._subtitle_model.update_translation(index, text, "TRANSLATING")
         if index == self._active_translation_index and (
             self._current_index < 0 or index == self._current_index
@@ -445,12 +470,14 @@ class TranslationController(QObject):
             self._current_translation = text
             self._status = "TRANSLATING"
             expected_len = max(len(self._current_original) * 2, 20)
-            self._translation_progress = min(95, max(15, int((len(text) / expected_len) * 80) + 15))
+            self._translation_progress = min(95, max(35, int((len(text) / expected_len) * 60) + 35))
             self.translationProgressChanged.emit(self._translation_progress)
             self.translationUpdated.emit(text)
 
     @Slot(int, str)
     def on_finished(self, index, text):
+        if hasattr(self, "_progress_timer") and self._progress_timer.isActive():
+            self._progress_timer.stop()
         sender = self.sender()
         if sender is not None and sender is not self.worker:
             return
@@ -513,6 +540,8 @@ class TranslationController(QObject):
 
     @Slot(int, str)
     def on_error(self, index, err_msg):
+        if hasattr(self, "_progress_timer") and self._progress_timer.isActive():
+            self._progress_timer.stop()
         sender = self.sender()
         if sender is not None and sender is not self.worker:
             return

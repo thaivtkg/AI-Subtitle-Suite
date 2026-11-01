@@ -21,6 +21,7 @@ class CatStudioPage(BasePage):
     LOC_BTN_TRANSLATE = "btnTranslate"
     LOC_BTN_ACCEPT = "btnAccept"
     LOC_BTN_RETRY = "btnRetry"
+    LOC_BTN_HOTKEYS = "btnHotkeys"
     LOC_BTN_MODEL_MANAGER = "btnModelManager"
     LOC_SOURCE_LANG_COMBO = "sourceLangCombo"
 
@@ -56,6 +57,13 @@ class CatStudioPage(BasePage):
         return self.driver.find_qml_item(self.LOC_BTN_ACCEPT, root_item=self.root_qml)
 
     @property
+    def btn_hotkeys_item(self) -> Optional[QQuickItem]:
+        try:
+            return self.driver.find_qml_item(self.LOC_BTN_HOTKEYS, root_item=self.root_qml)
+        except LookupError:
+            return None
+
+    @property
     def btn_model_manager_item(self) -> Optional[QQuickItem]:
         try:
             return self.driver.find_qml_item(self.LOC_BTN_MODEL_MANAGER, root_item=self.root_qml)
@@ -89,6 +97,13 @@ class CatStudioPage(BasePage):
     def click_accept(self) -> CatStudioPage:
         """Clicks the ✓ Lưu & Tiếp tục (Ctrl+Enter) button."""
         self.driver.click(self.btn_accept_item)
+        self.wait_ms(100)
+        return self
+
+    def click_hotkeys(self) -> CatStudioPage:
+        """Clicks the ⌨ Phím tắt (F1) button."""
+        assert self.btn_hotkeys_item is not None, "btnHotkeys not found in QML"
+        self.driver.click(self.btn_hotkeys_item)
         self.wait_ms(100)
         return self
 
