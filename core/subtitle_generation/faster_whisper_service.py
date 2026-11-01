@@ -152,18 +152,17 @@ class FasterWhisperService:
         temp_dir = tempfile.mkdtemp(prefix="subtitle_generation_batch_")
         output_path = os.path.join(temp_dir, "audio.wav")
         duration_s = (batch.end_ms - batch.start_ms) / 1000
+        # AUD-PERF-001: Chuyển -ss lên trước -i (Fast Input Seeking) kết hợp -vn (audio PCM giải mã mẫu chuẩn xác).
+        # Nhảy trực tiếp đến vị trí audio cần lấy, giảm độ phức tạp từ O(N^2) xuống O(1) cho mỗi batch.
         command = [
             RuntimePaths.get_ffmpeg_exe(),
             "-hide_banner",
             "-loglevel",
             "error",
-            "-i",
-            request.video_path,
-            # Output seeking is deliberately used here: input seeking can
-            # begin at a preceding keyframe, which breaks the zero-based
-            # timestamp contract for the extracted WAV.
             "-ss",
             f"{batch.start_ms / 1000:.3f}",
+            "-i",
+            request.video_path,
             "-t",
             f"{duration_s:.3f}",
             "-vn",

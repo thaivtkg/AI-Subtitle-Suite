@@ -58,18 +58,43 @@ class TranslationController(QObject):
             app.aboutToQuit.connect(self.shutdown)
 
     def shutdown(self):
-        if self.worker and self.worker.isRunning():
-            if hasattr(self.worker, "cancel"):
-                self.worker.cancel()
-            self.worker.wait(2000)
-        if self.alt_worker and hasattr(self.alt_worker, "isRunning") and self.alt_worker.isRunning():
-            if hasattr(self.alt_worker, "cancel"):
-                self.alt_worker.cancel()
-            self.alt_worker.wait(2000)
-        if self._extract_worker and hasattr(self._extract_worker, "isRunning") and self._extract_worker.isRunning():
-            if hasattr(self._extract_worker, "cancel"):
-                self._extract_worker.cancel()
-            self._extract_worker.wait(2000)
+        for w in (self.worker, self.alt_worker, self._extract_worker):
+            if w is not None:
+                try:
+                    if hasattr(w, "isRunning") and w.isRunning():
+                        if hasattr(w, "cancel"):
+                            w.cancel()
+                        w.wait(2000)
+                    if hasattr(w, "deleteLater"):
+                        w.deleteLater()
+                except (RuntimeError, Exception):
+                    pass
+        self.worker = None
+        self.alt_worker = None
+        self._extract_worker = None
+
+    def _safe_cleanup_worker(self, worker_attr: str):
+        """AUD-MEM-001: Thu hồi C++ QThread an toàn khi thay thế worker cũ."""
+        w = getattr(self, worker_attr, None)
+        if w is not None:
+            try:
+                if hasattr(w, "isRunning") and not w.isRunning() and hasattr(w, "deleteLater"):
+                    w.deleteLater()
+            except (RuntimeError, Exception):
+                pass
+            setattr(self, worker_attr, None)
+
+    def is_busy(self) -> bool:
+        """AUD-CONCUR-001: Kiểm tra xem có worker LLM nào đang chạy hay không để ngăn race condition."""
+        for attr in ("worker", "alt_worker", "_extract_worker"):
+            w = getattr(self, attr, None)
+            if w is not None:
+                try:
+                    if hasattr(w, "isRunning") and w.isRunning():
+                        return True
+                except (RuntimeError, Exception):
+                    pass
+        return False
 
     def _emit_qa_status(self, *args):
         self.qaStatusChanged.emit()
@@ -301,7 +326,8 @@ class TranslationController(QObject):
     def requestTranslation(self, index, source_lang, target_lang, story_summary):
         if index < 0 or index >= len(self._subtitle_model.get_all_data()):
             return
-        if self.worker and self.worker.isRunning():
+        # AUD-CONCUR-001: Khóa kiểm tra bận liên luồng toàn bộ worker LLM
+        if self.is_busy():
             return
 
         if not source_lang or (source_lang == "English" and getattr(self, "_current_source_language", "English") != "English"):
@@ -387,6 +413,7 @@ class TranslationController(QObject):
             archetype=active_archetype,
         )
 
+        self._safe_cleanup_worker("worker")
         if hasattr(self._worker_factory, "create_worker"):
             self.worker = self._worker_factory(index, prompt, self.hardware_profile) if not hasattr(self._worker_factory, "create_worker") else self._worker_factory.create_worker(index, prompt, self.hardware_profile)
         else:
@@ -568,7 +595,8 @@ class TranslationController(QObject):
     def requestAlternativeTranslation(self, index: int, source_lang: str, style_mode: str = "CREATIVE"):
         if index < 0 or index >= len(self._subtitle_model.get_all_data()):
             return
-        if self.alt_worker and hasattr(self.alt_worker, "isRunning") and self.alt_worker.isRunning():
+        # AUD-CONCUR-001: Khóa kiểm tra bận liên luồng toàn bộ worker LLM
+        if self.is_busy():
             return
 
         if not source_lang or (source_lang == "English" and getattr(self, "_current_source_language", "English") != "English"):
@@ -630,6 +658,7 @@ class TranslationController(QObject):
         )
         self.alternativeTranslationLoading.emit(True)
 
+        self._safe_cleanup_worker("alt_worker")
         if hasattr(self._worker_factory, "create_worker"):
             self.alt_worker = self._worker_factory.create_worker(index, prompt, profile)
         else:
@@ -682,6 +711,10 @@ class TranslationController(QObject):
             self.appliedTermsChanged.emit()
             return
 
+        # AUD-CONCUR-001: Khóa kiểm tra bận liên luồng toàn bộ worker LLM
+        if self.is_busy():
+            return
+
         source_lang = "Japanese" if getattr(self._project_controller, "isJaOrigin", False) else "English"
         target_lang = "Vietnamese"
         model_name = (self.hardware_profile.get("model_name") or "").lower()
@@ -719,6 +752,9 @@ class TranslationController(QObject):
         if hasattr(worker, "termsExtracted"):
             worker.termsExtracted.connect(lambda idx, t: _on_extracted(idx, ""))
         worker.finished.connect(_on_extracted)
+        # AUD-MEM-001: Thu hồi C++ QThread an toàn khi hoàn tất
+        if hasattr(worker, "deleteLater"):
+            worker.finished.connect(worker.deleteLater)
         worker.start()
 
     @Slot(str, str, result=bool)

@@ -60,7 +60,7 @@ class LlamaCppBackend(BaseInferenceBackend):
         if self._llm is None:
             raise RuntimeError("Model chưa được load.")
         self._is_cancelled = False
-        yield from self._llm(
+        for chunk in self._llm(
             prompt,
             max_tokens=kwargs.get("max_tokens", 256),
             stop=[
@@ -69,7 +69,10 @@ class LlamaCppBackend(BaseInferenceBackend):
                 "<|end_of_sentence|>",
             ],
             stream=True,
-        )
+        ):
+            if self._is_cancelled:
+                break
+            yield chunk
 
     def cancel(self) -> None:
         self._is_cancelled = True

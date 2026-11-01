@@ -69,8 +69,8 @@ Run all tests using the virtual environment:
 # E2E Visual & Integration Tests
 .\.venv\Scripts\python.exe -m pytest tests/e2e/test_ui_visual_sync_cat_studio.py -v
 
-# Full Regression Suite (All 35 Specs)
-.\.venv\Scripts\python.exe -m pytest tests/ui/test_current_subtitle_editor_cursor.py tests/core/test_editor_ui.py tests/ui/test_manual_timing_creation.py tests/translation/test_language_and_rescan_protection.py tests/e2e/test_ui_visual_sync_cat_studio.py tests/gui/specs/ -v
+# Full Regression Suite (All 39 Specs)
+.\.venv\Scripts\python.exe -m pytest tests/ui/test_current_subtitle_editor_cursor.py tests/core/test_editor_ui.py tests/ui/test_manual_timing_creation.py tests/translation/test_language_and_rescan_protection.py tests/e2e/test_ui_visual_sync_cat_studio.py tests/gui/specs/ tests/core/test_architecture_audit_fixes.py -v
 ```
 
 ---

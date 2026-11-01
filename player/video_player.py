@@ -91,6 +91,49 @@ class CustomGraphicsView(QGraphicsView):
             self.overlay_proxy.setGeometry(QRectF(0, 0, view_w, view_h))
 
 
+def _parse_time_to_ms(val) -> int:
+    """Chuyển đổi chuỗi thời gian HH:MM:SS,mmm hoặc số sang mili-giây int."""
+    if isinstance(val, (int, float)):
+        return int(val)
+    if isinstance(val, str):
+        try:
+            val = val.replace(',', '.')
+            parts = val.split(':')
+            if len(parts) == 3:
+                return int(parts[0]) * 3600000 + int(parts[1]) * 60000 + int(float(parts[2]) * 1000)
+        except Exception:
+            pass
+    return 0
+
+
+def _extract_segment_info(item):
+    """AUD-PERF-002: Trích xuất chuẩn hóa thông tin segment nhanh (tuple, dict hoặc object)."""
+    style_preset = None
+    if isinstance(item, tuple) and len(item) >= 4:
+        start_ms, end_ms, text, stt = item[0], item[1], item[2], item[3]
+        if len(item) >= 5:
+            style_preset = item[4]
+    elif isinstance(item, dict):
+        start_ms = item.get('start_ms')
+        end_ms = item.get('end_ms')
+        if start_ms is None or end_ms is None or end_ms <= start_ms:
+            start_ms = _parse_time_to_ms(item.get('start', 0))
+            end_ms = _parse_time_to_ms(item.get('end', 0))
+        else:
+            start_ms = _parse_time_to_ms(start_ms)
+            end_ms = _parse_time_to_ms(end_ms)
+        text = item.get('text', '')
+        stt = item.get('stt', 0)
+        style_preset = item.get('style_preset')
+    else:
+        start_ms = getattr(getattr(item, 'start', None), 'ordinal', 0)
+        end_ms = getattr(getattr(item, 'end', None), 'ordinal', 0)
+        text = getattr(item, 'text', '')
+        stt = getattr(item, 'index', 0)
+        style_preset = getattr(item, 'style_preset', None)
+    return start_ms, end_ms, text, stt, style_preset
+
+
 class VideoPlayerWidget(QWidget):
     timeline_position_changed = Signal(int)
     subtitle_placement_preview_changed = Signal(object)
@@ -412,8 +455,9 @@ class VideoPlayerWidget(QWidget):
     def refresh_current_subtitle(self):
         """Ép làm mới lại lớp phủ phụ đề tại vị trí kim thời gian hiện tại."""
         cur_pos = self.get_current_time_ms()
-        # Xóa cache preset cũ để đảm bảo nhận diện sự thay đổi style
+        # Xóa cache preset cũ và sub hiện tại để đảm bảo nhận diện sự thay đổi style và text
         self._last_style_preset = None
+        self._current_playback_sub = None
         self.position_changed(cur_pos)
 
     def get_video_duration_ms(self):
@@ -455,51 +499,34 @@ class VideoPlayerWidget(QWidget):
             subs = getattr(self.sub_controller, 'subs', []) or getattr(self.sub_controller, 'live_data', [])
 
         current_seg = None
-        
-        def parse_ms(val):
-            if isinstance(val, (int, float)): return int(val)
-            if isinstance(val, str):
-                try:
-                    val = val.replace(',', '.')
-                    parts = val.split(':')
-                    if len(parts) == 3:
-                        return int(parts[0])*3600000 + int(parts[1])*60000 + int(float(parts[2])*1000)
-                except Exception: pass
-            return 0
 
-        # shortcut: linear scan over subtitles at 60fps, upgrade to bisect if subtitle count > 2000
-        # 2. THUẬT TOÁN QUÉT CHÍNH XÁC TUYỆT ĐỐI
-        for item in subs:
-            try:
-                style_preset = None
-                if isinstance(item, tuple) and len(item) >= 4:
-                    start_ms, end_ms, text, stt = item[0], item[1], item[2], item[3]
-                    if len(item) >= 5:
-                        style_preset = item[4]
-                elif isinstance(item, dict):
-                    start_ms = parse_ms(item.get('start_ms', 0))
-                    end_ms = parse_ms(item.get('end_ms', 0))
-                    if end_ms <= start_ms:
-                        start_ms = parse_ms(item.get('start', 0))
-                        end_ms = parse_ms(item.get('end', 0))
-                    text = item.get('text', '')
-                    stt = item.get('stt', 0)
-                    style_preset = item.get('style_preset')
-                else: 
-                    start_ms = item.start.ordinal
-                    end_ms = item.end.ordinal
-                    text = item.text
-                    stt = item.index
-                    style_preset = getattr(item, 'style_preset', None)
-
-                # [FIX BOUNDARY] Đồng nhất ranh giới [start_ms, end_ms)
-                if start_ms <= position < end_ms:
-                    # Bỏ qua những câu trống để không render lớp phủ vô nghĩa
-                    if text and text != "[ Chưa có nội dung ]":
-                        current_seg = {'stt': stt, 'start_ms': start_ms, 'end_ms': end_ms, 'text': text, 'style_preset': style_preset}
-                    break
-            except Exception:
-                continue
+        # AUD-PERF-002: Fast Path (Temporal Locality O(1))
+        # Khi phát tuần tự, hầu hết frame nằm trọn trong câu đang phát
+        prev_sub = getattr(self, "_current_playback_sub", None)
+        if prev_sub and prev_sub.get('start_ms', 0) <= position < prev_sub.get('end_ms', 0):
+            current_seg = prev_sub
+        elif subs:
+            # Thuật toán tìm kiếm nhị phân Bisect O(log N) cho danh sách lớn thay vì quét tuyến tính O(N) ở 60 FPS
+            if len(subs) > 30:
+                import bisect
+                idx = bisect.bisect_right(subs, position, key=lambda it: _extract_segment_info(it)[0])
+                for c_idx in (idx - 1, idx - 2, idx):
+                    if 0 <= c_idx < len(subs):
+                        s_ms, e_ms, txt, st, pr = _extract_segment_info(subs[c_idx])
+                        if s_ms <= position < e_ms:
+                            if txt and txt != "[ Chưa có nội dung ]":
+                                current_seg = {'stt': st, 'start_ms': s_ms, 'end_ms': e_ms, 'text': txt, 'style_preset': pr}
+                            break
+            else:
+                for item in subs:
+                    try:
+                        s_ms, e_ms, txt, st, pr = _extract_segment_info(item)
+                        if s_ms <= position < e_ms:
+                            if txt and txt != "[ Chưa có nội dung ]":
+                                current_seg = {'stt': st, 'start_ms': s_ms, 'end_ms': e_ms, 'text': txt, 'style_preset': pr}
+                            break
+                    except Exception:
+                        continue
 
         # 3. Đẩy lên Overlay để Render Animation và Đồng bộ Table Highlight
         if current_seg:
