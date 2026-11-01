@@ -647,6 +647,8 @@ class MainWindow(QMainWindow):
         self.video_player.sub_controller.subtitle_cleared.connect(self.sub_editor.clear_highlight)
         self.video_player.sub_controller.subtitle_changed.connect(
             lambda stt, start, text: self.sub_editor.sync_playback_highlight(int(stt) - 1)
+            if hasattr(self, "video_player") and hasattr(self.video_player, "isPlaying") and self.video_player.isPlaying()
+            else None
         )
         self.sub_editor.live_edit_applied.connect(self.video_player.sub_controller.update_live_data)
         

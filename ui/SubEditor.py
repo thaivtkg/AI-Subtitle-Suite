@@ -1502,7 +1502,8 @@ class SubtitleEditorWidget(QWidget):
 
         if self.current_index < 0 or self.current_index >= len(self.all_segments):
             return
-        if self.undo_manager is None:
+        manager = self._undo_manager()
+        if manager is None:
             return
 
         if hasattr(self, "current_editor"):
@@ -1515,16 +1516,45 @@ class SubtitleEditorWidget(QWidget):
         start_ms = self.time_str_to_ms(old_start)
         end_ms = self.time_str_to_ms(old_end)
 
+        # 1. Xác định mốc biên an toàn của câu liền trước và liền sau
+        prev_end_ms = 0
+        if abs_idx > 0:
+            prev_seg = self.all_segments[abs_idx - 1]
+            prev_end_ms = self.time_str_to_ms(prev_seg.get("end", 0))
+
+        next_start_ms = float('inf')
+        if abs_idx < len(self.all_segments) - 1:
+            next_seg = self.all_segments[abs_idx + 1]
+            next_start_ms = self.time_str_to_ms(next_seg.get("start", 0))
+
+        # 2. Xử lý từng mốc thời gian có khóa biên an toàn
         if target == "start":
-            start_ms = max(0, start_ms + delta_ms)
+            # Không cho phép lùi mốc đầu vượt quá đuôi của câu trước
+            min_allowed = prev_end_ms
+            start_ms = max(min_allowed, start_ms + delta_ms)
+            # Không cho phép mốc đầu vượt quá đuôi của chính nó
             if start_ms >= end_ms:
-                start_ms = max(0, end_ms - 50)
+                start_ms = max(min_allowed, end_ms - 50)
+
         elif target == "end":
+            # Đuôi câu tối thiểu cách đầu câu 50ms
             end_ms = max(start_ms + 50, end_ms + delta_ms)
-        else:  # "both" (shift entire segment)
+            # Nếu Ripple Shift TẮT: Không cho phép vượt quá đầu câu kế tiếp
+            if not getattr(self, "ripple_shift_enabled", True) and next_start_ms != float('inf'):
+                max_allowed = max(start_ms + 50, next_start_ms)
+                end_ms = min(max_allowed, end_ms)
+
+        else:  # "both" (Dịch chuyển cả đoạn)
             shift = delta_ms
-            if start_ms + shift < 0:
-                shift = -start_ms
+            if shift < 0:
+                # Lùi: Giới hạn bởi đuôi câu trước
+                max_backward = max(0, start_ms - prev_end_ms)
+                shift = max(-max_backward, shift)
+            elif shift > 0 and not getattr(self, "ripple_shift_enabled", True):
+                # Tiến (khi tắt Ripple): Giới hạn bởi đầu câu sau
+                if next_start_ms != float('inf'):
+                    max_forward = max(0, next_start_ms - end_ms)
+                    shift = min(max_forward, shift)
             start_ms += shift
             end_ms += shift
 
@@ -1535,7 +1565,7 @@ class SubtitleEditorWidget(QWidget):
             changes = self._build_timing_changes(
                 abs_idx, old_start, old_end, new_start, new_end
             )
-            self.undo_manager.push(
+            manager.push(
                 EditTimingCommand(
                     changes, data_provider=self.all_segments
                 )

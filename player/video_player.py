@@ -460,6 +460,12 @@ class VideoPlayerWidget(QWidget):
         self._current_playback_sub = None
         self.position_changed(cur_pos)
 
+    def isPlaying(self) -> bool:
+        """Kiểm tra video có đang thực sự phát hay không."""
+        if hasattr(self, 'player') and hasattr(self.player, 'isPlaying'):
+            return bool(self.player.isPlaying())
+        return False
+
     def get_video_duration_ms(self):
         return self.player.duration()
 
