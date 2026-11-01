@@ -23,6 +23,7 @@ class CatStudioPage(BasePage):
     LOC_BTN_RETRY = "btnRetry"
     LOC_BTN_HOTKEYS = "btnHotkeys"
     LOC_BTN_MODEL_MANAGER = "btnModelManager"
+    LOC_BTN_IMPORT_TIMELINE = "btnImportFromTimeline"
     LOC_SOURCE_LANG_COMBO = "sourceLangCombo"
 
     def __init__(self, driver: QtDriver, quick_widget: Optional[QQuickWidget] = None):
@@ -70,6 +71,13 @@ class CatStudioPage(BasePage):
         except LookupError:
             return None
 
+    @property
+    def btn_import_timeline_item(self) -> Optional[QQuickItem]:
+        try:
+            return self.driver.find_qml_item(self.LOC_BTN_IMPORT_TIMELINE, root_item=self.root_qml)
+        except LookupError:
+            return None
+
     # -------------------------------------------------------------------------
     # User Actions
     # -------------------------------------------------------------------------
@@ -104,6 +112,13 @@ class CatStudioPage(BasePage):
         """Clicks the ⌨ Phím tắt (F1) button."""
         assert self.btn_hotkeys_item is not None, "btnHotkeys not found in QML"
         self.driver.click(self.btn_hotkeys_item)
+        self.wait_ms(100)
+        return self
+
+    def click_import_from_timeline(self) -> CatStudioPage:
+        """Clicks the 📥 Nạp phụ đề từ Timeline button."""
+        assert self.btn_import_timeline_item is not None, "btnImportFromTimeline not found in QML"
+        self.driver.click(self.btn_import_timeline_item)
         self.wait_ms(100)
         return self
 

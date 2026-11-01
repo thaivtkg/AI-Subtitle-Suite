@@ -273,6 +273,44 @@ ColumnLayout {
                     }
                 }
 
+                // Nút Nạp toàn bộ phụ đề từ Video Timeline
+                Rectangle {
+                    id: btnImportTimeline
+                    objectName: "btnImportTimeline"
+                    implicitWidth: 26
+                    implicitHeight: 20
+                    radius: 10
+                    enabled: (typeof batchController === "undefined" || !batchController.executionLocked) &&
+                             (typeof translationController === "undefined" || translationController.status !== "TRANSLATING")
+                    opacity: enabled ? 1.0 : 0.4
+                    color: importTimelineMouse.containsMouse ? Qt.rgba(0.0, 0.5, 1.0, 0.35) : Qt.rgba(1.0, 1.0, 1.0, 0.22)
+                    border.color: importTimelineMouse.containsMouse ? Theme.accentSapphire : Qt.rgba(1.0, 1.0, 1.0, 0.5)
+                    border.width: 1
+                    Layout.alignment: Qt.AlignVCenter
+                    Text {
+                        anchors.centerIn: parent
+                        text: "📥"
+                        font.pixelSize: 11
+                        font.bold: true
+                        color: "#FFFFFF"
+                    }
+                    ToolTip.visible: importTimelineMouse.containsMouse
+                    ToolTip.text: "Nạp toàn bộ phụ đề từ Video Timeline"
+                    ToolTip.delay: 300
+                    MouseArea {
+                        id: importTimelineMouse
+                        anchors.fill: parent
+                        enabled: btnImportTimeline.enabled
+                        hoverEnabled: enabled
+                        cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                        onClicked: {
+                            if (typeof translationStudioPage !== "undefined" && translationStudioPage !== null) {
+                                translationStudioPage.import_all_from_timeline()
+                            }
+                        }
+                    }
+                }
+
                 // NÚT ĐÓNG DỰ ÁN & VỀ MÀN HÌNH KHỞI ĐỘNG (THEO PHƯƠNG ÁN 1)
                 Rectangle {
                     id: btnCloseSub
@@ -1168,17 +1206,14 @@ ColumnLayout {
                             implicitHeight: 20
                             radius: 10
                             Layout.alignment: Qt.AlignVCenter
-                            color: delegateItem.isPrimarySelected ? "#FEF08A" :
-                                   delegateItem.isSecondarySelected ? Qt.rgba(0.0, 0.4, 1.0, 0.15) :
-                                   normalizedStatus === "ACCEPTED" ? Theme.badgeEmeraldBg :
-                                   normalizedStatus === "TRANSLATED" || normalizedStatus === "EDITED" ? Theme.badgeEmeraldBg :
+                            color: normalizedStatus === "ACCEPTED" ? Theme.badgeEmeraldBg :
+                                   (normalizedStatus === "TRANSLATED" || normalizedStatus === "EDITED") ? Theme.badgeAmberBg :
                                    normalizedStatus === "ERROR" ? Qt.rgba(Theme.danger.r, Theme.danger.g, Theme.danger.b, 0.15) :
-                                   normalizedStatus === "TRANSLATING" ? Qt.rgba(0, 0.4, 1.0, 0.15) : Theme.badgeAmberBg
-                            border.color: delegateItem.isPrimarySelected ? "#FDE047" :
-                                          delegateItem.isSecondarySelected ? Theme.accentSapphire :
-                                          normalizedStatus === "ACCEPTED" || normalizedStatus === "TRANSLATED" || normalizedStatus === "EDITED" ? Theme.badgeEmeraldText :
+                                   normalizedStatus === "TRANSLATING" ? Qt.rgba(0, 0.4, 1.0, 0.15) : Qt.rgba(0.58, 0.64, 0.72, 0.15)
+                            border.color: normalizedStatus === "ACCEPTED" ? Theme.badgeEmeraldText :
+                                          (normalizedStatus === "TRANSLATED" || normalizedStatus === "EDITED") ? Theme.badgeAmberText :
                                           normalizedStatus === "ERROR" ? Theme.danger :
-                                          normalizedStatus === "TRANSLATING" ? Theme.accentSapphire : Theme.badgeAmberText
+                                          normalizedStatus === "TRANSLATING" ? Theme.accentSapphire : "#94A3B8"
                             border.width: 1
                             
                             Text {
@@ -1186,16 +1221,14 @@ ColumnLayout {
                                 anchors.centerIn: parent
                                 leftPadding: 8
                                 rightPadding: 8
-                                text: delegateItem.isPrimarySelected ? "⭐ ĐANG XEM" :
-                                      normalizedStatus === "ACCEPTED" ? "✓ ĐÃ DUYỆT" : 
-                                      normalizedStatus === "TRANSLATED" || normalizedStatus === "EDITED" ? "✓ ĐÃ DỊCH" : 
+                                text: normalizedStatus === "ACCEPTED" ? "✓ ĐÃ DUYỆT" : 
+                                      (normalizedStatus === "TRANSLATED" || normalizedStatus === "EDITED") ? "⌛ CHỜ DUYỆT" : 
                                       normalizedStatus === "TRANSLATING" ? "⚡ ĐANG DỊCH" : 
-                                      normalizedStatus === "ERROR" ? "🛑 LỖI" : "⏳ CHỜ DUYỆT"
-                                color: delegateItem.isPrimarySelected ? "#854D0E" :
-                                       delegateItem.isSecondarySelected ? Theme.accentSapphire :
-                                       normalizedStatus === "ACCEPTED" || normalizedStatus === "TRANSLATED" || normalizedStatus === "EDITED" ? Theme.badgeEmeraldText :
+                                      normalizedStatus === "ERROR" ? "🛑 LỖI" : "⏳ CHỜ DỊCH"
+                                color: normalizedStatus === "ACCEPTED" ? Theme.badgeEmeraldText :
+                                       (normalizedStatus === "TRANSLATED" || normalizedStatus === "EDITED") ? Theme.badgeAmberText :
                                        normalizedStatus === "ERROR" ? Theme.danger :
-                                       normalizedStatus === "TRANSLATING" ? Theme.accentSapphire : Theme.badgeAmberText
+                                       normalizedStatus === "TRANSLATING" ? Theme.accentSapphire : "#94A3B8"
                                 font.pixelSize: 10
                                 font.bold: true
                             }

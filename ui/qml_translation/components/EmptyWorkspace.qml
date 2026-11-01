@@ -36,7 +36,9 @@ Item {
 
             Text {
                 Layout.alignment: Qt.AlignHCenter
-                text: "Chọn một câu phụ đề bên trái để bắt đầu dịch"
+                text: (typeof subtitleModel !== "undefined" && subtitleModel !== null && subtitleModel.rowCount() > 0)
+                      ? "Chọn một câu phụ đề bên trái để bắt đầu dịch"
+                      : "Chưa có phụ đề trong không gian dịch"
                 color: Theme.textOnLightPodMuted
                 font.pixelSize: 13
                 font.bold: true
@@ -87,6 +89,23 @@ Item {
                         Text { anchors.centerIn: parent; text: "S"; color: Theme.textOnLightPod; font.bold: true; font.pixelSize: 14 }
                     }
                     Text { text: "Lưu dự án"; color: Theme.textOnLightPod; font.pixelSize: 12; font.bold: true }
+                }
+            }
+
+            AppButton {
+                id: btnImportFromTimeline
+                objectName: "btnImportFromTimeline"
+                Layout.alignment: Qt.AlignHCenter
+                Layout.preferredHeight: 36
+                Layout.preferredWidth: 260
+                Layout.topMargin: Theme.spaceMedium
+                visible: (typeof subtitleModel === "undefined" || subtitleModel === null || subtitleModel.rowCount() === 0)
+                text: "📥 Nạp phụ đề từ Timeline"
+                tooltip: "Nạp toàn bộ các câu phụ đề từ Timeline vào không gian dịch"
+                onClicked: {
+                    if (typeof translationStudioPage !== "undefined" && translationStudioPage !== null) {
+                        translationStudioPage.import_all_from_timeline()
+                    }
                 }
             }
         }

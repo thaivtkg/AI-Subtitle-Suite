@@ -2527,7 +2527,8 @@ class MainWindow(QMainWindow):
                     sel = self.sub_editor._get_selected_source_indices() if hasattr(self.sub_editor, "_get_selected_source_indices") else []
                     if len(sel) > 1:
                         target_indices = sel
-                self.page_translation.load_subtitles_from_studio(self.sub_editor.all_segments, selected_indices=target_indices)
+                if target_indices is not None:
+                    self.page_translation.load_subtitles_from_studio(self.sub_editor.all_segments, selected_indices=target_indices)
         self._active_nav_index = original_index
         if original_index == 0 and hasattr(self, "page_dashboard") and hasattr(self.page_dashboard, "refresh_recent_projects"):
             self.page_dashboard.refresh_recent_projects()

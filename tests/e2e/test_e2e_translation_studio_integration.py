@@ -56,7 +56,7 @@ def test_ac_suite_01_app_launch_and_page_registration(studio_window):
 
 
 def test_ac_suite_02_navigate_to_translation_tab_and_data_feed(studio_window):
-    """AC-SUITE-02: Chuyển sang tab Dịch thuật AI, phụ đề từ SubEditor nạp đầy đủ vào QML."""
+    """AC-SUITE-02: Chuyển sang tab Dịch thuật AI mặc định 0 câu (AC-CAT-EMPTY-01), nạp chủ động từ Timeline (AC-CAT-IMPORT-03)."""
     win = studio_window
     # Giả lập dữ liệu nhận dạng từ Whisper vào SubEditor
     mock_segments = [
@@ -65,11 +65,16 @@ def test_ac_suite_02_navigate_to_translation_tab_and_data_feed(studio_window):
     ]
     win.sub_editor.all_segments = mock_segments
 
-    # Chuyển sang tab Dịch thuật AI (Nav index 8)
+    # Chuyển sang tab Dịch thuật AI (Nav index 8) -> Mặc định trống (AC-CAT-EMPTY-01)
     win.switch_page(8)
     QTest.qWait(250)
 
     assert win.stack.currentIndex() == 7
+    assert win.page_translation.subtitle_model.rowCount() == 0
+
+    # Nạp chủ động qua import_all_from_timeline (AC-CAT-IMPORT-03)
+    win.page_translation.import_all_from_timeline()
+    QTest.qWait(100)
     assert win.page_translation.subtitle_model.rowCount() == 2
     item0 = win.page_translation.subtitle_model.get_item(0)
     assert item0["original"] == "Good morning everybody."
@@ -84,6 +89,7 @@ def test_ac_suite_03_accept_translation_and_tm_update(studio_window):
     ]
     win.sub_editor.all_segments = mock_segments
     win.switch_page(8)
+    win.page_translation.import_all_from_timeline()
     QTest.qWait(250)
 
     # Thực hiện duyệt bản dịch
@@ -112,6 +118,7 @@ def test_ac_suite_04_bidirectional_sync_to_studio_workspace(studio_window):
 
     # Vào tab dịch thuật và cập nhật bản dịch
     win.switch_page(8)
+    win.page_translation.import_all_from_timeline()
     QTest.qWait(250)
     win.page_translation.translation_controller.acceptTranslation(0, "Xin chào thế giới")
 
@@ -142,6 +149,7 @@ def test_ac_suite_05_unified_project_save_and_reload(studio_window, tmp_path):
     ]
     win.sub_editor.all_segments = mock_segments
     win.switch_page(8)
+    win.page_translation.import_all_from_timeline()
     QTest.qWait(250)
     win.page_translation.translation_controller.acceptTranslation(0, "Mạng nơ-ron")
     win.page_translation.project_controller.glossary.add("Neural network", "Mạng nơ-ron")

@@ -66,18 +66,27 @@ Item {
                 implicitWidth: statusBadge.implicitWidth + 18
                 implicitHeight: 22
                 radius: 11
-                color: (translationController.status === "ACCEPTED" || translationController.status === "TRANSLATED") ? Theme.badgeSolidEmerald :
-                       translationController.status === "ERROR" ? "#FFE4E6" : "#FEF08A"
-                border.color: Qt.rgba(1, 1, 1, 0.65)
+                color: translationController.status === "ACCEPTED" ? Theme.badgeSolidEmerald :
+                       (translationController.status === "TRANSLATED" || translationController.status === "EDITED") ? "#FEF08A" :
+                       translationController.status === "TRANSLATING" ? Qt.rgba(0.0, 0.4, 1.0, 0.20) :
+                       translationController.status === "ERROR" ? "#FFE4E6" : Qt.rgba(0.58, 0.64, 0.72, 0.20)
+                border.color: translationController.status === "ACCEPTED" ? "#10B981" :
+                              (translationController.status === "TRANSLATED" || translationController.status === "EDITED") ? "#FDE047" :
+                              translationController.status === "TRANSLATING" ? Theme.accentSapphire :
+                              translationController.status === "ERROR" ? "#EF4444" : "#94A3B8"
                 border.width: 1.5
 
                 Text {
                     id: statusBadge
                     anchors.centerIn: parent
-                    text: (translationController.status === "ACCEPTED" || translationController.status === "TRANSLATED") ? "✓ ĐÃ DỊCH" :
+                    text: translationController.status === "ACCEPTED" ? "✓ ĐÃ DUYỆT" :
+                          (translationController.status === "TRANSLATED" || translationController.status === "EDITED") ? "⌛ CHỜ DUYỆT" :
                           translationController.status === "TRANSLATING" ? "⚡ ĐANG DỊCH" :
-                          translationController.status === "ERROR" ? "🛑 LỖI" : "⏳ CHỜ DUYỆT"
-                    color: (translationController.status === "ACCEPTED" || translationController.status === "TRANSLATED") ? "#FFFFFF" : "#854D0E"
+                          translationController.status === "ERROR" ? "🛑 LỖI" : "⏳ CHỜ DỊCH"
+                    color: translationController.status === "ACCEPTED" ? "#FFFFFF" :
+                           (translationController.status === "TRANSLATED" || translationController.status === "EDITED") ? "#854D0E" :
+                           translationController.status === "TRANSLATING" ? "#38BDF8" :
+                           translationController.status === "ERROR" ? "#EF4444" : "#94A3B8"
                     font.pixelSize: 10
                     font.bold: true
                 }

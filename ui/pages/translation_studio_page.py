@@ -87,6 +87,7 @@ class TranslationStudioPage(QWidget):
         ctx.setContextProperty("modelController", self.model_controller)
         ctx.setContextProperty("subtitleModel", self.subtitle_model)
         ctx.setContextProperty("filteredSubtitleModel", self.filtered_model)
+        ctx.setContextProperty("translationStudioPage", self)
 
         # 4. Nạp QML View
         qml_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "qml_translation", "TranslationStudioView.qml"))
@@ -113,6 +114,16 @@ class TranslationStudioPage(QWidget):
     def _on_batch_state_changed(self):
         if self.batch_controller.state == "COMPLETED":
             self.batch_translations_updated.emit(self.subtitle_model.get_all_data())
+
+    @Slot()
+    def import_all_from_timeline(self):
+        """Người dùng bấm nạp toàn bộ phụ đề từ Video Timeline sang CAT Studio."""
+        win = self.parent() if hasattr(self, "parent") else None
+        if win and not hasattr(win, "sub_editor") and hasattr(win, "window"):
+            win = win.window()
+        if win and hasattr(win, "sub_editor") and win.sub_editor:
+            segments = getattr(win.sub_editor, "all_segments", [])
+            self.load_subtitles_from_studio(segments, selected_indices=None)
 
     def load_subtitles_from_studio(self, studio_segments: list, selected_indices: list[int] | None = None):
         """Ánh xạ dữ liệu phụ đề từ SubEditor sang SubtitleModel của QML."""
