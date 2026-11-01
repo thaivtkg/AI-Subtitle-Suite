@@ -66,6 +66,7 @@ class TranslationStudioPage(QWidget):
             settings=self.app_settings,
             parent=self,
         )
+        self.translation_controller._model_controller = self.model_controller
 
         # Kết nối sự kiện Model -> Signal Studio
         self.subtitle_model.dataChanged.connect(self._on_subtitle_data_changed)
@@ -98,12 +99,14 @@ class TranslationStudioPage(QWidget):
 
         layout.addWidget(self.quick_widget)
 
-    def _on_subtitle_data_changed(self, top_left, bottom_right, roles):
+    def _on_subtitle_data_changed(self, top_left, bottom_right, roles=None):
         row = top_left.row()
         item = self.subtitle_model.get_item(row)
         if item:
             trans = item.get("translation", "")
-            if trans:
+            status = str(item.get("status", "PENDING")).upper()
+            # AUD-SYNC-001 (Approval-Gated Sync): Chỉ phát tín hiệu đồng bộ khi câu đã được DUYỆT (ACCEPTED)
+            if trans and status == "ACCEPTED":
                 studio_idx = int(item.get("studio_index", row))
                 self.translation_committed.emit(studio_idx, trans)
 
@@ -193,8 +196,10 @@ class TranslationStudioPage(QWidget):
                     if not timeline_seg.get("original_text"):
                         timeline_seg["original_text"] = cat_orig or timeline_seg.get("text", "")
                     timeline_seg["translation"] = trans
-                    timeline_seg["text"] = trans
                     timeline_seg["translation_status"] = item.get("status", "TRANSLATED")
+                    # AUD-SYNC-001 (Approval-Gated Sync): Chỉ ghi đè text câu trên Timeline/Player khi câu đã DUYỆT (ACCEPTED)
+                    if item.get("status") == "ACCEPTED":
+                        timeline_seg["text"] = trans
             else:
                 trans = str(item.get("translation", "")).strip()
                 studio_segments.append({

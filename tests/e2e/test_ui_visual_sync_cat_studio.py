@@ -197,22 +197,34 @@ def test_selective_subtitle_transfer_jmsz_scenario(live_studio_app):
         assert item.get("studio_index") == expected_studio_idx, f"Row {row} studio_index must be {expected_studio_idx}, got {item.get('studio_index')}"
         assert item.get("original") == f"日本語の字幕テキスト #{expected_stt}"
 
-    # 4. Updating translation on row 0 (sentence #19) in page_translation.subtitle_model
+    # 4. Updating translation on row 0 (sentence #19) in page_translation.subtitle_model (TRANSLATED draft)
     new_translation_19 = "Bản dịch tiếng Việt mới của câu 19"
     sub_model.update_translation(0, new_translation_19, "TRANSLATED")
+    QTest.qWait(100)
+
+    # AUD-SYNC-001 (Approval Gate): Draft TRANSLATED preserves original Japanese text on Timeline!
+    win.page_translation.export_subtitles_to_studio(win.sub_editor.all_segments)
+    seg_19 = win.sub_editor.all_segments[18]
+    assert seg_19["text"] == "日本語の字幕テキスト #19", f"Unapproved draft must NOT overwrite timeline text! Got '{seg_19['text']}'"
+    assert seg_19["translation"] == new_translation_19
+    assert seg_19["translation_status"] == "TRANSLATED"
+
+    # Now simulate approval in CAT studio (ACCEPTED)
+    sub_model.update_translation(0, new_translation_19, "ACCEPTED")
     QTest.qWait(100)
 
     # Switch back to win.switch_page(1)
     win.switch_page(1)
     QTest.qWait(200)
 
-    # 5. Verifying win.sub_editor.all_segments[18]["text"] has the new Vietnamese translation,
+    # 5. Verifying win.sub_editor.all_segments[18]["text"] now has the accepted Vietnamese translation,
     # win.sub_editor.all_segments[18]["original_text"] preserved the Japanese text,
     # and win.sub_editor.all_segments[0]["text"] (sentence #1) was NOT overwritten!
     seg_19 = win.sub_editor.all_segments[18]
     assert seg_19["text"] == new_translation_19, f"Segment 19 text should be updated to '{new_translation_19}', got '{seg_19['text']}'"
     assert seg_19["original_text"] == "日本語の字幕テキスト #19", f"Segment 19 original_text must preserve Japanese, got '{seg_19['original_text']}'"
     assert seg_19["translation"] == new_translation_19
+    assert seg_19["translation_status"] == "ACCEPTED"
 
     seg_1 = win.sub_editor.all_segments[0]
     assert seg_1["text"] == "Câu tiếng Việt đã dịch #1", f"Segment 1 text was overwritten! Got '{seg_1['text']}'"

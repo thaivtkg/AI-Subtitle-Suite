@@ -38,6 +38,9 @@ Item {
             id: headerBatch
             Layout.fillWidth: true
             Layout.preferredHeight: 48
+            Layout.leftMargin: Theme.spaceSmall
+            Layout.rightMargin: Theme.spaceSmall
+            Layout.topMargin: Theme.spaceXs
             controller: typeof batchController !== "undefined" ? batchController : null
             customModelController: typeof modelController !== "undefined" ? modelController : null
             currentSubtitleIndex: subListView.currentRawIndex
@@ -116,10 +119,24 @@ Item {
 
                     onTranslateRequested: (sourceLang) => {
                         if (typeof translationController !== "undefined" && translationController !== null) {
+                            var srcLang = (translationController.currentSourceLanguage && translationController.currentSourceLanguage !== "") ? translationController.currentSourceLanguage : sourceLang
+                            var tgtLang = "Vietnamese"
+                            if (srcLang && tgtLang && srcLang.trim().toLowerCase() === tgtLang.trim().toLowerCase()) {
+                                toast.show("CẢNH BÁO", "Ngôn ngữ nguồn và ngôn ngữ đích không được trùng nhau!")
+                                return
+                            }
+                            var mc = typeof modelController !== "undefined" ? modelController : null
+                            if (mc && typeof mc.hasValidModel !== "undefined" && !mc.hasValidModel) {
+                                toast.show("CẢNH BÁO", "Mô hình AI chưa được tải về máy. Vui lòng chọn hoặc tải mô hình!")
+                                if (typeof modelManagerDialog !== "undefined" && modelManagerDialog !== null) {
+                                    modelManagerDialog.open()
+                                }
+                                return
+                            }
                             translationController.requestTranslation(
                                 subListView.currentRawIndex,
-                                (translationController.currentSourceLanguage && translationController.currentSourceLanguage !== "") ? translationController.currentSourceLanguage : sourceLang,
-                                "Vietnamese",
+                                srcLang,
+                                tgtLang,
                                 studioView.globalStorySummary
                             )
                         }

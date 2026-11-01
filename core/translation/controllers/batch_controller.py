@@ -1,4 +1,4 @@
-﻿from PySide6.QtCore import QObject, Property, Signal, Slot
+from PySide6.QtCore import QObject, Property, Signal, Slot
 
 from core.translation.batch.batch_item import BatchItem
 from core.translation.batch.batch_job import BatchJob
@@ -134,6 +134,10 @@ class BatchController(QObject):
         if not self.canStart:
             raise RuntimeError("Cannot start batch")
 
+        # Gate 2: Language Sanity Check (Chặn nguồn trùng đích)
+        if source_lang and target_lang and source_lang.strip().lower() == target_lang.strip().lower():
+            return
+
         all_data = self._subtitle_model.get_all_data()
         total_len = len(all_data)
         if total_len == 0:
@@ -144,12 +148,34 @@ class BatchController(QObject):
         # Duyệt tuần hoàn từ start_pos đến hết rồi vòng lại từ 0 đến start_pos
         traversal_order = list(range(start_pos, total_len)) + list(range(0, start_pos))
 
+        def _parse_ms(t_val):
+            if isinstance(t_val, (int, float)):
+                return int(t_val)
+            if isinstance(t_val, str) and "," in t_val:
+                try:
+                    p, ms = t_val.split(",")
+                    parts = [int(x) for x in p.split(":")]
+                    return parts[0] * 3600000 + parts[1] * 60000 + parts[2] * 1000 + int(ms)
+                except Exception:
+                    return 0
+            return 0
+
         target_indices = []
         seen = set()
         for idx in traversal_order:
             if idx in seen:
                 continue
             seen.add(idx)
+
+            # Gate 1: Bỏ qua câu rỗng, placeholder hoặc thời lượng <= 0
+            orig = str(all_data[idx].get("original", "")).strip()
+            if not orig or orig in {"[ Chưa có nội dung ]", "[Chưa có nội dung]"}:
+                continue
+            start_t = _parse_ms(all_data[idx].get("start_time") or all_data[idx].get("start"))
+            end_t = _parse_ms(all_data[idx].get("end_time") or all_data[idx].get("end"))
+            if end_t > 0 and end_t <= start_t:
+                continue
+
             st = str(all_data[idx].get("status", "PENDING")).upper()
             if st == "PENDING":
                 target_indices.append(idx)

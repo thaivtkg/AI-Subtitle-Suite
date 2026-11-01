@@ -147,10 +147,17 @@ def test_export_subtitles_to_studio_overwrite_protection():
     assert studio_segments[0]["translation"] == ""
     assert studio_segments[0]["translation_status"] == "PENDING"
 
-    # seg_2 should be updated with new translation
+    # seg_2 (TRANSLATED, not yet ACCEPTED) should update translation in background,
+    # but keep timeline text unchanged (Approval Gate)
     assert studio_segments[1]["translation"] == "New Translation B"
-    assert studio_segments[1]["text"] == "New Translation B"
+    assert studio_segments[1]["text"] == "Original text B"
     assert studio_segments[1]["translation_status"] == "TRANSLATED"
+
+    # Once accepted, exporting should update timeline text
+    page.subtitle_model.update_translation(1, "New Translation B", "ACCEPTED")
+    page.export_subtitles_to_studio(studio_segments)
+    assert studio_segments[1]["text"] == "New Translation B"
+    assert studio_segments[1]["translation_status"] == "ACCEPTED"
 
 
 def test_gui_segment_scan_finished_invalidation(qapp):
@@ -187,6 +194,7 @@ def test_gui_segment_scan_finished_invalidation(qapp):
             pass
         win.close()
         win.deleteLater()
+
 
 
 def test_translation_controller_dynamic_progress_and_timer():
@@ -262,4 +270,59 @@ def test_mainwindow_shortcut_isolation_between_tabs(qapp):
             pass
         win.close()
         win.deleteLater()
+
+
+def test_approval_gated_signal_emission():
+    """AUD-SYNC-001: Chỉ phát translation_committed khi trạng thái là ACCEPTED."""
+    page = TranslationStudioPage()
+    segments = [
+        {"id": "seg_sync_1", "stt": 1, "start": 1000, "end": 2000, "text": "Original 1", "original_text": "Original 1"},
+    ]
+    page.load_subtitles_from_studio(segments)
+
+    committed_emissions = []
+    page.translation_committed.connect(lambda idx, text: committed_emissions.append((idx, text)))
+
+    # Trạng thái TRANSLATED (chưa duyệt) -> KHÔNG phát tín hiệu
+    page.subtitle_model.update_translation(0, "Bản dịch nháp", "TRANSLATED")
+    assert len(committed_emissions) == 0
+
+    # Trạng thái ACCEPTED (đã duyệt) -> PHÁT tín hiệu đồng bộ
+    page.subtitle_model.update_translation(0, "Bản dịch duyệt", "ACCEPTED")
+    assert len(committed_emissions) == 1
+    assert committed_emissions[0] == (0, "Bản dịch duyệt")
+
+
+def test_validation_gates_empty_sub_and_language_conflict():
+    """AUD-VAL-001 & AUD-VAL-002: Kiểm tra Gate 1 (câu rỗng/placeholder) và Gate 2 (ngôn ngữ trùng)."""
+    model = SubtitleModel()
+    model.load_data([
+        {"index": 1, "original": "   ", "translation": "", "status": "PENDING"},
+        {"index": 2, "original": "[ Chưa có nội dung ]", "translation": "", "status": "PENDING"},
+        {"index": 3, "original": "Hợp lệ", "translation": "", "status": "PENDING"},
+    ])
+    mock_worker = MagicMock()
+    mock_factory = MagicMock(return_value=mock_worker)
+    controller = TranslationController(model, worker_factory=mock_factory)
+
+    notifications = []
+    controller.notify.connect(lambda typ, msg: notifications.append((typ, msg)))
+
+    # Gate 1: Câu rỗng
+    controller.requestTranslation(0, "English", "Vietnamese", "")
+    assert mock_worker.start.call_count == 0
+    assert any("trống hoặc không có nội dung" in msg for _, msg in notifications)
+
+    # Gate 1: Placeholder [ Chưa có nội dung ]
+    notifications.clear()
+    controller.requestTranslation(1, "English", "Vietnamese", "")
+    assert mock_worker.start.call_count == 0
+    assert any("trống hoặc không có nội dung" in msg for _, msg in notifications)
+
+    # Gate 2: Ngôn ngữ nguồn trùng đích
+    notifications.clear()
+    controller.requestTranslation(2, "Vietnamese", "Vietnamese", "")
+    assert mock_worker.start.call_count == 0
+    assert any("không được trùng nhau" in msg for _, msg in notifications)
+
 

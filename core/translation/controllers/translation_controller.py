@@ -346,14 +346,33 @@ class TranslationController(QObject):
 
     @Slot(int, str, str, str)
     def requestTranslation(self, index, source_lang, target_lang, story_summary):
-        if index < 0 or index >= len(self._subtitle_model.get_all_data()):
+        subtitles = self._subtitle_model.get_all_data()
+        if index < 0 or index >= len(subtitles):
             return
+
+        # Gate 1: Data Sanity Check (Bỏ qua câu rỗng hoặc placeholder)
+        current_raw = (subtitles[index].get("original") or "").strip()
+        if not current_raw or current_raw in {"[ Chưa có nội dung ]", "[Chưa có nội dung]"}:
+            self.notify.emit("WARNING", "Phân đoạn phụ đề trống hoặc không có nội dung để dịch!")
+            return
+
         # AUD-CONCUR-001: Khóa kiểm tra bận liên luồng toàn bộ worker LLM
         if self.is_busy():
             return
 
         if not source_lang or (source_lang == "English" and getattr(self, "_current_source_language", "English") != "English"):
             source_lang = self._current_source_language
+
+        # Gate 2: Language Sanity Check (Chặn nguồn trùng đích)
+        if source_lang and target_lang and source_lang.strip().lower() == target_lang.strip().lower():
+            self.notify.emit("WARNING", "Ngôn ngữ nguồn và ngôn ngữ đích không được trùng nhau!")
+            return
+
+        # Gate 3: Model Readiness Check (Chặn khi model chưa sẵn sàng)
+        mc = getattr(self, "_model_controller", None)
+        if mc is not None and hasattr(mc, "hasValidModel") and not mc.hasValidModel:
+            self.notify.emit("WARNING", "Mô hình AI chưa sẵn sàng hoặc chưa được tải về máy!")
+            return
 
         self._active_translation_index = index
         self._selection_changed_during_translation = False

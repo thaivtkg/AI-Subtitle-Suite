@@ -23,6 +23,12 @@ Item {
     property var selectedIndices: []
     readonly property bool hasMultiSelection: root.selectedIndices && root.selectedIndices.length > 1
 
+    readonly property int totalSubtitles: (typeof subtitleModel !== "undefined" && subtitleModel && subtitleModel.progressStats) ? (subtitleModel.progressStats.total || 0) : 0
+    readonly property int pendingCount: (typeof subtitleModel !== "undefined" && subtitleModel && subtitleModel.progressStats) ? (subtitleModel.progressStats.pending || 0) : 0
+    readonly property var activeModelCtrl: root.customModelController || (typeof modelController !== "undefined" ? modelController : null)
+    readonly property bool hasValidModel: activeModelCtrl ? (typeof activeModelCtrl.hasValidModel !== "undefined" ? activeModelCtrl.hasValidModel : true) : true
+    readonly property int targetCount: Math.min(root.selectedLimit === 0 ? pendingCount : root.selectedLimit, pendingCount)
+
     implicitWidth: contentRow.implicitWidth
     implicitHeight: 32
 
@@ -77,16 +83,37 @@ Item {
                 if (root.hasMultiSelection) {
                     return root.isCompact ? ("⚡ Chọn (" + root.selectedIndices.length + ")") : ("⚡ Dịch đã chọn (" + root.selectedIndices.length + " câu)")
                 }
-                if (root.isCompact) {
-                    return root.selectedLimit === 0 ? "⚡ Toàn bộ" : ("⚡ " + root.selectedLimit + " câu")
+                if (root.pendingCount === 0) {
+                    return "⚡ Đã hoàn tất dịch"
                 }
-                return root.selectedLimit === 0 ? "⚡ Dịch hàng loạt" : ("⚡ Dịch hàng loạt (" + root.selectedLimit + " câu)")
+                if (root.isCompact) {
+                    return root.selectedLimit === 0 ? ("⚡ Toàn bộ (" + root.targetCount + ")") : ("⚡ " + root.targetCount + " câu")
+                }
+                return root.selectedLimit === 0 ? ("⚡ Dịch toàn bộ (" + root.targetCount + " câu)") : ("⚡ Dịch hàng loạt (" + root.targetCount + " câu)")
             }
-            tooltip: root.hasMultiSelection ? "Dịch các câu đã chọn (Ctrl/Shift + Click)" : "Dịch tự động phụ đề theo lô"
+            tooltip: {
+                if (!root.hasMultiSelection && root.pendingCount === 0) {
+                    return "Không có câu phụ đề nào cần dịch"
+                }
+                return root.hasMultiSelection ? "Dịch các câu đã chọn (Ctrl/Shift + Click)" : "Dịch tự động phụ đề theo lô"
+            }
             isPrimary: true
             visible: ["IDLE", "COMPLETED", "CANCELLED", "FAILED"].indexOf(root.controller.state) >= 0
-            enabled: root.controller.canStart
+            enabled: root.controller.canStart && (root.hasMultiSelection ? root.selectedIndices.length > 0 : root.pendingCount > 0) && root.hasValidModel
             onClicked: {
+                if (root.sourceLanguage && root.targetLanguage && root.sourceLanguage.trim().toLowerCase() === root.targetLanguage.trim().toLowerCase()) {
+                    if (typeof toast !== "undefined" && toast) {
+                        toast.show("CẢNH BÁO", "Ngôn ngữ nguồn và ngôn ngữ đích không được trùng nhau!")
+                    }
+                    return
+                }
+                if (!root.hasValidModel) {
+                    if (typeof toast !== "undefined" && toast) {
+                        toast.show("CẢNH BÁO", "Mô hình AI chưa được tải về máy. Vui lòng chọn hoặc tải mô hình!")
+                    }
+                    root.modelManagerClicked()
+                    return
+                }
                 if (root.hasMultiSelection) {
                     root.controller.startBatchWithIndices(
                         root.sourceLanguage,
@@ -113,7 +140,7 @@ Item {
             isPrimary: true
             Layout.preferredWidth: 26
             visible: ["IDLE", "COMPLETED", "CANCELLED", "FAILED"].indexOf(root.controller.state) >= 0
-            enabled: root.controller.canStart
+            enabled: root.controller.canStart && root.pendingCount > 0 && root.hasValidModel
             onClicked: presetMenu.open()
 
             Menu {
@@ -166,6 +193,8 @@ Item {
                 MenuItem {
                     id: mItem5
                     implicitHeight: 36
+                    enabled: root.totalSubtitles >= 5
+                    opacity: enabled ? 1.0 : 0.4
                     background: Rectangle {
                         radius: 10
                         color: (!root.hasMultiSelection && root.selectedLimit === 5) ? Qt.rgba(0.0, 0.4, 1.0, 0.10) :
@@ -197,6 +226,8 @@ Item {
                 MenuItem {
                     id: mItem10
                     implicitHeight: 36
+                    enabled: root.totalSubtitles >= 10
+                    opacity: enabled ? 1.0 : 0.4
                     background: Rectangle {
                         radius: 10
                         color: (!root.hasMultiSelection && root.selectedLimit === 10) ? Qt.rgba(0.0, 0.4, 1.0, 0.10) :
@@ -228,6 +259,8 @@ Item {
                 MenuItem {
                     id: mItem20
                     implicitHeight: 36
+                    enabled: root.totalSubtitles >= 20
+                    opacity: enabled ? 1.0 : 0.4
                     background: Rectangle {
                         radius: 10
                         color: (!root.hasMultiSelection && root.selectedLimit === 20) ? Qt.rgba(0.0, 0.4, 1.0, 0.10) :
@@ -259,6 +292,8 @@ Item {
                 MenuItem {
                     id: mItem50
                     implicitHeight: 36
+                    enabled: root.totalSubtitles >= 50
+                    opacity: enabled ? 1.0 : 0.4
                     background: Rectangle {
                         radius: 10
                         color: (!root.hasMultiSelection && root.selectedLimit === 50) ? Qt.rgba(0.0, 0.4, 1.0, 0.10) :
@@ -290,6 +325,8 @@ Item {
                 MenuItem {
                     id: mItem0
                     implicitHeight: 36
+                    enabled: root.totalSubtitles > 0
+                    opacity: enabled ? 1.0 : 0.4
                     background: Rectangle {
                         radius: 10
                         color: (!root.hasMultiSelection && root.selectedLimit === 0) ? Qt.rgba(0.0, 0.4, 1.0, 0.10) :

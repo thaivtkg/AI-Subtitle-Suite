@@ -151,6 +151,11 @@ class ModelController(QObject):
         meta = MODEL_CATALOG.get(self._active_model_id)
         return meta.display_name if meta else self._active_model_id
 
+    @Property(bool, notify=activeModelChanged)
+    def hasValidModel(self) -> bool:
+        local_models = scan_local_models(self.models_dir)
+        return bool(local_models.get(self._active_model_id, False))
+
     @Property("QVariantMap", constant=True)
     def hardwareSummary(self) -> dict:
         vram = self._gpu_info.get("vram_gb", 0.0)
