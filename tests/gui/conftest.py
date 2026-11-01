@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Pytest fixtures for GUI Automation Driver testing (POM Pattern).
-Provides isolated and live application drivers for QWidget and QML testing.
+Provides isolated and live application drivers for QWidget, QML, and Waveform Timeline testing.
 """
 import os
 import pytest
@@ -11,6 +11,7 @@ from core.subtitle_editing.global_undo_manager import GlobalUndoManager
 from tests.gui.drivers.qt_driver import QtDriver
 from tests.gui.pages.sub_editor_page import SubEditorPage
 from tests.gui.pages.cat_studio_page import CatStudioPage
+from tests.gui.pages.timeline_page import TimelineWidgetPage
 
 
 @pytest.fixture
@@ -75,9 +76,43 @@ def cat_studio_driver(qtbot):
 
 
 @pytest.fixture
+def timeline_driver(qtbot):
+    """
+    Provides a live MainWindow wrapped in QtDriver, TimelineWidgetPage, and SubEditorPage.
+    Equipped with safe video player and eventFilter cleanup.
+    """
+    from ui.Gui import MainWindow
+
+    win = MainWindow()
+    win.timeline_widget.duration_ms = 30000
+    win.resize(1280, 720)
+    qtbot.addWidget(win)
+    win.show()
+    qtbot.wait(100)
+
+    driver = QtDriver(win, qtbot=qtbot)
+    timeline_page = TimelineWidgetPage(driver, timeline_widget=win.timeline_widget)
+    sub_page = SubEditorPage(driver, sub_editor_widget=win.sub_editor)
+
+    yield win, driver, timeline_page, sub_page
+
+    try:
+        if hasattr(win, "video_player") and hasattr(win.video_player, "cleanup"):
+            win.video_player.cleanup()
+    except Exception:
+        pass
+    try:
+        QApplication.instance().removeEventFilter(win)
+    except Exception:
+        pass
+    win.close()
+    win.deleteLater()
+
+
+@pytest.fixture
 def main_window_driver(qtbot, tmp_path):
     """
-    Provides a live MainWindow wrapped in QtDriver, with SubEditorPage and CatStudioPage.
+    Provides a live MainWindow wrapped in QtDriver, with SubEditorPage, CatStudioPage, and TimelineWidgetPage.
     """
     from ui.Gui import MainWindow
 
@@ -90,12 +125,17 @@ def main_window_driver(qtbot, tmp_path):
     driver = QtDriver(win, qtbot=qtbot)
     sub_page = SubEditorPage(driver, sub_editor_widget=win.sub_editor)
     cat_page = CatStudioPage(driver, quick_widget=win.page_translation.quick_widget if hasattr(win, "page_translation") else None)
+    timeline_page = TimelineWidgetPage(driver, timeline_widget=win.timeline_widget)
 
-    yield win, driver, sub_page, cat_page
+    yield win, driver, sub_page, cat_page, timeline_page
 
     try:
         if hasattr(win, "video_player") and hasattr(win.video_player, "cleanup"):
             win.video_player.cleanup()
+    except Exception:
+        pass
+    try:
+        QApplication.instance().removeEventFilter(win)
     except Exception:
         pass
     win.close()

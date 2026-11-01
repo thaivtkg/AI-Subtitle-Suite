@@ -47,23 +47,31 @@ class TimelineContainer(QWidget):
 
         # Khởi tạo các Component cốt lõi
         self.ruler = TimeRuler()
+        self.ruler.setObjectName("timeline_ruler")
         self.waveform = WaveformView()
+        self.waveform.setObjectName("timeline_waveform")
         self.track = SubtitleTrack()  # <--- THÊM TRACK
+        self.track.setObjectName("timeline_track")
         
         self.layout.addWidget(self.ruler)
         self.layout.addWidget(self.waveform)
         self.layout.addWidget(self.track) # <--- ĐẨY VÀO LAYOUT
         self.gap_row = QWidget()
+        self.gap_row.setObjectName("timeline_gap_row")
         gap_layout = QHBoxLayout(self.gap_row)
         gap_layout.setContentsMargins(8, 2, 8, 2)
         self.start_range_edit = QLineEdit()
+        self.start_range_edit.setObjectName("timeline_start_range_edit")
         self.start_range_edit.setPlaceholderText("HH:MM:SS,mmm")
         self.start_range_edit.setMaximumWidth(125)
         self.end_range_edit = QLineEdit()
+        self.end_range_edit.setObjectName("timeline_end_range_edit")
         self.end_range_edit.setPlaceholderText("HH:MM:SS,mmm")
         self.end_range_edit.setMaximumWidth(125)
         self.range_duration = QLabel("--")
+        self.range_duration.setObjectName("timeline_range_duration")
         self.range_validation = QLabel()
+        self.range_validation.setObjectName("timeline_range_validation")
         self.range_validation.setWordWrap(True)
         self.create_manual_gap_button = QPushButton("➕ Tạo Timing thủ công")
         self.create_manual_gap_button.setObjectName("btn_create_manual_gap")
@@ -142,7 +150,9 @@ class TimelineWidget(QScrollArea):
             }}
         """)
 
+        self.setObjectName("timeline_widget")
         self.container = TimelineContainer()
+        self.container.setObjectName("timeline_container")
         self.setWidget(self.container)
 
         self.duration_ms = 0
