@@ -1,0 +1,42 @@
+﻿# 🚀 AI Subtitle Studio v1.0.0 Release Notes
+
+Chào mừng đến với phiên bản chính thức đầu tiên của **AI Subtitle Studio (v1.0.0)**. 
+Bản phát hành này đánh dấu sự chuyển mình từ một công cụ dịch thuật văn bản đơn thuần thành một cỗ máy **Trạm không gian (DAW)** hoàn chỉnh, kết hợp sức mạnh phân tích ngữ cảnh của AI và thiết kế giao diện tối giản chuẩn công nghiệp.
+
+Dưới đây là những giá trị cốt lõi (Business Value) đã được rèn giũa:
+
+---
+
+### 🧠 1. Agentic Translation Engine
+Trái tim của hệ thống nay đã được tự động hóa hoàn toàn với bộ não AI:
+- **Token Budgeting thông minh:** Tối ưu hóa phân phối ngữ cảnh (O(N) Context Window), giúp AI dịch mượt mà không làm vỡ các câu ngắt dòng phức tạp.
+- **Auto-QC (Kiểm định tĩnh):** Màng lọc phòng ngự Data Poisoning. Bất kỳ phản hồi rác nào từ AI (như lỗi format HTML/XML hoặc thiếu hụt thuật ngữ rập khuôn) đều bị cô lập ngay tại File SRT tạm, không cho phép ô nhiễm Translation Memory (TM).
+- **Network Resilience (Tự phục hồi):** Thuật toán Exponential Backoff bắt dính các lỗi mạng ngẫu nhiên (transient timeout, connection drops). Vòng lặp sẽ kiên nhẫn thử lại thay vì làm sập toàn bộ hàng đợi xử lý.
+
+---
+
+### ⚙️ 2. Batch Automation Pipeline
+Dây chuyền sản xuất tự động xuyên suốt không điểm mù (End-to-End Zero-blindspot Pipeline):
+- **Cơ chế Handoff nguyên khối:** Mọi tiến trình từ (1) Trích xuất Audio qua FFmpeg, (2) Nhận diện tiếng nói Whisper ASR, đến (3) Dịch thuật AI đều tự động chuyển giao Artifact một cách mượt mà.
+- **Dynamic Domain Binding:** Glossary được phân nhóm theo `Domain` tự động tải vào Pipeline thông qua SQLite.
+- Trả về kết quả hoàn chỉnh dưới dạng file Hardsub/Softsub tùy chọn mà không cần can thiệp thủ công ở bước trung gian.
+
+---
+
+### 🎛️ 3. Modern DAW Interface (Ponytail Architecture)
+Giao diện không còn là những Form nhập liệu nhàm chán, mà là một không gian thở (Breathing Space) đích thực:
+- **Nguyên khối siêu phẳng (Monolithic Flat Design):** Áp dụng ngôn ngữ thiết kế của Vercel/Linear. Mọi đường viền thừa thãi (`borders`), các thanh kéo chia cắt đều được xóa bỏ hoặc "tàng hình" (Ghost buttons, Invisible splitters).
+- **Dynamic Focus States:** Sự tĩnh lặng tuyệt đối cho đến khi bạn tương tác. Khi bàn phím tập trung vào Table Editor, một viền sáng `PRIMARY_PURPLE` sẽ rực lên kèm hiệu ứng Elevation (đẩy nổi thẻ), báo hiệu trực quan luồng xử lý hiện tại của hệ thống.
+- **Spacious Rows:** Padding được nới lỏng tạo thành những "dòng thở", giảm thiểu áp lực thị giác khi rà soát phụ đề trong nhiều giờ liên tục.
+
+---
+
+### 🧲 4. Magnetic Timeline & Sync
+Khu vực Timeline đã chính thức sở hữu "trọng lực" của riêng mình, mang lại độ chính xác khung hình (Frame-accurate):
+- **Thuật toán Từ tính O(1):** Cơ chế bắt dính thông minh (Magnetic Snapping) hoạt động với thời gian thực. Bán kính từ trường 150ms giúp khối phụ đề tự động "hít" chuẩn xác vào các khối lân cận hoặc Playhead.
+- **Snap Bypass (Vô hiệu hóa Từ tính):** Chỉ cần đè phím `Alt` trong lúc kéo chuột, lực hút lập tức bị triệt tiêu, trả lại quyền vi chỉnh (micro-adjust) ở cấp độ mili-giây cho người dùng.
+- **Collision & Inversion Guard:** Không bao giờ có hiện tượng đâm xuyên hoặc kéo âm thời gian.
+- **Phản hồi Thị giác (Laser Guide):** Một tia laser màu Cyan (vạch định tuyến) chớp lên mỗi lần bắt dính thành công. Cùng với đó, đồng hồ thời gian (Local Time Scrubbing) duy trì 20 FPS ổn định, mượt mà bám sát từng mili-giây kéo chuột của người dùng.
+
+---
+**AI Subtitle Studio v1.0.0** – *Xóa bỏ thao tác thừa, tối đa hóa sức mạnh của AI.*

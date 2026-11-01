@@ -1,0 +1,64 @@
+import os
+import unittest
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+try:
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication
+    from ui.Gui import MainWindow
+except (ImportError, ModuleNotFoundError):
+    QApplication = None
+    QTest = None
+    MainWindow = None
+
+
+@unittest.skipIf(QApplication is None, "PySide6 is unavailable in bundled runtime")
+class TestDrawerUI(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        self.window = MainWindow()
+        self.window._drawer_target_width = 350
+        self.window.show()
+
+    def test_drawer_toggle_animation_and_state(self):
+        dock = self.window.generation_dock
+        button = self.window.btn_drawer_toggle
+
+        self.assertTrue(dock.isVisible())
+        self.assertFalse(button.icon().isNull())
+        self.assertGreaterEqual(button.width(), 32)
+        self.assertGreaterEqual(button.height(), 64)
+        self.assertGreaterEqual(self.window.btn_minimize.width(), 32)
+        self.assertGreaterEqual(self.window.btn_close.width(), 32)
+
+        from PySide6.QtCore import QAbstractAnimation
+
+        QTest.mouseClick(button, Qt.LeftButton)
+        for _ in range(30):
+            if self.window.drawer_anim.state() != QAbstractAnimation.Running:
+                break
+            QTest.qWait(50)
+        self.assertFalse(dock.isVisible())
+        self.assertFalse(button.icon().isNull())
+
+        QTest.mouseClick(button, Qt.LeftButton)
+        for _ in range(30):
+            if self.window.drawer_anim.state() != QAbstractAnimation.Running:
+                break
+            QTest.qWait(50)
+        self.assertTrue(dock.isVisible())
+        self.assertFalse(button.icon().isNull())
+        self.assertGreaterEqual(
+            dock.minimumWidth(),
+            350,
+            "Drawer phải khôi phục chiều rộng tối thiểu có thể sử dụng.",
+        )
+        self.assertEqual(dock.maximumWidth(), 390)
+
+    def tearDown(self):
+        self.window.close()

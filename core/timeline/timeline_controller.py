@@ -1,0 +1,418 @@
+from PySide6.QtCore import QEvent, QObject, Qt
+
+from core.timeline.timeline_commands import (
+    DeleteSegmentCommand,
+    MergeSegmentsCommand,
+    MoveSegmentCommand,
+    ResizeEndCommand,
+    ResizeStartCommand,
+    SplitSegmentCommand,
+)
+from core.timeline.timeline_state import TimelineState, TimelineStateManager
+from core.timeline.timeline_undo_manager import UndoRedoManager
+from core.subtitle_editing.commands.timeline_adapter import TimelineCommandAdapter
+from core.subtitle_editing.selection_controller import SelectionSource
+from ui.timeline.subtitle_track import EditMode
+from ui.toast import Toast
+
+
+class TimelineController(QObject):
+    """Điều phối Tương tác UI -> Cập nhật State Machine -> Đẩy lệnh vào Artifact Store"""
+    
+    def __init__(self, project_service, ui_widget, data_provider, undo_manager=None, selection_controller=None):
+        super().__init__()
+        self.project = project_service
+        self.ui = ui_widget
+        self.data_provider = data_provider 
+        self.state_manager = TimelineStateManager()
+        self.undo_manager = undo_manager or UndoRedoManager()
+        self.selection_controller = selection_controller
+        self._range_drag_start_ms = None
+
+        self.ui.setFocusPolicy(Qt.StrongFocus)
+        if hasattr(self.ui.container, 'waveform'):
+            self.ui.container.waveform.setFocusPolicy(Qt.StrongFocus)
+        if hasattr(self.ui.container, 'ruler'):
+            self.ui.container.ruler.setFocusPolicy(Qt.StrongFocus)
+            
+        self.ui.container.track.edit_committed.connect(self.handle_edit_commit)
+        self.ui.container.track.segment_clicked.connect(self._on_track_selection_changed)
+        self.ui.container.track.selection_cleared.connect(self._clear_selection)
+        self.ui.generation_range_selected.connect(self._clear_selection)
+        if hasattr(self.ui, "gap_selected"):
+            self.ui.gap_selected.connect(self._on_gap_selected)
+        
+        self.ui.installEventFilter(self)
+        if hasattr(self.ui.container, 'ruler'):
+            self.ui.container.ruler.installEventFilter(self)
+        if hasattr(self.ui.container, 'waveform'):
+            self.ui.container.waveform.installEventFilter(self)
+        self.ui.container.track.installEventFilter(self)
+
+        if self.selection_controller:
+            self.selection_controller.selection_changed.connect(self.sync_selection)
+            activation_signal = getattr(
+                self.selection_controller, "editor_activation_requested", None
+            )
+            if activation_signal is not None:
+                activation_signal.connect(self.sync_editor_activation)
+
+    def sync_from_editor_segments(self, editor_segments):
+        """Refresh timeline wrappers when editor data arrives after timeline setup."""
+        duration_ms = max(
+            0,
+            int(
+                getattr(self.ui, "duration_ms", 0)
+                or self.data_provider.get_duration_ms()
+            ),
+        )
+        if duration_ms <= 0:
+            return
+
+        waveform_data = self.ui.container.waveform.waveform_data
+        self.data_provider.load_runtime_data(editor_segments or [], duration_ms)
+        self.ui.load_project_data(
+            duration_ms,
+            self.data_provider.get_all_segments(),
+            waveform_data,
+        )
+
+        if getattr(self, "selection_controller", None):
+            self.sync_selection(
+                self.selection_controller.selected_index,
+                self.selection_controller.selected_segment_id,
+                SelectionSource.PROGRAMMATIC,
+            )
+
+    def sync_editor_activation(self, index, segment_id):
+        track = self.ui.container.track
+        segment = None
+        if segment_id:
+            segment = next(
+                (candidate for candidate in track.segments if candidate.segment_id == segment_id),
+                None,
+            )
+        if segment is None and 0 <= index < len(track.segments):
+            segment = track.segments[index]
+        if segment is None:
+            return
+
+        track.set_selection({segment.segment_id})
+        self.ui.container.waveform.set_selected_range(segment.start_ms, segment.end_ms)
+        if hasattr(self.ui, "center_on_time"):
+            self.ui.center_on_time((segment.start_ms + segment.end_ms) // 2)
+
+    def sync_selection(self, index, segment_id, source=None):
+        if getattr(self, "_syncing_track_selection", False):
+            return
+        if hasattr(self.ui, "clear_gap_selection"):
+            self.ui.clear_gap_selection()
+        track = self.ui.container.track
+        segment = None
+        if segment_id:
+            segment = next(
+                (candidate for candidate in track.segments if candidate.segment_id == segment_id),
+                None,
+            )
+        if (
+            segment is None
+            and (source in (SelectionSource.EDITOR, SelectionSource.PLAYBACK, SelectionSource.PROGRAMMATIC) or not segment_id)
+            and 0 <= index < len(track.segments)
+        ):
+            segment = track.segments[index]
+
+        if segment is None:
+            track.set_selection(set())
+            self.ui.container.waveform.clear_selected_range()
+            return
+
+        track.set_selection({segment.segment_id})
+        self.ui.container.waveform.set_selected_range(segment.start_ms, segment.end_ms)
+        if hasattr(self.ui, "refresh_segment_focus"):
+            self.ui.refresh_segment_focus()
+
+        if source == SelectionSource.EDITOR and hasattr(self.ui, "center_on_time"):
+            midpoint_ms = (segment.start_ms + segment.end_ms) // 2
+            self.ui.center_on_time(midpoint_ms)
+
+    def _on_gap_selected(self, gap):
+        self._clear_selection()
+
+    def _clear_selection(self):
+        if self.selection_controller:
+            self.selection_controller.clear_selection(SelectionSource.TIMELINE)
+
+    def _on_track_selection_changed(self, *_):
+        track = self.ui.container.track
+        selected_ids = set(track.selected_ids)
+        same_selection = (
+            self.selection_controller
+            and len(selected_ids) == 1
+            and self.selection_controller.selected_segment_id in selected_ids
+            and self.ui.generation_range is None
+        )
+        if not same_selection:
+            self.ui.clear_gap_selection()
+        if self.selection_controller:
+            if len(selected_ids) == 1:
+                segment_id = next(iter(selected_ids))
+                index = next((i for i, s in enumerate(track.segments) if s.segment_id == segment_id), -1)
+                self.selection_controller.select(index, segment_id, SelectionSource.TIMELINE)
+            else:
+                self._syncing_track_selection = True
+                try:
+                    self.selection_controller.clear_selection(SelectionSource.TIMELINE)
+                finally:
+                    self._syncing_track_selection = False
+        track.set_selection(selected_ids)
+        self.ui.refresh_segment_focus()
+
+    # --- TÍNH NĂNG MỚI: ĐỒNG BỘ TỪ BẢNG CHỮ LÊN TIMELINE ---
+    def sync_from_editor(self, ms: int):
+        """Đồng bộ từ Bảng chữ lên Timeline: Bôi đen khối phụ đề và tự động cuộn Timeline tới đó"""
+        track = self.ui.container.track
+        found_id = None
+        for seg in track.segments:
+            if seg.start_ms - 50 <= ms <= seg.end_ms + 50:
+                found_id = seg.segment_id
+                break
+        
+        if found_id:
+            track.selected_ids = {found_id}
+        else:
+            track.selected_ids.clear()
+            
+        track.update()
+        self._on_track_selection_changed()
+
+        # Tự động cuộn thanh Scroll của Timeline
+        from PySide6.QtWidgets import QScrollArea
+        scroll_area = self.ui if isinstance(self.ui, QScrollArea) else self.ui.findChild(QScrollArea)
+        if scroll_area:
+            x = track._ms_to_x(ms)
+            scrollbar = scroll_area.horizontalScrollBar()
+            viewport_width = scroll_area.viewport().width()
+            target_scroll = x - (viewport_width // 2) # Tính toán đưa khối ra giữa màn hình
+            target_scroll = max(0, min(target_scroll, scrollbar.maximum()))
+            scrollbar.setValue(target_scroll)
+    # -------------------------------------------------------
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.MouseButtonPress:
+            if event.button() == Qt.LeftButton:
+                obj.setFocus() 
+                if obj is self.ui.container.track:
+                    segment, mode = obj.get_hit_target(event.position().x())
+                    if segment and mode != EditMode.NONE:
+                        self.ui.timing_edit_started.emit()
+                if obj in (self.ui.container.ruler, self.ui.container.waveform):
+                    self.ui.auto_scroll_enabled = False
+                    if (
+                        obj is self.ui.container.waveform
+                        and event.modifiers() & Qt.ShiftModifier
+                    ):
+                        self.ui.clear_gap_selection()
+                        self._range_drag_start_ms = self._x_to_ms(event.pos().x())
+                        self._update_visual_range(event.pos().x())
+                        return True
+                    self._do_seek(event.pos().x(), event.modifiers())
+                    return True 
+        elif event.type() == QEvent.MouseMove and (event.buttons() & Qt.LeftButton):
+            if obj in (self.ui.container.ruler, self.ui.container.waveform):
+                if obj is self.ui.container.waveform and self._range_drag_start_ms is not None:
+                    self._update_visual_range(event.pos().x())
+                    return True
+                self._do_seek(event.pos().x(), event.modifiers())
+                return True
+        elif event.type() == QEvent.MouseButtonRelease:
+            if obj is self.ui.container.waveform and self._range_drag_start_ms is not None:
+                self._update_visual_range(event.pos().x())
+                self._range_drag_start_ms = None
+                return True
+        elif event.type() == QEvent.KeyPress:
+            key = event.key()
+            modifiers = event.modifiers()
+            if key in (Qt.Key_T, Qt.Key_X) or (modifiers == Qt.ControlModifier and key == Qt.Key_K):
+                self._trigger_split()
+                return True
+            elif key == Qt.Key_M:
+                self._trigger_merge()
+                return True
+            elif key == Qt.Key_Delete:
+                self._trigger_delete()
+                return True
+            elif key == Qt.Key_R and modifiers == Qt.NoModifier:
+                if hasattr(self.ui, "play_segment_requested"):
+                    self.ui.play_segment_requested.emit()
+                return True
+        return super().eventFilter(obj, event)
+
+    def _x_to_ms(self, x):
+        scale = self.ui.container.waveform.pixels_per_second
+        return max(0, min(self.ui.duration_ms, int(x * 1000.0 / scale)))
+
+    def _update_visual_range(self, x):
+        end_ms = self._x_to_ms(x)
+        start_ms = min(self._range_drag_start_ms, end_ms)
+        end_ms = max(self._range_drag_start_ms, end_ms)
+        if end_ms > start_ms:
+            self.ui.set_generation_range(start_ms, end_ms)
+
+    def _do_seek(self, x, modifiers=Qt.NoModifier):
+        pixels_per_sec = self.ui.container.track.pixels_per_second
+        target_ms = int((x / pixels_per_sec) * 1000.0)
+        target_ms = max(0, target_ms) 
+        
+        if hasattr(self.ui, 'seek_requested'):
+            self.ui.seek_requested.emit(target_ms)
+        if hasattr(self.ui, 'update_playhead'):
+            self.ui.update_playhead(target_ms)
+
+        if modifiers != Qt.ControlModifier:
+            track = self.ui.container.track
+            found_seg = None
+            for seg in track.segments:
+                if seg.start_ms <= target_ms <= seg.end_ms:
+                    found_seg = seg
+                    break
+            
+            if found_seg:
+                track.selected_ids = {found_seg.segment_id}
+            else:
+                track.selected_ids.clear()
+            track.update()
+            self._on_track_selection_changed()
+
+    def _trigger_split(self):
+        track = self.ui.container.track
+        target_id = track.hovered_id if track.hovered_id != "" else next(iter(track.selected_ids), "")
+        playhead = track.playhead_ms
+        
+        if not target_id:
+            for seg in track.segments:
+                if getattr(seg, 'start_ms', 0) <= playhead <= getattr(seg, 'end_ms', 0):
+                    target_id = seg.segment_id
+                    break
+                    
+        if target_id: 
+            cmd = SplitSegmentCommand(self.project, self.data_provider, target_id, playhead)
+            if cmd.can_execute(None):
+                self._execute_safe(cmd)
+            else:
+                Toast.show_info(self.ui.window(), "Không thể cắt quá sát 2 mép của khối phụ đề (Cần cách lề 50ms)!")
+        else:
+            Toast.show_info(self.ui.window(), "Chưa chọn khối phụ đề hoặc kim không nằm trên phụ đề nào để cắt.")
+
+    def _trigger_merge(self):
+        track = self.ui.container.track
+        if len(track.selected_ids) >= 2: 
+            cmd = MergeSegmentsCommand(self.project, self.data_provider, track.selected_ids)
+            if cmd.can_execute(None):
+                self._execute_safe(cmd)
+                if hasattr(cmd, 'target_segment') and cmd.target_segment:
+                    self.ui.container.track.selected_ids = {cmd.target_segment.segment_id}
+                    self._on_track_selection_changed()
+            else:
+                Toast.show_info(self.ui.window(), "Chỉ có thể gộp các khối phụ đề đứng cạnh nhau!")
+        else:
+            Toast.show_info(self.ui.window(), "Hãy giữ Ctrl và Click chuột chọn ít nhất 2 khối để gộp.")
+
+    def _trigger_delete(self):
+        track = self.ui.container.track
+        if track.selected_ids: 
+            cmd = DeleteSegmentCommand(self.project, self.data_provider, track.selected_ids)
+            if cmd.can_execute(None):
+                self._execute_safe(cmd)
+                self.ui.container.track.selected_ids.clear()
+                self._clear_selection()
+        else:
+            Toast.show_info(self.ui.window(), "Chưa chọn khối phụ đề nào để xóa.")
+
+    def handle_edit_commit(self, segment_id: str, mode: EditMode, delta_ms: int):
+        self.ui.timing_edit_started.emit()
+        if not self.state_manager.can_transition(TimelineState.COMMITTING):
+            self.ui.container.track.update()
+            return
+        self.state_manager.transition_to(TimelineState.COMMITTING)
+        try:
+            command = None
+            if mode == EditMode.MOVE: command = MoveSegmentCommand(self.project, self.data_provider, segment_id, delta_ms)
+            elif mode == EditMode.RESIZE_LEFT: command = ResizeStartCommand(self.project, self.data_provider, segment_id, delta_ms)
+            elif mode == EditMode.RESIZE_RIGHT: command = ResizeEndCommand(self.project, self.data_provider, segment_id, delta_ms)
+
+            if command and command.can_execute(None):
+                if self._push_command(command):
+                    self._refresh_ui()
+                else:
+                    self.ui.container.track.update()
+            else:
+                self.ui.container.track.update()
+        finally:
+            self.state_manager.transition_to(TimelineState.IDLE)
+
+    def handle_undo(self):
+        if not self.state_manager.can_transition(TimelineState.COMMITTING):
+            return
+            
+        self.state_manager.transition_to(TimelineState.COMMITTING)
+        try:
+            if self.undo_manager.undo():
+                self._refresh_ui()
+        except Exception as e:
+            import traceback
+            print(f"[TIMELINE-UNDO-ERROR] Lỗi khi thực hiện Undo: {e}")
+            traceback.print_exc()
+            Toast.show_error(self.ui.window(), f"Lỗi Undo: {str(e)}")
+        finally:
+            self.state_manager.transition_to(TimelineState.IDLE)
+
+    def handle_redo(self):
+        if not self.state_manager.can_transition(TimelineState.COMMITTING):
+            return
+            
+        self.state_manager.transition_to(TimelineState.COMMITTING)
+        try:
+            if self.undo_manager.redo():
+                self._refresh_ui()
+        except Exception as e:
+            import traceback
+            print(f"[TIMELINE-REDO-ERROR] Lỗi khi thực hiện Redo: {e}")
+            traceback.print_exc()
+            Toast.show_error(self.ui.window(), f"Lỗi Redo: {str(e)}")
+        finally:
+            self.state_manager.transition_to(TimelineState.IDLE)
+
+    def _execute_safe(self, command):
+        if not self.state_manager.can_transition(TimelineState.COMMITTING): return
+        self.state_manager.transition_to(TimelineState.COMMITTING)
+        try:
+            if self._push_command(command):
+                self._refresh_ui()
+        finally:
+            self.state_manager.transition_to(TimelineState.IDLE)
+
+    def _push_command(self, command):
+        if not command.can_execute(None):
+            return False
+        if hasattr(self.undo_manager, "push"):
+            self.undo_manager.push(TimelineCommandAdapter(command))
+            return True
+        return self.undo_manager.execute_command(command, self.state_manager)
+
+    def _refresh_ui(self):
+        # 1. ĐỒNG BỘ DATA & SẮP XẾP TRƯỚC
+        self.data_provider.sync_back_to_editor()
+        
+        # 2. ĐẨY LÊN TIMELINE VIEW SAU (Lúc này danh sách đã được sắp xếp chuẩn 100%)
+        self.ui.load_project_data(self.data_provider.get_duration_ms(), self.data_provider.get_all_segments())
+        if self.selection_controller:
+            segment_id = self.selection_controller.selected_segment_id
+            if segment_id and self.data_provider.get_segment(segment_id) is None:
+                self.selection_controller.clear_selection()
+            else:
+                self.sync_selection(self.selection_controller.selected_index, segment_id)
+        
+        # 3. VẼ LẠI TABLE BÊN DƯỚI
+        main_window = self.ui.window()
+        if hasattr(main_window, 'sub_editor'):
+            main_window.sub_editor.render_page()

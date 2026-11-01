@@ -1,0 +1,324 @@
+import re
+from dataclasses import dataclass
+
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPen
+from PySide6.QtWidgets import QLabel, QSizePolicy
+
+from ui.animations.animation_types import SubtitleAnimationState, SubtitleRenderInput
+from ui.animations.subtitle_animation_controller import SubtitleAnimationController
+from core.subtitle_placement import SubtitlePlacementState
+
+
+@dataclass
+class VisualLine:
+    text: str
+    start_char_idx: int
+    end_char_idx: int
+
+
+@dataclass
+class SubtitleLayout:
+    visual_lines: list[VisualLine]
+    line_origins: list[QPointF]
+    base_bounds: QRectF
+    rendered_bounds: QRectF
+    base_anchor: QPointF
+
+
+class SubtitleOverlay(QLabel):
+    def __init__(self, parent=None, controller: SubtitleAnimationController = None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        self.anim_controller = controller
+        self.render_input: SubtitleRenderInput | None = None
+        self.current_time_ms = 0
+
+        self.font_family = "Arial"
+        self.font_size = 20
+        self.text_color = QColor("white")
+        self.outline_color = QColor("black")
+        self.outline_width = 2
+        self.position_mode = "Bottom"
+        self.placement_state = SubtitlePlacementState()
+        self.custom_presets: dict = {}
+        self.highlight_color = QColor("#00E5FF")
+
+        self.update_style()
+
+    def update_style(self, family=None, size=None, color=None, out_color=None, out_width=None, position=None):
+        if family: self.font_family = family
+        if size is not None: self.font_size = int(size)
+        if color: self.text_color = QColor(color)
+        if out_color: self.outline_color = QColor(out_color)
+        if out_width is not None: self.outline_width = int(out_width)
+        if position:
+            self.position_mode = position
+            mode = {"Top": "top", "Middle": "center", "Center": "center", "Bottom": "bottom", "Custom": "custom"}.get(position, "bottom")
+            self.placement_state = SubtitlePlacementState(
+                mode=mode,
+                x=self.placement_state.x,
+                y=self.placement_state.y,
+            )
+
+        self.custom_font = QFont(self.font_family)
+        self.custom_font.setPixelSize(self.font_size)
+        self.custom_font.setBold(True)
+        self.update()
+
+    def set_placement_state(self, mode, x=None, y=None):
+        self.placement_state = SubtitlePlacementState(
+            mode=mode,
+            x=self.placement_state.x if x is None else x,
+            y=self.placement_state.y if y is None else y,
+        )
+        self.position_mode = {
+            "top": "Top",
+            "center": "Middle",
+            "bottom": "Bottom",
+            "custom": "Custom",
+        }[self.placement_state.mode]
+        self.update()
+
+    def update_subtitle(self, render_input: SubtitleRenderInput, current_time_ms: int):
+        self.render_input = render_input
+        self.current_time_ms = current_time_ms
+        self.update()
+
+    def clear_subtitle(self):
+        self.render_input = None
+        if self.anim_controller:
+            self.anim_controller.current_state.reset()
+        self.update()
+
+    def set_custom_presets(self, custom_presets: dict | None):
+        self.custom_presets = dict(custom_presets or {})
+        self.update()
+
+    def get_active_resolved_style(self, custom_presets: dict | None = None) -> dict:
+        preset = getattr(self.render_input, "style_preset", None) if self.render_input else None
+        global_s = {
+            "font_name": self.font_family,
+            "font_size": self.font_size,
+            "font_color": self.text_color.name(),
+            "outline_color": self.outline_color.name(),
+            "outline_width": self.outline_width,
+        }
+        from core.subtitle_quality.style_preset_resolver import StylePresetResolver
+        presets = custom_presets if custom_presets is not None else getattr(self, "custom_presets", None)
+        return StylePresetResolver.resolve_style(preset, global_s, custom_presets=presets)
+
+    def get_active_font(self) -> tuple[QFont, QColor, float, QColor]:
+        resolved = self.get_active_resolved_style()
+        font = QFont(resolved.get("font_name", self.font_family))
+        font.setPixelSize(int(resolved.get("font_size", self.font_size)))
+        font.setBold(bool(resolved.get("bold", False)))
+        font.setItalic(bool(resolved.get("italic", False)))
+        text_color = QColor(resolved.get("font_color", self.text_color.name()))
+        outline_width = float(resolved.get("outline_width", self.outline_width))
+        outline_color = QColor(resolved.get("outline_color", self.outline_color.name()))
+        return font, text_color, outline_width, outline_color
+
+    def _wrap_text_with_mapping(self, text: str, fm: QFontMetricsF, max_width: float) -> list[VisualLine]:
+        """Chia dòng thông minh và bảo toàn 100% chỉ số ký tự gốc (Bao gồm Multi-spaces/Tabs)"""
+        visual_lines: list[VisualLine] = []
+        raw_lines = text.split('\n')
+        global_char_offset = 0
+
+        for r_idx, raw_line in enumerate(raw_lines):
+            # Tách chuỗi theo cụm khoảng trắng, GIỮ LẠI các khoảng trắng trong mảng kết quả
+            tokens = re.split(r'(\s+)', raw_line)
+            cur_line = ""
+            cur_line_start = global_char_offset
+            
+            for token in tokens:
+                if not token:
+                    continue
+                    
+                test_line = cur_line + token
+                if fm.horizontalAdvance(test_line) <= max_width:
+                    cur_line = test_line
+                else:
+                    # Nếu dòng đã có chữ, ngắt dòng
+                    if cur_line.strip():
+                        visual_lines.append(VisualLine(cur_line, cur_line_start, cur_line_start + len(cur_line)))
+                        cur_line_start += len(cur_line)
+                        cur_line = token
+                    else:
+                        # Fallback cho CJK hoặc 1 từ đơn dài hơn cả khung hình
+                        temp = cur_line
+                        for ch in token:
+                            if fm.horizontalAdvance(temp + ch) > max_width and temp:
+                                visual_lines.append(VisualLine(temp, cur_line_start, cur_line_start + len(temp)))
+                                cur_line_start += len(temp)
+                                temp = ""
+                            temp += ch
+                        cur_line = temp
+
+            if cur_line:
+                visual_lines.append(VisualLine(cur_line, cur_line_start, cur_line_start + len(cur_line)))
+
+            # Cộng thêm 1 cho ký tự '\n' bị mất khi split ban đầu (trừ dòng cuối)
+            global_char_offset += len(raw_line) + (1 if r_idx < len(raw_lines) - 1 else 0)
+
+        return visual_lines
+
+    def _snap_to_word_boundary(self, line: str, target_idx: int) -> int:
+        if target_idx <= 0: return 0
+        if target_idx >= len(line) or ' ' not in line: return target_idx
+        idx = target_idx
+        while idx < len(line) and line[idx] != ' ':
+            idx += 1
+        return idx
+
+    def calculate_layout(self) -> SubtitleLayout | None:
+        if not self.render_input or not self.render_input.text.strip():
+            return None
+
+        visual_state = (
+            self.anim_controller.calculate_state(self.current_time_ms, self.render_input)
+            if self.anim_controller
+            else None
+        )
+        if visual_state and (visual_state.animation_state == SubtitleAnimationState.HIDDEN or visual_state.opacity <= 0):
+            return None
+
+        active_font, _, active_outline_width, _ = self.get_active_font()
+        fm = QFontMetricsF(active_font)
+        lines = self._wrap_text_with_mapping(self.render_input.text, fm, self.width() * 0.90)
+        if not lines:
+            return None
+
+        outline = float(active_outline_width)
+        line_height = fm.height()
+        total_height = line_height * len(lines)
+        max_line_width = max(fm.horizontalAdvance(line.text) for line in lines)
+        half_width = (max_line_width + outline * 2) / 2
+        half_height = (total_height + outline * 2) / 2
+
+        mode = self.placement_state.mode
+        if mode == "top":
+            anchor_y = 40 + half_height
+        elif mode == "center":
+            anchor_y = self.height() / 2
+        elif mode == "custom":
+            anchor_y = self.placement_state.y * self.height()
+        else:
+            anchor_y = self.height() - 40 - half_height
+        anchor_x = self.width() / 2 if mode != "custom" else self.placement_state.x * self.width()
+
+        anchor_x = max(half_width, min(self.width() - half_width, anchor_x))
+        anchor_y = max(half_height, min(self.height() - half_height, anchor_y))
+        base_anchor = QPointF(anchor_x, anchor_y)
+        top_left_x = anchor_x - max_line_width / 2
+        top_left_y = anchor_y - total_height / 2
+
+        line_origins = []
+        current_y = top_left_y + fm.ascent()
+        for line in lines:
+            line_origins.append(QPointF(anchor_x - fm.horizontalAdvance(line.text) / 2, current_y))
+            current_y += line_height
+
+        base_bounds = QRectF(
+            anchor_x - half_width,
+            anchor_y - half_height,
+            half_width * 2,
+            half_height * 2,
+        )
+        y_offset = visual_state.y_offset if visual_state else 0.0
+        rendered_bounds = base_bounds.translated(0, y_offset)
+        rendered_origins = [origin + QPointF(0, y_offset) for origin in line_origins]
+        return SubtitleLayout(lines, rendered_origins, base_bounds, rendered_bounds, base_anchor)
+
+    def is_inside_video(self, bounds: QRectF) -> bool:
+        return bounds.left() >= 0 and bounds.top() >= 0 and bounds.right() <= self.width() and bounds.bottom() <= self.height()
+
+    def hit_test(self, point) -> bool:
+        if not isinstance(point, QPointF):
+            point = QPointF(*point)
+        layout = self.calculate_layout()
+        return bool(layout and layout.rendered_bounds.contains(point))
+
+    def paintEvent(self, event):
+        if not self.render_input or not self.render_input.text.strip():
+            return
+
+        layout = self.calculate_layout()
+        if not layout:
+            return
+
+        active_font, active_text_color, active_outline_width, active_outline_color = self.get_active_font()
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.TextAntialiasing)
+        painter.setFont(active_font)
+
+        fm = QFontMetricsF(active_font)
+        visual_state = self.anim_controller.calculate_state(self.current_time_ms, self.render_input) if self.anim_controller else None
+        if visual_state:
+            painter.setOpacity(visual_state.opacity)
+            self._draw_animated(painter, fm, layout, visual_state, active_text_color, active_outline_width, active_outline_color)
+        else:
+            painter.setOpacity(1.0)
+            self._draw_static(painter, fm, layout, active_text_color, active_outline_width, active_outline_color)
+
+    def _draw_static(self, painter, fm, layout: SubtitleLayout, text_color: QColor | None = None, outline_width: float | None = None, outline_color: QColor | None = None):
+        color = text_color if text_color is not None else self.text_color
+        for v_line, origin in zip(layout.visual_lines, layout.line_origins):
+            self._draw_text_path(painter, origin.x(), origin.y(), v_line.text, color, outline_width, outline_color)
+
+    def _draw_animated(self, painter, fm, layout: SubtitleLayout, state, text_color: QColor | None = None, outline_width: float | None = None, outline_color: QColor | None = None):
+        color = text_color if text_color is not None else self.text_color
+        is_reveal = state.visible_chars != -1
+        is_highlight = state.highlight_chars > 0
+
+        for v_line, origin in zip(layout.visual_lines, layout.line_origins):
+            # Layout cố định hình học theo toàn bộ dòng chữ
+            start_x = origin.x()
+            current_y = origin.y()
+
+            if is_reveal:
+                if state.visible_chars <= v_line.start_char_idx:
+                    pass
+                elif state.visible_chars >= v_line.end_char_idx:
+                    self._draw_text_path(painter, start_x, current_y, v_line.text, color, outline_width, outline_color)
+                else:
+                    raw_cut = state.visible_chars - v_line.start_char_idx
+                    cut_idx = self._snap_to_word_boundary(v_line.text, raw_cut)
+                    self._draw_text_path(painter, start_x, current_y, v_line.text[:cut_idx], color, outline_width, outline_color)
+
+            elif is_highlight:
+                if state.highlight_chars <= v_line.start_char_idx:
+                    self._draw_text_path(painter, start_x, current_y, v_line.text, color, outline_width, outline_color)
+                elif state.highlight_chars >= v_line.end_char_idx:
+                    self._draw_text_path(painter, start_x, current_y, v_line.text, self.highlight_color, outline_width, outline_color)
+                else:
+                    raw_cut = state.highlight_chars - v_line.start_char_idx
+                    cut_idx = self._snap_to_word_boundary(v_line.text, raw_cut)
+                    hl_part = v_line.text[:cut_idx]
+                    norm_part = v_line.text[cut_idx:]
+
+                    self._draw_text_path(painter, start_x, current_y, hl_part, self.highlight_color, outline_width, outline_color)
+                    offset_x = fm.horizontalAdvance(hl_part)
+                    self._draw_text_path(painter, start_x + offset_x, current_y, norm_part, color, outline_width, outline_color)
+            else:
+                self._draw_text_path(painter, start_x, current_y, v_line.text, color, outline_width, outline_color)
+
+            current_y += fm.height()
+
+    def _draw_text_path(self, painter, x: float, y: float, text: str, fill_color: QColor, outline_width: float | None = None, outline_color: QColor | None = None):
+        if not text: return
+        path = QPainterPath()
+        path.addText(x, y, painter.font(), text)
+        ow = self.outline_width if outline_width is None else outline_width
+        if ow > 0:
+            out_c = outline_color if outline_color is not None else QColor(self.get_active_resolved_style().get("outline_color", self.outline_color.name()))
+            pen = QPen(out_c, ow, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+            painter.setPen(pen)
+            painter.drawPath(path)
+        painter.setPen(Qt.NoPen)
+        painter.fillPath(path, fill_color)

@@ -1,0 +1,37 @@
+venv/
+.venv/
+
+# Local runtime diagnostics & test artifacts
+Error.txt
+MA4_MA7_manual_test_data.zip
+artifacts/
+app_settings.json
+core/app_settings.json
+MagicMock/
+.pytest_cache/
+.superpowers/
+
+# Build & packaging
+build/
+dist/
+release/
+bin/
+Backup/
+Output/
+ffmpeg/
+*.spec.bak
+stuck_screenshot*.png
+
+# Python & IDE
+__pycache__/
+*.pyc
+*.py[cod]
+*.log
+settings.json
+.idea/
+.vscode/
+
+# Models binary files
+models/*.gguf
+models/*.bin
+models/*.onnx

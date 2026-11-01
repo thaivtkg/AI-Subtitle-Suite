@@ -1,0 +1,644 @@
+import os
+from PySide6.QtCore import QEvent, QPointF, Signal
+
+from PySide6.QtCore import QRectF, QSizeF, Qt, QUrl
+from PySide6.QtGui import QPainter
+from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
+from PySide6.QtWidgets import (
+    QGraphicsScene,
+    QGraphicsView,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSlider,
+    QStyle,
+    QVBoxLayout,
+    QWidget,
+)
+
+from core.subtitle_controller import SubtitleController
+from core.subtitle_placement import PlacementEditSession
+from player.subtitle_overlay import SubtitleOverlay
+from ui.animations.animation_config import SubtitleAnimationConfig
+from ui.animations.animation_types import SubtitleRenderInput
+from ui.animations.subtitle_animation_controller import SubtitleAnimationController
+
+
+class CustomGraphicsView(QGraphicsView):
+    def __init__(self, scene, video_item, overlay_proxy, parent=None):
+        super().__init__(scene, parent)
+        self.video_item = video_item
+        self.overlay_proxy = overlay_proxy
+        
+        # Cấu hình render tối ưu, mượt mà
+        self.setRenderHint(QPainter.Antialiasing)
+        self.setRenderHint(QPainter.SmoothPixmapTransform)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        
+        # Giữ nền Đen tuyền (#000000) để tạo dải viền vô cực (Cinematic)
+        self.setStyleSheet("background-color: #000000; border-radius: 8px; border: none;")
+
+        # [FIX] Khóa căn giữa tuyệt đối cho khung nhìn
+        self.setAlignment(Qt.AlignCenter)
+
+        # Tắt Aspect Ratio mặc định của Qt để tự tính toán thủ công (chống lệch sang phải)
+        self.video_item.setAspectRatioMode(Qt.IgnoreAspectRatio)
+        
+        # Lắng nghe sự thay đổi khung hình thực tế của Video để cập nhật
+        self.video_item.nativeSizeChanged.connect(self.update_layout)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.update_layout()
+
+    def update_layout(self, *args):
+        """Tự động tính toán khung hình để video và subtitle luôn nằm chính giữa, không bị méo."""
+        view_w = self.viewport().width()
+        view_h = self.viewport().height()
+
+        if view_w <= 0 or view_h <= 0:
+            return
+
+        # Ép không gian diễn họa (Scene) bằng đúng kích thước Viewport
+        self.scene().setSceneRect(0, 0, view_w, view_h)
+
+        native_size = self.video_item.nativeSize()
+        
+        if native_size.isValid() and native_size.width() > 0 and native_size.height() > 0:
+            aspect = native_size.width() / native_size.height()
+            target_w = view_w
+            target_h = int(target_w / aspect)
+
+            # Nếu chiều cao tính ra lớn hơn khung nhìn, scale ngược lại theo chiều cao
+            if target_h > view_h:
+                target_h = view_h
+                target_w = int(target_h * aspect)
+
+            # Tọa độ căn giữa
+            pos_x = (view_w - target_w) / 2
+            pos_y = (view_h - target_h) / 2
+
+            self.video_item.setSize(QSizeF(target_w, target_h))
+            self.video_item.setPos(pos_x, pos_y)
+            
+            # Overlay phụ đề phải đè khớp chính xác lên khung hình video
+            self.overlay_proxy.setGeometry(QRectF(pos_x, pos_y, target_w, target_h))
+        else:
+            self.video_item.setSize(QSizeF(view_w, view_h))
+            self.video_item.setPos(0, 0)
+            self.overlay_proxy.setGeometry(QRectF(0, 0, view_w, view_h))
+
+
+class VideoPlayerWidget(QWidget):
+    timeline_position_changed = Signal(int)
+    subtitle_placement_preview_changed = Signal(object)
+    subtitle_placement_committed = Signal(object)
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        
+        self.anim_config = SubtitleAnimationConfig()
+        self.anim_controller = SubtitleAnimationController(self.anim_config)
+        
+        # [FIX] Thêm biến theo dõi dòng đang được Highlight để tránh spam UI
+        self._last_highlighted_stt = None 
+        self._current_playback_sub = None
+        self._position_edit_mode = False
+        self._placement_drag_session = None
+        self._placement_drag_offset = QPointF()
+        self._segment_range_provider = None
+        
+        self.init_ui()
+        self.init_player()
+
+    def init_ui(self):
+        # Layout chính của Player
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8) 
+
+        # --- VŨ KHÍ TỐI THƯỢNG: QGRAPHICSVIEW ---
+        self.scene = QGraphicsScene(self)
+
+        # 1. Video Item (Nằm dưới cùng)
+        self.video_item = QGraphicsVideoItem()
+        self.scene.addItem(self.video_item)
+
+        # 2. Subtitle Overlay (Lớp trên)
+        self.subtitle_overlay = SubtitleOverlay(controller=self.anim_controller)
+        self.subtitle_overlay.setStyleSheet("background: transparent;")
+        self.lbl_sub = self.subtitle_overlay
+        self._last_style_preset = None
+
+        self.overlay_proxy = self.scene.addWidget(self.subtitle_overlay)
+        self.overlay_proxy.setZValue(1)  
+
+        # 3. Tạo khung nhìn tổng
+        self.view = CustomGraphicsView(self.scene, self.video_item, self.overlay_proxy)
+        self.view.viewport().installEventFilter(self)
+        layout.addWidget(self.view, stretch=1)
+        
+        # =============================================================
+        # EMPTY STATE (Placeholder khi chưa có video)
+        # =============================================================
+        view_layout = QVBoxLayout(self.view)
+        
+        self.empty_state_lbl = QLabel(
+            "<div style='text-align: center;'>"
+            "<span style='font-size: 38px;'>🎬</span><br><br>"
+            "<span style='font-size: 14px; font-weight: bold; color: #F8FAFC;'>No video loaded</span><br><br>"
+            "<span style='font-size: 12px; color: #64748B;'>Select a video from the Queue to start editing</span>"
+            "</div>"
+        )
+        self.empty_state_lbl.setAlignment(Qt.AlignCenter)
+        self.empty_state_lbl.setStyleSheet("background: transparent; border: none;")
+        view_layout.addWidget(self.empty_state_lbl)
+
+        # =============================================================
+        # THANH ĐIỀU KHIỂN (MODERN CONTROL BAR)
+        # =============================================================
+        controls_layout = QHBoxLayout()
+        controls_layout.setContentsMargins(10, 4, 10, 8)
+        controls_layout.setSpacing(12)
+
+        self.btn_play = QPushButton()
+        self.btn_play.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
+        self.btn_play.setFixedSize(34, 34)
+        self.btn_play.setStyleSheet("""
+            QPushButton { 
+                background: #1B263B; 
+                border: none; 
+                border-radius: 17px; 
+            }
+            QPushButton:hover { background: #273247; }
+            QPushButton:pressed { background: #38BDF8; }
+        """)
+        self.btn_play.clicked.connect(self.toggle_playback)
+        controls_layout.addWidget(self.btn_play)    
+
+        # Timeline Slider
+        self.slider_seek = ClickableSlider(Qt.Horizontal)
+        self.slider_seek.setRange(0, 0)
+        self.slider_seek.setStyleSheet("""
+            QSlider::groove:horizontal { 
+                background: #172033; height: 4px; border-radius: 2px; 
+            }
+            QSlider::sub-page:horizontal { 
+                background: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 0, stop: 0 #8B5CF6, stop: 1 #EC4899); 
+                border-radius: 2px; 
+            }
+            QSlider::handle:horizontal { 
+                background: #F8FAFC; width: 12px; margin: -4px 0; border-radius: 6px; 
+            }
+            QSlider::handle:horizontal:hover { background: #38BDF8; }
+        """)
+        self.slider_seek.sliderMoved.connect(self.set_position)
+        controls_layout.addWidget(self.slider_seek)
+
+        # Label Thời gian
+        self.lbl_time = QLabel("00:00 / 00:00")
+        self.lbl_time.setStyleSheet("color: #94A3B8; font-size: 11px; font-weight: 500;")
+        controls_layout.addWidget(self.lbl_time)
+
+        # Icon Loa
+        self.lbl_vol_icon = QLabel("🔊")
+        self.lbl_vol_icon.setStyleSheet("color: #94A3B8; font-size: 14px; margin-left: 8px; background: transparent; border: none;")
+        controls_layout.addWidget(self.lbl_vol_icon)
+
+        # Volume Slider
+        self.slider_volume = QSlider(Qt.Horizontal)
+        self.slider_volume.setRange(0, 100)
+        self.slider_volume.setValue(80)
+        self.slider_volume.setMaximumWidth(70)
+        self.slider_volume.setToolTip("Volume: 80%")
+        self.slider_volume.setStyleSheet("""
+            QSlider::groove:horizontal { background: #172033; height: 4px; border-radius: 2px; }
+            QSlider::sub-page:horizontal { background: #38BDF8; border-radius: 2px; }
+            QSlider::handle:horizontal { background: #F8FAFC; width: 10px; margin: -3px 0; border-radius: 5px; }
+            QSlider::handle:horizontal:hover { background: #FFFFFF; }
+        """)
+        self.slider_volume.valueChanged.connect(self.set_volume)
+        controls_layout.addWidget(self.slider_volume)
+
+        layout.addLayout(controls_layout)
+
+    def set_position_edit_mode(self, enabled: bool):
+        self._position_edit_mode = bool(enabled)
+        if not self._position_edit_mode:
+            self._placement_drag_session = None
+
+    def _overlay_local_point(self, viewport_point):
+        scene_point = self.view.mapToScene(viewport_point)
+        return scene_point - self.overlay_proxy.geometry().topLeft()
+
+    def eventFilter(self, obj, event):
+        if obj is self.view.viewport() and self._position_edit_mode:
+            event_type = event.type()
+            if event_type == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+                local_point = self._overlay_local_point(event.position().toPoint())
+                layout = self.subtitle_overlay.calculate_layout()
+                if layout and self.subtitle_overlay.hit_test(local_point):
+                    self._placement_drag_offset = layout.base_anchor - local_point
+                    self._placement_drag_session = PlacementEditSession(
+                        self.subtitle_placement_committed.emit,
+                        self.subtitle_overlay.placement_state,
+                    )
+                    return True
+            elif event_type == QEvent.MouseMove and self._placement_drag_session:
+                local_point = self._overlay_local_point(event.position().toPoint())
+                anchor = local_point + self._placement_drag_offset
+                width = max(1, self.subtitle_overlay.width())
+                height = max(1, self.subtitle_overlay.height())
+                placement = self._placement_drag_session.move(anchor.x() / width, anchor.y() / height)
+                self.subtitle_overlay.set_placement_state(placement.mode, placement.x, placement.y)
+                self.subtitle_placement_preview_changed.emit(placement)
+                return True
+            elif event_type == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton and self._placement_drag_session:
+                self._placement_drag_session.release()
+                self._placement_drag_session = None
+                return True
+        return super().eventFilter(obj, event)
+
+    def init_player(self):
+        self.player = QMediaPlayer()
+        self.audio_output = QAudioOutput()
+        self.player.setAudioOutput(self.audio_output)
+        self.player.setVideoOutput(self.video_item)
+
+        self.sub_controller = SubtitleController()
+        self.player.positionChanged.connect(self._sync_subtitle_position)
+        
+        # [FIX CRITICAL] Đã xóa bỏ kết nối subtitle_cleared tại đây.
+        # Giao quyền quản lý hiển thị/ẩn hoàn toàn cho position_changed.
+
+        self.audio_output.setVolume(0.8)
+
+        self.player.positionChanged.connect(self.position_changed)
+        self.player.durationChanged.connect(self.duration_changed)
+        self.player.playingChanged.connect(self.update_play_button)
+        self.player.playingChanged.connect(self._on_playing_changed)
+
+        self.update_play_button()
+
+    def _is_legacy_wmv_format(self, file_path: str) -> bool:
+        if not file_path:
+            return False
+        lower = str(file_path).lower()
+        if lower.endswith((".wmv", ".asf")):
+            return True
+        if os.path.isfile(file_path):
+            try:
+                with open(file_path, "rb") as f:
+                    header = f.read(16)
+                    if header == b"\x30\x26\xb2\x75\x8e\x66\xcf\x11\xa6\xd9\x00\xaa\x00\x62\xce\x6c":
+                        return True
+            except Exception:
+                pass
+        return False
+
+    def load_video(self, file_path):
+        self.cancel_segment_playback(pause=True)
+        if os.path.exists(file_path):
+            self.empty_state_lbl.hide()
+            self.player.setSource(QUrl.fromLocalFile(file_path))
+            self.player.pause()
+            if self._is_legacy_wmv_format(file_path):
+                try:
+                    from ui.toast import Toast
+                    parent_widget = self.window() if hasattr(self, 'window') and self.window() else self
+                    Toast.show_warning(
+                        parent_widget,
+                        "Video thuộc định dạng cũ/lỗi (WMV2). Khuyến nghị chuyển đổi sang MP4 tiêu chuẩn để tránh giật lag khi phát.",
+                    )
+                except Exception:
+                    pass
+
+    def toggle_playback(self):
+        self.cancel_segment_playback()
+        self.clear_segment_focus()
+        if self.player.isPlaying():
+            self.player.pause()
+        else:
+            self.player.play()
+
+    def play_segment(self, start_ms, end_ms=None):
+        """Play a specific segment from start_ms to end_ms and pause automatically."""
+        if end_ms is None and isinstance(start_ms, (tuple, list)):
+            start_ms, end_ms = start_ms[0], start_ms[1]
+        if start_ms is None or end_ms is None or not (0 <= start_ms < end_ms):
+            return
+        self.cancel_segment_playback(pause=True)
+        self.set_position(start_ms)
+        self._segment_bounds = (start_ms, end_ms)
+        self._segment_playback_active = True
+        self.player.play()
+
+    def focus_segment(self, start_ms, end_ms=None):
+        """Định vị đến đầu câu và hiển thị dải thời gian câu mà KHÔNG tự động phát âm thanh."""
+        if end_ms is None and isinstance(start_ms, (tuple, list)):
+            start_ms, end_ms = start_ms[0], start_ms[1]
+        if start_ms is None or end_ms is None or not (0 <= start_ms < end_ms):
+            return
+        self.cancel_segment_playback(pause=True)
+        self.set_position(start_ms)
+        self._segment_bounds = (start_ms, end_ms)
+        self._segment_playback_active = False
+        self.update_time_label(start_ms)
+
+    def cancel_segment_playback(self, *, pause=False):
+        active = getattr(self, "_segment_bounds", None) is not None
+        # Do not clear bounds here so that the time label stays local until explicitly cleared
+        self._segment_playback_active = False 
+        if active and pause:
+            self.player.pause()
+            
+    def clear_segment_focus(self):
+        self._segment_bounds = None
+        self._segment_playback_active = False
+        self.update_time_label()
+
+    def _on_playing_changed(self, playing):
+        if not playing:
+            self.cancel_segment_playback()
+
+    def _apply_style_preset(self, preset: str):
+        preset_clean = (preset or "normal").lower().strip()
+        if preset_clean in ("loud", "whisper"):
+            from core.subtitle_quality.style_preset_resolver import StylePresetResolver
+            base_size = getattr(getattr(self, "subtitle_overlay", None), "font_size", 20)
+            custom_presets = getattr(getattr(self, "subtitle_overlay", None), "custom_presets", None)
+            resolved = StylePresetResolver.resolve_style(
+                preset_clean, {"font_size": base_size}, custom_presets=custom_presets
+            )
+            weight = "bold" if resolved.get("bold") else "normal"
+            fstyle = "italic" if resolved.get("italic") else "normal"
+            self.lbl_sub.setStyleSheet(
+                f"font-weight: {weight}; font-style: {fstyle}; "
+                f"font-size: {resolved['font_size']}px; color: {resolved['font_color']};"
+            )
+        else:
+            self.lbl_sub.setStyleSheet("background: transparent;")
+
+    def set_subtitle_text(self, text: str, style_preset: str = "normal"):
+        preset = (style_preset or "normal").lower().strip()
+        if self._last_style_preset != preset:
+            self._last_style_preset = preset
+            self._apply_style_preset(preset)
+        if text:
+            render_input = SubtitleRenderInput(
+                segment_id=0,
+                start_ms=0,
+                end_ms=999999,
+                text=text,
+                style_preset=preset,
+            )
+            self.subtitle_overlay.update_subtitle(render_input, 0)
+        else:
+            if self._last_style_preset is not None:
+                self._last_style_preset = None
+                self._apply_style_preset("normal")
+            self.subtitle_overlay.clear_subtitle()
+
+    def _sync_subtitle_position(self, position):
+        # Explicit segment playback keeps user selection stable, including at
+        # a touching next-subtitle boundary, before position_changed pauses.
+        if getattr(self, "_segment_bounds", None) is None:
+            self.sub_controller.sync_position(position)
+
+    def get_current_time_ms(self):
+        return self.player.position()
+
+    def refresh_current_subtitle(self):
+        """Ép làm mới lại lớp phủ phụ đề tại vị trí kim thời gian hiện tại."""
+        cur_pos = self.get_current_time_ms()
+        # Xóa cache preset cũ để đảm bảo nhận diện sự thay đổi style
+        self._last_style_preset = None
+        self.position_changed(cur_pos)
+
+    def get_video_duration_ms(self):
+        return self.player.duration()
+
+    def update_play_button(self):
+        if self.player.isPlaying():
+            self.btn_play.setIcon(self.style().standardIcon(QStyle.SP_MediaPause))
+        else:
+            self.btn_play.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
+
+    def position_changed(self, position):
+        bounds = getattr(self, "_segment_bounds", None)
+        playback_active = getattr(self, "_segment_playback_active", False)
+        if bounds and playback_active:
+            if position >= bounds[1]:
+                self.cancel_segment_playback(pause=True)
+            elif position < bounds[0]:
+                self.cancel_segment_playback()
+        elif bounds and not playback_active:
+            if position < bounds[0] or position >= bounds[1]:
+                self._segment_bounds = None
+        self.slider_seek.setValue(position)
+
+        # [FIX BLOCKER] Đồng nhất tên cờ 'is_enabled' với SubtitleController
+        is_preview_enabled = getattr(self.sub_controller, 'is_enabled', True)
+        if not is_preview_enabled:
+            self._current_playback_sub = None
+            self.subtitle_overlay.clear_subtitle()
+            self.update_time_label(position)
+            self.timeline_position_changed.emit(position)
+            return
+
+        # 1. LẤY DỮ LIỆU TRỰC TIẾP TỪ EDITOR BẢNG BÊN DƯỚI
+        main_window = self.window()
+        if hasattr(main_window, 'sub_editor') and hasattr(main_window.sub_editor, 'all_segments'):
+            subs = main_window.sub_editor.all_segments
+        else:
+            subs = getattr(self.sub_controller, 'subs', []) or getattr(self.sub_controller, 'live_data', [])
+
+        current_seg = None
+        
+        def parse_ms(val):
+            if isinstance(val, (int, float)): return int(val)
+            if isinstance(val, str):
+                try:
+                    val = val.replace(',', '.')
+                    parts = val.split(':')
+                    if len(parts) == 3:
+                        return int(parts[0])*3600000 + int(parts[1])*60000 + int(float(parts[2])*1000)
+                except Exception: pass
+            return 0
+
+        # shortcut: linear scan over subtitles at 60fps, upgrade to bisect if subtitle count > 2000
+        # 2. THUẬT TOÁN QUÉT CHÍNH XÁC TUYỆT ĐỐI
+        for item in subs:
+            try:
+                style_preset = None
+                if isinstance(item, tuple) and len(item) >= 4:
+                    start_ms, end_ms, text, stt = item[0], item[1], item[2], item[3]
+                    if len(item) >= 5:
+                        style_preset = item[4]
+                elif isinstance(item, dict):
+                    start_ms = parse_ms(item.get('start_ms', 0))
+                    end_ms = parse_ms(item.get('end_ms', 0))
+                    if end_ms <= start_ms:
+                        start_ms = parse_ms(item.get('start', 0))
+                        end_ms = parse_ms(item.get('end', 0))
+                    text = item.get('text', '')
+                    stt = item.get('stt', 0)
+                    style_preset = item.get('style_preset')
+                else: 
+                    start_ms = item.start.ordinal
+                    end_ms = item.end.ordinal
+                    text = item.text
+                    stt = item.index
+                    style_preset = getattr(item, 'style_preset', None)
+
+                # [FIX BOUNDARY] Đồng nhất ranh giới [start_ms, end_ms)
+                if start_ms <= position < end_ms:
+                    # Bỏ qua những câu trống để không render lớp phủ vô nghĩa
+                    if text and text != "[ Chưa có nội dung ]":
+                        current_seg = {'stt': stt, 'start_ms': start_ms, 'end_ms': end_ms, 'text': text, 'style_preset': style_preset}
+                    break
+            except Exception:
+                continue
+
+        # 3. Đẩy lên Overlay để Render Animation và Đồng bộ Table Highlight
+        if current_seg:
+            self._current_playback_sub = current_seg
+            stt_val = int(current_seg.get('stt', 0))
+            preset = str(current_seg.get('style_preset') or 'normal').lower().strip()
+            if self._last_style_preset != preset:
+                self._last_style_preset = preset
+                self._apply_style_preset(preset)
+            render_input = SubtitleRenderInput(
+                segment_id=stt_val,
+                start_ms=int(current_seg.get('start_ms', 0)),
+                end_ms=int(current_seg.get('end_ms', 0)),
+                text=str(current_seg.get('text', '')),
+                style_preset=preset,
+            )
+            
+            visual_time = position
+            if not self.player.isPlaying() and (visual_time - render_input.start_ms < 300):
+                visual_time = render_input.start_ms + 300
+                
+            self.subtitle_overlay.update_subtitle(render_input, visual_time)
+
+            # [FIX] Kích hoạt thanh Highlight của bảng Editor
+            if self._last_highlighted_stt != stt_val:
+                self._last_highlighted_stt = stt_val
+                if hasattr(main_window, 'sub_editor'):
+                    main_window.sub_editor.highlight_row_by_stt(stt_val)
+        else:
+            self._current_playback_sub = None
+            self.subtitle_overlay.clear_subtitle()
+            
+            # [FIX] Xóa Highlight khi kim thời gian rơi vào khoảng nghỉ (không có sub)
+            if self._last_highlighted_stt is not None:
+                self._last_highlighted_stt = None
+                if hasattr(main_window, 'sub_editor'):
+                    main_window.sub_editor.clear_highlight()
+        self.update_time_label(position)
+        self.timeline_position_changed.emit(position)
+
+    def duration_changed(self, duration):
+        self.slider_seek.setRange(0, duration)
+        self.update_time_label()
+
+    def set_position(self, position):
+        bounds = getattr(self, "_segment_bounds", None)
+        if bounds and not (bounds[0] <= position < bounds[1]):
+            self.clear_segment_focus()
+        if hasattr(self, 'sub_controller'):
+            if not hasattr(self, 'player') or not getattr(self.player, 'isPlaying', lambda: False)():
+                self._sync_subtitle_position(position)
+        self.player.setPosition(position)
+        self.position_changed(position)
+        # ÉP CẬP NHẬT LABEL NGAY LẬP TỨC ĐỂ HIỂN THỊ REALTIME KHI SCRUBBING
+        self.update_time_label(position)
+
+    def set_volume(self, volume):
+        self.audio_output.setVolume(volume / 100.0)
+        self.slider_volume.setToolTip(f"Volume: {volume}%")
+
+    def update_time_label(self, position=None):
+        if not hasattr(self, 'lbl_time'):
+            return
+        if position is None:
+            pos = self.player.position()
+            position = pos if isinstance(pos, (int, float)) else 0
+        else:
+            position = position if isinstance(position, (int, float)) else 0
+        bounds = getattr(self, "_segment_bounds", None)
+        playback_active = getattr(self, "_segment_playback_active", False)
+        
+        # Chỉ hiển thị Local Time khi đang Focus
+        if bounds:
+            start_ms, end_ms = bounds
+            
+            # Tính thời gian tương đối
+            local_position = max(0, position - start_ms)
+            local_duration = max(0, end_ms - start_ms)
+            
+            # Đảm bảo local_position không vượt quá local_duration
+            local_position = min(local_position, local_duration)
+            
+            pos_str = self.format_time(local_position)
+            dur_str = self.format_time(local_duration)
+            self.lbl_time.setText(f"{pos_str} / {dur_str}")
+            from ui.theme import Theme
+            self.lbl_time.setStyleSheet(f"color: {Theme.CYAN};")
+        else:
+            # Global Time
+            pos_str = self.format_time(position)
+            dur_str = self.format_time(self.player.duration())
+            sub_info = ""
+            current_sub = getattr(self, "_current_playback_sub", None)
+            if current_sub:
+                stt_val = current_sub.get("stt", "")
+                start_ms = current_sub.get("start_ms", 0)
+                end_ms = current_sub.get("end_ms", 0)
+                sub_len_s = max(0, (end_ms - start_ms) / 1000.0)
+                if sub_len_s > 0:
+                    sub_info = f"  •  [Sub #{stt_val}: {sub_len_s:.1f}s]"
+            self.lbl_time.setText(f"{pos_str} / {dur_str}{sub_info}")
+            if sub_info:
+                from ui.theme import Theme
+                self.lbl_time.setStyleSheet(f"color: {Theme.CYAN};")
+            else:
+                self.lbl_time.setStyleSheet("")
+    def format_time(self, ms):
+        try:
+            ms = int(ms)
+        except (TypeError, ValueError):
+            ms = 0
+        s = ms // 1000
+        m, s = divmod(s, 60)
+        h, m = divmod(m, 60)
+        if h > 0:
+            return f"{h:02d}:{m:02d}:{s:02d}"
+        return f"{m:02d}:{s:02d}"
+
+    def cleanup(self):
+        self.cancel_segment_playback()
+        self.player.stop()
+        self.player.setSource(QUrl())
+        self.empty_state_lbl.show()
+        self.slider_seek.setValue(0)
+        self._current_playback_sub = None
+        self.lbl_time.setText("00:00 / 00:00")
+        self.lbl_time.setStyleSheet("")
+        
+        # [FIX] Dọn dẹp "bóng ma" phụ đề kẹt trên màn hình
+        if hasattr(self, 'subtitle_overlay') and self.subtitle_overlay:
+            self.subtitle_overlay.clear_subtitle()
+        if hasattr(self, 'sub_controller') and self.sub_controller:
+            self.sub_controller.load_srt(None)
+
+
+class ClickableSlider(QSlider):
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            val = self.minimum() + ((self.maximum() - self.minimum()) * event.position().x()) / self.width()
+            self.setValue(int(val))
+            self.sliderMoved.emit(self.value())
+        super().mousePressEvent(event)
