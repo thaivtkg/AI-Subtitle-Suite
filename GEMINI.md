@@ -41,11 +41,25 @@
   - `prompt_builder.py`: Constructs strict non-thinking translation prompts with Vietnamese localization rules.
   - `llm/worker.py`: Background worker running local GGUF models.
 
+### C. Desktop GUI Test Automation Framework (Selenium-Equivalent for PySide6 / QML)
+- **`tests/gui/drivers/qt_driver.py`**: Selenium-like desktop driver providing Unicode-safe typing, widget discovery by `objectName`, wait conditions, and recursive QML Scene Graph traversal (`find_qml_item()`).
+- **Core UI Triad (Page Object Model - POM)**:
+  - **`tests/gui/pages/sub_editor_page.py`** (`SubEditorPage`): Encapsulates `CurrentSubtitleEditor`, row navigation, subtitle table inspection, and cursor preservation checks (`BUG-SUB-001`).
+  - **`tests/gui/pages/cat_studio_page.py`** (`CatStudioPage`): Encapsulates QML CAT Studio view, source/target translation fields, and action buttons (`btnTranslate`, `btnAccept`, `btnModelManager`).
+  - **`tests/gui/pages/timeline_page.py`** (`TimelineWidgetPage`): Encapsulates waveform seeking, gap detection/selection, `create_manual_gap_button`, live tap-to-time (`[` Mark In, `]` Mark Out), and toolbar timing generation.
+- **`tests/gui/conftest.py`**: Pytest fixtures (`sub_editor_driver`, `cat_studio_driver`, `timeline_driver`, `main_window_driver`) with safe lifecycle management and eventFilter teardown.
+
 ---
 
 ## 3. Test Automation Conventions
 Run all tests using the virtual environment:
 ```powershell
+# Desktop GUI E2E Specs (Page Object Model - Core UI Triad)
+.\.venv\Scripts\python.exe -m pytest tests/gui/specs/ -v
+
+# Subtitle Editor Cursor Stability (BUG-SUB-001 Verification)
+.\.venv\Scripts\python.exe -m pytest tests/ui/test_current_subtitle_editor_cursor.py -v
+
 # Manual Timing & Hotkeys
 .\.venv\Scripts\python.exe -m pytest tests/ui/test_manual_timing_creation.py tests/ui/test_hotkeys_dialog.py -v
 
@@ -54,6 +68,9 @@ Run all tests using the virtual environment:
 
 # E2E Visual & Integration Tests
 .\.venv\Scripts\python.exe -m pytest tests/e2e/test_ui_visual_sync_cat_studio.py -v
+
+# Full Regression Suite (All 35 Specs)
+.\.venv\Scripts\python.exe -m pytest tests/ui/test_current_subtitle_editor_cursor.py tests/core/test_editor_ui.py tests/ui/test_manual_timing_creation.py tests/translation/test_language_and_rescan_protection.py tests/e2e/test_ui_visual_sync_cat_studio.py tests/gui/specs/ -v
 ```
 
 ---
@@ -62,3 +79,4 @@ Run all tests using the virtual environment:
 - All translation and bilingual features belong strictly to `D:\ai-subtitle-suite`.
 - UI text colors on dark panels must maintain high WCAG contrast (`#F8FAFC`, `#38BDF8`, `#4ADE80`, `#CBD5E1`).
 - Subtitle synchronization between Timeline and CAT Studio is locked by `segment_id` with active overwrite protection.
+- GUI test automation must adhere to the Page Object Model (POM) pattern in `tests/gui/pages/` and interact through `QtDriver`. Locators for QWidgets must use standard `objectName` properties, and QML elements must use `objectName` identifiers.
