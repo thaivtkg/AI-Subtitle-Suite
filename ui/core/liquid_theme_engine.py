@@ -784,6 +784,7 @@ QTableWidget, QTableView {
 QTableWidget::item, QTableView::item {
     outline: none;
     border: none;
+    padding: 4px 8px;
 }
 
 QTableWidget::item:selected, QTableView::item:selected {

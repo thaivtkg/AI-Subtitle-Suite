@@ -202,13 +202,13 @@ class CurrentSubtitleEditor(QWidget):
                 widget.setText(value)
                 widget.blockSignals(False)
             
-        orig_text = str(original_text or "")
+        orig_text = str(original_text or "").strip()
         if self.text_original.toPlainText() != orig_text:
             self.text_original.blockSignals(True)
             self.text_original.setPlainText(orig_text)
             self.text_original.blockSignals(False)
         
-        target_text = str(text or "")
+        target_text = str(text or "").strip()
         current_text = self.text_edit.toPlainText()
         if current_text != target_text:
             cursor = self.text_edit.textCursor()
@@ -834,10 +834,12 @@ class SubtitleEditorWidget(QWidget):
                 duration_text = "--"
             self._set_table_item(row, self.COL_DUR, duration_text, readonly=True)
 
-            display_text = seg['text'] if seg['text'].strip() else "[ Chưa có nội dung ]"
+            clean_text = str(seg.get('text', '')).strip()
+            display_text = clean_text if clean_text else "[ Chưa có nội dung ]"
             text_item = QTableWidgetItem(display_text)
+            text_item.setTextAlignment(Qt.AlignVCenter | Qt.AlignLeft)
 
-            if not seg['text'].strip():
+            if not clean_text:
                 text_item.setForeground(QColor(Theme.TEXT_DISABLED))
                 font = text_item.font()
                 font.setItalic(True)

@@ -13,8 +13,34 @@ def _to_ms(value):
 
 
 def parse_srt_content(content: str) -> list[dict]:
+    normalized = content.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not normalized:
+        return []
+
+    pattern = re.compile(
+        r"(?:^|\n+)(?:(\d+)\s*\n)?\s*"
+        r"((?:(?:\d+:)?\d{1,2}:\d{2}[,.]\d{1,3})\s*-->\s*(?:(?:\d+:)?\d{1,2}:\d{2}[,.]\d{1,3}))\s*\n"
+        r"([\s\S]*?)(?=(?:\n+\d+\s*\n\s*(?:(?:\d+:)?\d{1,2}:\d{2}[,.]\d{1,3})\s*-->)|\Z)"
+    )
+    matches = list(pattern.finditer(normalized))
+    if matches:
+        segments = []
+        for match in matches:
+            _, ts, txt = match.groups()
+            start, end = (part.strip() for part in ts.split("-->", 1))
+            segments.append({
+                "id": uuid.uuid4().hex,
+                "stt": str(len(segments) + 1),
+                "start": _to_ms(start),
+                "end": _to_ms(end),
+                "text": txt.strip(),
+                "status": "draft",
+                "metadata": {"type": "normal"},
+            })
+        return segments
+
     segments = []
-    for block in re.split(r"\n{2,}", content.replace("\r\n", "\n").strip()):
+    for block in re.split(r"\n{2,}", normalized):
         lines = block.splitlines()
         if len(lines) < 2 or "-->" not in lines[1]:
             continue
@@ -22,8 +48,10 @@ def parse_srt_content(content: str) -> list[dict]:
         segments.append({
             "id": uuid.uuid4().hex,
             "stt": str(len(segments) + 1),
-            "start": _to_ms(start), "end": _to_ms(end),
-            "text": "\n".join(lines[2:]), "status": "draft",
+            "start": _to_ms(start),
+            "end": _to_ms(end),
+            "text": "\n".join(lines[2:]).strip(),
+            "status": "draft",
             "metadata": {"type": "normal"},
         })
     return segments
