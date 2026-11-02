@@ -46,7 +46,7 @@ class IpcRequest:
 class SingleInstanceGuard(QObject):
     request_received = Signal(object)
 
-    def __init__(self, server_name: str = "ai-subtitle-studio", parent=None):
+    def __init__(self, server_name: str = "ai-subtitle-suite", parent=None):
         super().__init__(parent)
         self.server_name = server_name
         self.server = QLocalServer(self)

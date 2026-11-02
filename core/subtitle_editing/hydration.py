@@ -11,7 +11,7 @@ def _get_ms(seg, key):
         # SubEditor has a helper for this, but we'll try to keep it simple.
         try:
             import re
-            match = re.fullmatch(r"(\d{2}):(\d{2}):(\d{2})[,.](\d{3})", val.strip())
+            match = re.fullmatch(r"(\d+):(\d{2}):(\d{2})[,.](\d{3})", val.strip())
             if match:
                 h, m, s, ms = map(int, match.groups())
                 return ((h * 60 + m) * 60 + s) * 1000 + ms

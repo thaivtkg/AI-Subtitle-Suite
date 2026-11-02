@@ -44,5 +44,19 @@ class TestHydration(unittest.TestCase):
         result = hydrate_original_text(current_segments, self.shadow_segments)
         self.assertEqual(result[0]["original_text"], "Already exists!")
 
+    def test_hydration_time_string_variable_hour_digits(self):
+        # 1-digit hour and 3-digit hour
+        shadow = [
+            {"start": 60000, "end": 120000, "text": "Short hour shadow."},
+            {"start": 360000000, "end": 360060000, "text": "Long video shadow."}
+        ]
+        current = [
+            {"start": "0:01:00,000", "end": "0:02:00,000", "text": "Short hour"},
+            {"start": "100:00:00,000", "end": "100:01:00,000", "text": "Long video"}
+        ]
+        result = hydrate_original_text(current, shadow)
+        self.assertEqual(result[0]["original_text"], "Short hour shadow.")
+        self.assertEqual(result[1]["original_text"], "Long video shadow.")
+
 if __name__ == "__main__":
     unittest.main()

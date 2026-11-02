@@ -268,12 +268,13 @@ def burn_hardsub(video_path, srt_path, output_path, font_size=42, font_color="wh
 
     formatted_subtitle_path = subtitle_path.replace('\\', '/').replace(':', '\\:')
     formatted_subtitle_path = formatted_subtitle_path.replace("'", r"\'")
+    safe_font_name = str(font_name).replace('\\', r'\\').replace(',', r'\,').replace("'", r"\'")
 
     use_temp_ass = (temp_ass is not None)
     cmd = [
         ffmpeg_path, "-y",
         "-i", video_path,
-        "-vf", f"subtitles='{formatted_subtitle_path}'" if use_temp_ass else f"subtitles='{formatted_subtitle_path}':force_style='FontSize={font_size},FontName={font_name},PrimaryColour=&H00FFFFFF&'",
+        "-vf", f"subtitles='{formatted_subtitle_path}'" if use_temp_ass else f"subtitles='{formatted_subtitle_path}':force_style='FontSize={font_size},FontName={safe_font_name},PrimaryColour=&H00FFFFFF&'",
         "-c:a", "aac", 
         "-async", "1",
         "-ignore_unknown",

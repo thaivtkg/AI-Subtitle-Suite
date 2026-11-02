@@ -49,16 +49,7 @@ class WorkspaceService:
         except Exception as e:
             print(f"Lỗi capture trang: {e}")
 
-        # 2. Chụp Tab hiện tại (Inline Editor, AI Generation, Live Log)
-        try:
-            if hasattr(self.ui, 'bottom_tabs'):
-                tab_idx = self.ui.bottom_tabs.currentIndex()
-                tab_map = {0: "inline_editor", 1: "ai_generation", 2: "live_log"}
-                workspace.active_tab = tab_map.get(tab_idx, "inline_editor")
-        except Exception as e:
-            print(f"Lỗi capture tab: {e}")
-
-        # 3. Chụp vị trí thanh thời gian của Video Player
+        # 2. Chụp vị trí thanh thời gian của Video Player
         try:
             if hasattr(self.ui, 'video_player') and self.ui.video_player.player:
                 workspace.playback_position_ms = self.ui.video_player.player.position()
@@ -98,15 +89,7 @@ class WorkspaceService:
         except Exception as e:
             print(f"Lỗi khi khôi phục trang: {e}")
 
-        # 2. Phục hồi Tab dưới đáy (AI Generation / Inline Editor)
-        try:
-            if hasattr(self.ui, 'bottom_tabs'):
-                tab_map = {"inline_editor": 0, "ai_generation": 1, "live_log": 2}
-                self.ui.bottom_tabs.setCurrentIndex(tab_map.get(workspace.active_tab, 0))
-        except Exception as e:
-            print(f"Lỗi khi khôi phục Tab: {e}")
-
-        # 3. Phục hồi trạng thái hiển thị phụ đề (Chỉ can thiệp logic Core)
+        # 2. Phục hồi trạng thái hiển thị phụ đề (Chỉ can thiệp logic Core)
         try:
             if hasattr(self.ui, 'video_player') and hasattr(self.ui.video_player, 'sub_controller'):
                 is_preview_enabled = bool(workspace.subtitle_preview_enabled)

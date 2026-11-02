@@ -33,6 +33,11 @@ class TestSingleInstanceGuard(unittest.TestCase):
     def tearDown(self):
         QLocalServer.removeServer(self.server_name)
 
+    def test_default_server_name_is_ai_subtitle_suite(self):
+        guard = SingleInstanceGuard()
+        self.assertEqual(guard.server_name, "ai-subtitle-suite")
+        guard.close()
+
     def test_tc100_secondary_relay_and_ack(self):
         primary = SingleInstanceGuard(self.server_name)
         self.assertTrue(primary.try_acquire_primary())

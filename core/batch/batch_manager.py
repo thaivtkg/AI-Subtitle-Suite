@@ -9,6 +9,7 @@ from core.translation.llm_translation_service import LLMTranslationService
 from core.database.glossary_manager import GlossaryManager
 from core.database.tm_manager import TranslationMemoryManager
 from core.export.subtitle_parser import parse_srt_content
+from core.utils.file_utils import atomic_save_text, atomic_save_json
 import os
 import uuid
 from datetime import datetime
@@ -125,11 +126,12 @@ class BatchWorker(QRunnable):
                     video_dir = os.path.dirname(job.input_file)
                     trans_file_path = os.path.join(video_dir, f"{video_name}_translated.srt")
                     
-                    with open(trans_file_path, 'w', encoding='utf-8') as f:
-                        for s in translated_segments:
-                            start_str = self._ms_to_srt(s.get("start", 0))
-                            end_str = self._ms_to_srt(s.get("end", 0))
-                            f.write(f"{s.get('stt', '1')}\n{start_str} --> {end_str}\n{s.get('text', '')}\n\n")
+                    lines = []
+                    for s in translated_segments:
+                        start_str = self._ms_to_srt(s.get("start", 0))
+                        end_str = self._ms_to_srt(s.get("end", 0))
+                        lines.append(f"{s.get('stt', '1')}\n{start_str} --> {end_str}\n{s.get('text', '')}\n\n")
+                    atomic_save_text(trans_file_path, "".join(lines))
                             
                     # Register new Artifact (Handoff)
                     trans_artifact_id = uuid.uuid4().hex
@@ -181,11 +183,9 @@ class BatchManager(QObject):
 
     def _autosave(self):
         if self.current_session:
-            import json
             from core.runtime.runtime_paths import RuntimePaths
-            path = RuntimePaths.get_batch_active_file()
-            with open(path, 'w', encoding='utf-8') as f:
-                json.dump(self.current_session.to_dict(), f, ensure_ascii=False, indent=2)
+            path = str(RuntimePaths.get_batch_active_file())
+            atomic_save_json(path, self.current_session.to_dict())
 
     def start_session(self, session: BatchSession):
         self.current_session = session
