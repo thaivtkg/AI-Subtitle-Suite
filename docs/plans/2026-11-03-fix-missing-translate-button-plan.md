@@ -45,15 +45,15 @@ Khắc phục triệt để lỗi mất nút dịch (`btnTranslate` biến mất
 * Sửa đổi: `core/translation/models/subtitle.py:190-205`
 * Kiểm thử: `tests/translation/test_cat_status_sanitization.py`
 
-- [ ] **Bước 1.1: Viết test thất bại kiểm tra chuẩn hóa trạng thái phụ đề**
+- [x] **Bước 1.1: Viết test thất bại kiểm tra chuẩn hóa trạng thái phụ đề**
   Tạo `tests/translation/test_cat_status_sanitization.py`:
   - Kiểm tra khi segment có `status="draft"` và `translation_status=None`, khi nạp qua `load_subtitles_from_studio()` trạng thái trong `SubtitleModel` phải là `"PENDING"`.
   - Kiểm tra khi segment có `status="final"` và `translation_status=None`, trạng thái phải là `"PENDING"`.
   - Kiểm tra khi segment có `status="draft"` nhưng đã có `translation="Bản dịch"`, trạng thái phải là `"TRANSLATED"`.
   - Kiểm tra `translationController.status` nhận đúng `"PENDING"`, không bao giờ nhận `"DRAFT"` hay `"FINAL"`.
-- [ ] **Bước 1.2: Chạy test để xác nhận test thất bại**
+- [x] **Bước 1.2: Chạy test để xác nhận test thất bại**
   Chạy `.\.venv\Scripts\python.exe -m pytest tests/translation/test_cat_status_sanitization.py -v`.
-- [ ] **Bước 1.3: Sửa đổi `ui/pages/translation_studio_page.py`**
+- [x] **Bước 1.3: Sửa đổi `ui/pages/translation_studio_page.py`**
   Tại dòng 146-151, thay thế đoạn mã đọc `raw_status`:
   ```python
   VALID_CAT_STATUSES = {"PENDING", "TRANSLATING", "TRANSLATED", "EDITED", "ACCEPTED", "ERROR"}
@@ -63,12 +63,12 @@ Khắc phục triệt để lỗi mất nút dịch (`btnTranslate` biến mất
   else:
       status = "TRANSLATED" if str(s.get("translation", "")).strip() else "PENDING"
   ```
-- [ ] **Bước 1.4: Thêm cơ chế chuẩn hóa trạng thái trong `core/translation/models/subtitle.py`**
+- [x] **Bước 1.4: Thêm cơ chế chuẩn hóa trạng thái trong `core/translation/models/subtitle.py`**
   Trong `SubtitleModel.load_data()` và `update_translation()`:
   Bảo đảm mọi item được nạp vào model đều có `status` thuộc `VALID_CAT_STATUSES`. Nếu không hợp lệ, gán mặc định `"PENDING"`.
-- [ ] **Bước 1.5: Chạy lại test xác nhận PASS**
+- [x] **Bước 1.5: Chạy lại test xác nhận PASS**
   Chạy `.\.venv\Scripts\python.exe -m pytest tests/translation/test_cat_status_sanitization.py -v`.
-- [ ] **Bước 1.6: Commit mã nguồn Tác vụ 1**
+- [x] **Bước 1.6: Commit mã nguồn Tác vụ 1**
   `git commit -m "fix(cat-status): sanitize subtitle translation status on studio import (PLAN-CAT-TRANSLATE-BUTTON-RESTORE-001)"`
 
 ---
@@ -78,14 +78,14 @@ Khắc phục triệt để lỗi mất nút dịch (`btnTranslate` biến mất
 * Sửa đổi: `ui/qml_translation/components/TranslationWorkspace.qml:1160-1175`
 * Kiểm thử: `tests/gui/specs/test_cat_studio_flow.py`
 
-- [ ] **Bước 2.1: Bổ sung test kiểm thử hiển thị nút dịch khi trạng thái bất thường**
+- [x] **Bước 2.1: Bổ sung test kiểm thử hiển thị nút dịch khi trạng thái bất thường**
   Trong `tests/gui/specs/test_cat_studio_flow.py`, thêm test case:
   `test_flow_cat_studio_translate_button_visible_under_draft_or_idle_status`:
   - Giả lập `translationController.status` mang giá trị `"DRAFT"`, `"IDLE"` hoặc rỗng.
   - Kiểm tra `driver.find_qml_item("btnTranslate")` có thuộc tính `visible == True`.
-- [ ] **Bước 2.2: Chạy test xác nhận thất bại**
+- [x] **Bước 2.2: Chạy test xác nhận thất bại**
   Chạy `.\.venv\Scripts\python.exe -m pytest tests/gui/specs/test_cat_studio_flow.py -k "test_flow_cat_studio_translate_button_visible" -v`.
-- [ ] **Bước 2.3: Điều chỉnh điều kiện `visible` của `btnTranslate` trong `TranslationWorkspace.qml`**
+- [x] **Bước 2.3: Điều chỉnh điều kiện `visible` của `btnTranslate` trong `TranslationWorkspace.qml`**
   Tại dòng 1162 của `TranslationWorkspace.qml`:
   ```qml
   AppButton {
@@ -102,9 +102,9 @@ Khắc phục triệt để lỗi mất nút dịch (`btnTranslate` biến mất
       onClicked: translateRequested((typeof translationController !== "undefined" && translationController.currentSourceLanguage) ? translationController.currentSourceLanguage : langSelector.sourceLang)
   }
   ```
-- [ ] **Bước 2.4: Chạy lại test xác nhận PASS**
+- [x] **Bước 2.4: Chạy lại test xác nhận PASS**
   Chạy `.\.venv\Scripts\python.exe -m pytest tests/gui/specs/test_cat_studio_flow.py -k "test_flow_cat_studio_translate_button_visible" -v`.
-- [ ] **Bước 2.5: Commit mã nguồn Tác vụ 2**
+- [x] **Bước 2.5: Commit mã nguồn Tác vụ 2**
   `git commit -m "fix(qml): ensure btnTranslate is always visible when not translating or already translated (PLAN-CAT-TRANSLATE-BUTTON-RESTORE-001)"`
 
 ---
@@ -113,7 +113,7 @@ Khắc phục triệt để lỗi mất nút dịch (`btnTranslate` biến mất
 **Files:**
 * Kiểm thử: Toàn bộ suite Desktop GUI Flow Specs & Translation Tests
 
-- [ ] **Bước 3.1: Chạy kiểm định toàn bộ các bộ test hệ thống**
+- [x] **Bước 3.1: Chạy kiểm định toàn bộ các bộ test hệ thống**
   ```powershell
   # 1. Bộ test chuẩn hóa trạng thái CAT Studio
   .\.venv\Scripts\python.exe -m pytest tests/translation/test_cat_status_sanitization.py -v
@@ -124,5 +124,5 @@ Khắc phục triệt để lỗi mất nút dịch (`btnTranslate` biến mất
   # 3. Toàn bộ Desktop GUI Flow Specs (POM Triad: CAT Studio, SubEditor, Timeline)
   .\.venv\Scripts\python.exe -m pytest tests/gui/specs/ -v
   ```
-- [ ] **Bước 3.2: Commit hoàn tất kế hoạch**
+- [x] **Bước 3.2: Commit hoàn tất kế hoạch**
   `git commit -m "chore: verify translate button restore and full regression suite (PLAN-CAT-TRANSLATE-BUTTON-RESTORE-001)"`
