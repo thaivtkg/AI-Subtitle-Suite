@@ -2,6 +2,7 @@ from PySide6.QtCore import QThread, Signal
 from core.subtitle_generation.faster_whisper_service import FasterWhisperService
 from core.subtitle_generation.subtitle_generation_request import SubtitleGenerationRequest
 from core.subtitle_generation.subtitle_generation_batch import SubtitleGenerationBatch
+from core.subtitle_generation.generation_validator import SubtitleGenerationValidator
 import datetime
 
 class SegmentScanWorker(QThread):
@@ -66,8 +67,11 @@ class SegmentScanWorker(QThread):
             if result.error:
                 self.error_signal.emit(self.segment_id, result.error)
             elif self.scan_mode == "timing":
+                valid_segs = SubtitleGenerationValidator.validate(
+                    result.segments or [], self.start_ms, self.end_ms
+                )
                 valid_segs = [
-                    s for s in (result.segments or [])
+                    s for s in valid_segs
                     if getattr(s, "start_ms", None) is not None and getattr(s, "end_ms", None) is not None
                 ]
                 if valid_segs:
@@ -77,8 +81,13 @@ class SegmentScanWorker(QThread):
                 else:
                     self.error_signal.emit(self.segment_id, "NO_SPEECH_DETECTED")
             else:
-                # Nối văn bản từ các phân đoạn trở về
-                text = " ".join([seg.text.strip() for seg in result.segments])
+                # Nối văn bản từ các phân đoạn hợp lệ và kiểm tra tính đồng nhất ngôn ngữ
+                valid_segs = SubtitleGenerationValidator.validate(
+                    result.segments or [], self.start_ms, self.end_ms
+                )
+                raw_text = " ".join([seg.text.strip() for seg in valid_segs]).strip()
+                expected_lang = getattr(self.request, "language", None)
+                text = SubtitleGenerationValidator.filter_inconsistent_language(raw_text, expected_lang)
                 if not text:
                     text = "[Không nhận diện được giọng nói]"
                 self.finished_signal.emit(self.segment_id, text)
@@ -144,9 +153,12 @@ class BatchSegmentScanWorker(QThread):
                 if self._is_cancelled:
                     return
                 if result and not result.error:
+                    valid_segs = SubtitleGenerationValidator.validate(
+                        result.segments or [], start_ms, end_ms
+                    )
                     if scan_mode == "timing":
                         valid_segs = [
-                            s for s in (result.segments or [])
+                            s for s in valid_segs
                             if getattr(s, "start_ms", None) is not None and getattr(s, "end_ms", None) is not None
                         ]
                         if valid_segs:
@@ -154,7 +166,9 @@ class BatchSegmentScanWorker(QThread):
                             speech_end_ms = max(s.end_ms for s in valid_segs)
                             self.segment_timing_completed_signal.emit(seg_id, speech_start_ms, speech_end_ms)
                     else:
-                        text = " ".join([s.text.strip() for s in result.segments])
+                        raw_text = " ".join([s.text.strip() for s in valid_segs]).strip()
+                        expected_lang = getattr(self.request, "language", None)
+                        text = SubtitleGenerationValidator.filter_inconsistent_language(raw_text, expected_lang)
                         if not text:
                             text = "[Không nhận diện được giọng nói]"
                         self.segment_completed_signal.emit(seg_id, text)
