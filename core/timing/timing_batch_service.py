@@ -503,17 +503,12 @@ class TimingBatchService(QObject):
         state_dict = ProjectService.serialize_project_state(project.state)
         state_data = json.dumps(state_dict, ensure_ascii=False, indent=2)
 
-        # PHA 1: Viết ra RAM và ép xuống đĩa vật lý qua file tạm
-        self._write_tmp_fsync(srt_path + ".tmp", srt_content)
-        self._write_tmp_fsync(chk_path + ".tmp", chk_data)
-        self._write_tmp_fsync(man_path + ".tmp", man_data)
-        self._write_tmp_fsync(state_path + ".tmp", state_data)
-
-        # PHA 2: Chuyển đổi trạng thái chớp nhoáng (Microsecond replace)
-        os.replace(srt_path + ".tmp", srt_path)
-        os.replace(chk_path + ".tmp", chk_path)
-        os.replace(man_path + ".tmp", man_path)
-        os.replace(state_path + ".tmp", state_path)
+        # Lưu trạng thái và artifacts nguyên tử (Atomic Write) bảo đảm an toàn dữ liệu
+        from core.utils.file_utils import atomic_save_text
+        atomic_save_text(srt_path, srt_content)
+        atomic_save_text(chk_path, chk_data)
+        atomic_save_text(man_path, man_data)
+        atomic_save_text(state_path, state_data)
 
         project.state.dirty = False
 

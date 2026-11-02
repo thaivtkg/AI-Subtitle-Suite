@@ -107,7 +107,7 @@ def _build_multistyle_ass(segments, width, height, placement_state, global_style
     from core.subtitle_quality.style_preset_resolver import StylePresetResolver
 
     global_s = dict(global_style or {})
-    font_name = global_s.get("font_name", "Segoe UI")
+    font_name = str(global_s.get("font_name", "Segoe UI")).replace(",", " ")
     base_size = int(global_s.get("font_size", 20) or 20)
     outline_normal = float(global_s.get("outline_width", 2.0) or 2.0)
 
@@ -182,6 +182,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 
 def _build_positioned_ass(srt_path, width, height, placement_state, font_size, font_name):
+    font_name = str(font_name).replace(',', ' ')
     from core import subtitle_ass
     from core.export.subtitle_parser import parse_srt_content
 
