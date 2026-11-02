@@ -244,13 +244,13 @@ Sử dụng kịch bản build tự động hoặc tệp cấu hình spec:
 python build.py
 
 # Cách 2: Sử dụng trực tiếp PyInstaller với file Spec
-pyinstaller --noconfirm --clean "AI Subtitle Studio.spec"
+pyinstaller --noconfirm --clean "AI Subtitle Suite.spec"
 
 # Cách 3: Chạy script đóng gói tự động hóa (PowerShell)
 .\tools\build_windows.ps1
 ```
 
-Gói nhị phân hoàn chỉnh được xuất ra tại thư mục `dist/AI Subtitle Studio/`.
+Gói nhị phân hoàn chỉnh được xuất ra tại thư mục `dist/AI Subtitle Suite/`.
 
 ### 2. Tạo File Setup Cài đặt (`Inno Setup`)
 
@@ -261,7 +261,7 @@ Gói nhị phân hoàn chỉnh được xuất ra tại thư mục `dist/AI Subt
      ```powershell
      & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
      ```
-3. Tệp cài đặt được xuất ra: `dist/AI_Subtitle_Studio_Setup_v1.0.0.exe`.
+3. Tệp cài đặt được xuất ra: `dist/AI_Subtitle_Suite_Setup_v1.0.0.exe`.
 
 <a id="troubleshooting"></a>
 

@@ -4,11 +4,11 @@ import os
 
 def build_app():
     print("==================================================")
-    print(" BAT DAU QUY TRINH DONG GOI AI SUBTITLE STUDIO    ")
+    print(" BAT DAU QUY TRINH DONG GOI AI SUBTITLE SUITE     ")
     print("==================================================")
     
     project_root = os.path.dirname(os.path.abspath(__file__))
-    spec_path = os.path.join(project_root, "AI Subtitle Studio.spec")
+    spec_path = os.path.join(project_root, "AI Subtitle Suite.spec")
     
     venv_python = os.path.join(project_root, ".venv", "Scripts", "python.exe")
     python_bin = venv_python if os.path.exists(venv_python) else sys.executable
@@ -28,18 +28,25 @@ def build_app():
             "PySide6.QtWidgets",
             "PySide6.QtMultimedia",
             "PySide6.QtMultimediaWidgets",
+            "PySide6.QtQuick",
+            "PySide6.QtQuickWidgets",
+            "PySide6.QtQml",
             "pydantic",
             "sqlite3",
             "faster_whisper",
             "ctranslate2",
             "torch",
             "torchaudio",
+            "llama_cpp",
             "psutil"
         ]
         datas = ["--add-data=resources;resources"]
+        qml_dir = os.path.join(project_root, "ui", "qml_translation")
+        if os.path.exists(qml_dir):
+            datas.append(f"--add-data={qml_dir};ui/qml_translation")
         cmd = [
             sys.executable, "-m", "PyInstaller",
-            "--name=AI Subtitle Studio",
+            "--name=AI Subtitle Suite",
             "--windowed",
             "--icon=resources/app_icon.ico",
             "--noconfirm",
@@ -54,7 +61,7 @@ def build_app():
     
     try:
         subprocess.run(cmd, check=True, cwd=project_root)
-        print("\n[SUCCESS] Build thanh cong! Thu muc ket xuat: 'dist/AI Subtitle Studio/'")
+        print("\n[SUCCESS] Build thanh cong! Thu muc ket xuat: 'dist/AI Subtitle Suite/'")
     except subprocess.CalledProcessError as e:
         print(f"\n[ERROR] Build that bai: {e}")
         sys.exit(1)
