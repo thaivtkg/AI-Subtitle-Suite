@@ -1652,7 +1652,15 @@ class MainWindow(QMainWindow):
         except Exception:
             rescan_model = "large-v3"
         device = getattr(getattr(self, "subtitle_whisper_service", None), "device", "cuda")
-        rescan_compute = "int8" if str(device).lower() == "cpu" else "float16"
+        if str(device).lower() == "cpu":
+            rescan_compute = "int8"
+        else:
+            try:
+                from core.subtitle_generation.faster_whisper_service import should_downgrade_to_int8_float16
+                downgrade, _ = should_downgrade_to_int8_float16(0.65)
+                rescan_compute = "int8_float16" if downgrade else "float16"
+            except Exception:
+                rescan_compute = "float16"
         return rescan_model, rescan_compute
 
     def _on_segment_scan_requested(self, segment_id, start_ms, end_ms):
@@ -1706,8 +1714,9 @@ class MainWindow(QMainWindow):
             compute_type=self._resolve_rescan_model_and_compute(settings)[1],
             language=iso_lang,
             use_vad=settings.get("use_vad", True),
-            min_silence_ms=settings.get("min_silence_ms", 500),
+            min_silence_ms=2000 if (iso_lang == "ja" and settings.get("min_silence_ms", 500) == 500) else settings.get("min_silence_ms", 500),
             word_timestamps=False,
+            condition_on_previous_text=True,
             prompt_context=prompt_ctx,
         )
         
@@ -2004,9 +2013,10 @@ class MainWindow(QMainWindow):
             compute_type=self._resolve_rescan_model_and_compute(settings)[1],
             language=iso_batch_lang,
             use_vad=settings.get("use_vad", True),
-            min_silence_ms=settings.get("min_silence_ms", 500),
+            min_silence_ms=2000 if (iso_batch_lang == "ja" and settings.get("min_silence_ms", 500) == 500) else settings.get("min_silence_ms", 500),
             word_timestamps=False,
             prompt_context=batch_prompt_ctx,
+            condition_on_previous_text=True,
         )
 
         progress = self._create_batch_scan_progress_dialog(len(segments_data))

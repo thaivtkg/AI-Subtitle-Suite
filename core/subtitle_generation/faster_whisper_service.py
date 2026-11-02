@@ -17,14 +17,15 @@ from core.services.model_manager import ModelManager, ModelStorageError
 
 
 def should_downgrade_to_int8_float16(threshold: float = 0.65) -> Tuple[bool, float]:
-    """Kiểm tra mức sử dụng VRAM qua nvcuda.dll (<0.05ms); trả về (True, ratio) khi vượt threshold."""
+    """Kiểm tra mức sử dụng VRAM qua nvcuda.dll (<0.05ms); trả về (True, ratio) khi vượt threshold hoặc GPU <= 4.5GB VRAM."""
     try:
         from core.translation.core.hardware_detector import HardwareDetector
 
         used_gb, total_gb = HardwareDetector.get_vram_usage()
         if total_gb and total_gb > 0:
             ratio = float(used_gb) / float(total_gb)
-            return (ratio > threshold, ratio)
+            if float(total_gb) <= 4.5 or ratio > threshold:
+                return (True, ratio)
     except Exception:
         pass
     return (False, 0.0)
@@ -62,10 +63,12 @@ class FasterWhisperService:
             if downgrade:
                 effective_compute = "int8_float16"
                 self._vram_downgraded = True
-                print(
-                    f"[ASR] VRAM đạt {ratio * 100:.0f}% (>65%) ➔ Tự động chuyển sang int8_float16.",
-                    flush=True,
+                msg = (
+                    f"[ASR] VRAM đạt {ratio * 100:.0f}% (>65%) ➔ Tự động chuyển sang int8_float16."
+                    if ratio > 0.65
+                    else f"[ASR] GPU VRAM <= 4.5GB (RTX 3050) ➔ Tự động tối ưu sang int8_float16."
                 )
+                print(msg, flush=True)
             else:
                 self._vram_downgraded = False
 
@@ -145,13 +148,22 @@ class FasterWhisperService:
 
         temp_dir = None
         try:
+            is_japanese = (request.language or "").strip().lower() in ("ja", "japanese")
+            effective_min_silence = request.min_silence_ms
+            if is_japanese and effective_min_silence <= 500:
+                effective_min_silence = 2000
+
             transcribe_options = {
                 "language": request.language,
                 "beam_size": 5,
-                "word_timestamps": request.word_timestamps,
+                "best_of": 5,
+                "patience": 1.0,
+                "temperature": (0.0, 0.2, 0.4),
+                "log_prob_threshold": -1.0,
                 "no_speech_threshold": 0.6,
                 "compression_ratio_threshold": 2.4,
-                "condition_on_previous_text": False,
+                "condition_on_previous_text": getattr(request, "condition_on_previous_text", True),
+                "word_timestamps": request.word_timestamps,
             }
             if request.prompt_context.strip():
                 transcribe_options["initial_prompt"] = request.prompt_context
@@ -163,7 +175,7 @@ class FasterWhisperService:
             if request.use_vad:
                 transcribe_options["vad_filter"] = True
                 transcribe_options["vad_parameters"] = {
-                    "min_silence_duration_ms": request.min_silence_ms
+                    "min_silence_duration_ms": effective_min_silence
                 }
             else:
                 transcribe_options["vad_filter"] = False

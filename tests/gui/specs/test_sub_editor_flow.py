@@ -164,7 +164,8 @@ def test_flow_rescan_button_click_via_qt_driver_triggers_large_v3_and_vram_guard
     assert hasattr(win, "scan_worker") and win.scan_worker is not None
     assert win.scan_worker.scan_mode == "asr"
     assert win.scan_worker.request.model_size == "large-v3"
-    assert win.scan_worker.request.compute_type == "float16"
+    # On <=4.5GB VRAM (e.g. RTX 3050 4GB) or VRAM > 65%, guard automatically selects int8_float16; otherwise float16
+    assert win.scan_worker.request.compute_type in ("float16", "int8_float16")
 
     # Simulate worker completion callback and verify UI table updates
     win._on_segment_scan_finished(win.scan_worker.segment_id, "Câu mới từ large-v3")

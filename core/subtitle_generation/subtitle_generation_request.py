@@ -29,6 +29,7 @@ class SubtitleGenerationRequest:
     range_start_ms: Optional[int] = None
     range_end_ms: Optional[int] = None
     audio_boost: bool = False
+    condition_on_previous_text: bool = True
 
     def __post_init__(self) -> None:
         if self.batch_mode not in {"time", "segments"}:

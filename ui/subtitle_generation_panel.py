@@ -527,10 +527,10 @@ class SubtitleGenerationPanel(QWidget):
             vram_gb = 0
 
         # Determine recommended option:
-        # GPU >=4 GB VRAM → float16 (fastest, full precision)
-        # GPU 2-3 GB VRAM → int8_float16 (saves VRAM, still GPU)
+        # GPU >= 6 GB VRAM → float16 (fastest, full precision)
+        # GPU <= 4.5 GB VRAM (e.g. RTX 3050 4GB) → int8_float16 (saves VRAM, prevents OOM on large-v3)
         # CPU only         → int8 (CPU only option)
-        if has_cuda and vram_gb >= 4:
+        if has_cuda and vram_gb >= 6:
             recommended = "float16"
         elif has_cuda:
             recommended = "int8_float16"
@@ -841,6 +841,12 @@ class SubtitleGenerationPanel(QWidget):
             project.transcription_context
         )
         language = self.cmb_language.currentText()
+        final_lang = None if (not language or language == "Auto Detect") else language
+        if final_lang is None:
+            win = self.window()
+            proj_ctrl = getattr(getattr(win, "page_translation", None), "project_controller", None)
+            if proj_ctrl and getattr(proj_ctrl, "_is_ja_origin", False):
+                final_lang = "ja"
         return SubtitleGenerationRequest(
             request_id=str(uuid.uuid4()),
             project_id=project.project_id,
@@ -848,7 +854,7 @@ class SubtitleGenerationPanel(QWidget):
             video_path=video_path,
             model_size=self._combo_value(self.cmb_model),
             compute_type=self._combo_value(self.cmb_compute),
-            language=None if language == "Auto Detect" else language,
+            language=final_lang,
             use_vad=self.chk_vad.isChecked(),
             min_silence_ms=500,
             word_timestamps=self.chk_word_timestamps.isChecked(),
@@ -858,6 +864,7 @@ class SubtitleGenerationPanel(QWidget):
             prompt_context=compiled_context.text,
             range_start_ms=range_start_ms,
             range_end_ms=range_end_ms,
+            condition_on_previous_text=True,
         )
 
     def start_range_generation(self, start_ms, end_ms, existing_segments):

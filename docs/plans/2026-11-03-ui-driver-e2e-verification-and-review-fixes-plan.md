@@ -1,162 +1,162 @@
-# Kế Hoạch Khắc Phục Lỗi Review & Kiểm Thử E2E Toàn Diện Bằng UI Driver (`QtDriver` + POM)
+# Kế Hoạch Khắc Phục Lỗi Review, Tối Ưu Hóa Cấu Hình RTX 3050 (4GB VRAM) Cho Anime Nhật & Kiểm Thử E2E Bằng `QtDriver`
 
 - **Mã kế hoạch**: `PLAN-UI-DRIVER-E2E-VERIFICATION-001`
 - **Ngày lập**: 2026-11-03
 - **Phạm vi**:
-  - Khắc phục 3 lỗi tiềm ẩn phát hiện qua Code Review (`receiving-code-review`) trên Commit `ba44db4` và `b60b051`.
-  - Bổ sung locators chuẩn `objectName` cho `ActivityLogView` và mở rộng Page Object Model (`CatStudioPage`, `SubEditorPage`).
-  - Viết bộ E2E Specs chạy thật qua `QtDriver` (`tests/gui/specs/`) thay vì chỉ mock unit test (`MainWindow.__new__`).
-- **Nguyên tắc Ponytail**: Sửa tận gốc tại điểm phát sinh, diff nhỏ gọn nhất, kiểm chứng thực tế trên Scene Graph QML và QWidget thật qua `QtDriver`.
+  - **Phần A (Code Review Fixes & UI Driver E2E)**: Khắc phục 2 lỗi logic phát hiện qua Code Review (`BUG-SCAN-ID-001`, `BUG-LOG-PREFIX-002`), bổ sung `objectName` cho `ActivityLogView`, mở rộng POM (`CatStudioPage`, `SubEditorPage`) và viết E2E Specs chạy thật qua `QtDriver`.
+  - **Phần B (RTX 3050 4GB VRAM & Japanese Anime ASR Optimization)**: Áp dụng cấu hình thực dụng `large-v3 + int8_float16` cho GPU ≤ 4GB VRAM và chuẩn hóa bộ tham số giải mã Faster-Whisper (`beam_size=5`, `best_of=5`, `patience=1.0`, `temperature=(0.0, 0.2, 0.4)`, `log_prob_threshold=-1.0`, `compression_ratio_threshold=2.4`, `no_speech_threshold=0.6`, `condition_on_previous_text=True` cho luồng Full/Batch ASR và `False` cho quét 1 câu ngắn, `min_silence_duration_ms=2000` khi bật VAD cho tiếng Nhật anime).
+- **Nguyên tắc Ponytail**: Sửa tận gốc tại điểm dùng chung (`FasterWhisperService`, `SubtitleGenerationPanel`, `MainWindow`), giữ nguyên hợp đồng các test cũ (`TimingState` legacy defaults), diff nhỏ gọn nhất, kiểm chứng thực tế qua `QtDriver`.
 
 ---
 
-## 1. Kết Quả Code Review Kỹ Thuật (`receiving-code-review`)
+## 1. Phân Tích Kỹ Thuật & Đối Chiếu Codebase Hiện Tại
 
-Qua đối chiếu mã nguồn thực tế tại commit `ba44db4` & `b60b051` với quy chuẩn `QtDriver` + POM trong `GEMINI.md`:
+### A. Kết quả Code Review trên Commit `ba44db4` & `b60b051`
+1. **`[BUG-SCAN-ID-001]` Mất khớp `segment_id` khi bấm nút `🔍 Quét lại` (`btn_current_sub_scan`) trên UI**:
+   - Tại `ui/SubEditor.py:1142`, `_on_current_editor_scan_requested()` phát `self.segment_scan_requested.emit(seg.get("id"), start_ms, end_ms)`.
+   - Khi segment chưa có khóa `"id"` tường minh (hoặc `seg.get("id")` là `None`, chỉ có `"stt"`), `Signal(str, int, int)` ép `None` thành `""`. Sang `ui/Gui.py:1671`, `sid == str(segment_id)` trượt khớp khiến `has_sub` bị tính sai thành `False` (chạy nhầm `scan_mode="timing"` thay vì `"asr"`) và khi quét xong không cập nhật được câu trên bảng.
+2. **`[BUG-LOG-PREFIX-002]` Nhân đôi tiền tố `[TIMING] [ASR]` trên Nhật ký hoạt động**:
+   - `TimingBatchWorker` phát `[ASR] VRAM đạt...`, nhưng `ui/Gui.py:4169` (`_on_timing_log`) luôn nối cứng `f"[TIMING] {message}"` tạo thành `"[TIMING] [ASR] ..."`.
+3. **`[GAP-UI-DRIVER-003]` Thiếu `objectName` trên `ActivityLogView` và thiếu E2E Spec bằng `QtDriver`**.
 
-1. **[BUG-SCAN-ID-001] Mất khớp `segment_id` khi bấm nút `🔍 Quét lại` (`btn_current_sub_scan`) trên UI thật**:
-   - Tại `ui/SubEditor.py:1142`, `_on_current_editor_scan_requested()` phát tín hiệu:
-     ```python
-     self.segment_scan_requested.emit(seg.get("id"), start_ms, end_ms)
-     ```
-   - Khi segment được nạp mà chưa có khóa `"id"` tường minh (hoặc `seg.get("id")` là `None`, ví dụ từ fixture hay dữ liệu chỉ có `"stt"`), `Signal(str, int, int)` của PySide6 ép `None` thành chuỗi rỗng `""`.
-   - Khi sang `ui/Gui.py:1671` (`_on_segment_scan_requested`) và `ui/Gui.py:1739` (`_on_segment_timing_scan_finished`), phép so sánh `str(s.get("id")) == str(segment_id)` trở thành `"None" == ""` (`False`). Hậu quả:
-     - `has_sub` luôn bị tính sai thành `False` dù câu đang có phụ đề ➔ chạy nhầm `scan_mode="timing"` thay vì `"asr"`.
-     - Khi worker quét xong, `_on_segment_scan_finished` không tìm thấy câu để cập nhật text lên bảng UI.
-   - Lý do unit test `test_rescan_vram_guard_and_log_compression.py` không phát hiện ra: Test dùng `MainWindow.__new__(MainWindow)` và truyền tay `segment_id="1"` thay vì bấm nút `btn_current_sub_scan` qua `QtDriver`.
-
-2. **[BUG-LOG-PREFIX-002] Nhân đôi tiền tố `[TIMING] [ASR]` trên Nhật ký hoạt động**:
-   - Tại `workers/TimingBatchWorker.py:110`, worker phát `self.log_signal.emit("[ASR] VRAM đạt ...")`.
-   - Nhưng tại `ui/Gui.py:4169`, `_on_timing_log(self, message: str)` lại nối cứng `self.append_log(f"[TIMING] {message}")` tạo thành `"[TIMING] [ASR] VRAM đạt..."`.
-   - Hàm `parse_activity_log()` (`ui/activity_log.py:97`) chỉ bóc nhãn ngoặc vuông đầu tiên, khiến log hạ cấp VRAM của ASR bị phân loại nhầm sang nguồn `TIMING` và hiển thị dư chuỗi `[ASR]` trong nội dung.
-
-3. **[GAP-UI-DRIVER-003] Thiếu `objectName` trên `ActivityLogView` và chưa có E2E Spec bằng `QtDriver` cho 3 bản vá gần nhất**:
-   - `ActivityLogView` (`ui/activity_log.py:253-308`) chưa gán `objectName` cho `level_filter`, `source_filter`, `clear_button`, và `text_edit`, vi phạm Quy tắc 4 trong `GEMINI.md`.
-   - `CatStudioPage` (`tests/gui/pages/cat_studio_page.py`) chưa khai báo locator cho `subjectTagChip` / `subjectTagText` và chưa có spec E2E kiểm tra trên QML Scene Graph thật.
+### B. Đối chiếu Đề xuất Cấu hình RTX 3050 Laptop (4GB VRAM) · Japanese Anime với Codebase
+| Thông số đề xuất | Trạng thái hiện tại trong Codebase | Điểm lệch & Giải pháp kỹ thuật |
+| :--- | :--- | :--- |
+| **Model Size**: `large-v3` | `SubtitleGenerationPanel._populate_model_combo` (`ui/subtitle_generation_panel.py:442`) đang để `preferred="large-v3-turbo"`. | Đổi `preferred="large-v3"` nếu máy đã cài `large-v3` (giữ fallback an toàn nếu chưa cài). Trong `_resolve_rescan_model_and_compute` (`ui/Gui.py:1645`), luôn ưu tiên `"large-v3"`. |
+| **Compute Type**: `int8_float16` trên GPU 4GB VRAM | - `ui/subtitle_generation_panel.py:533`: `if has_cuda and vram_gb >= 4: recommended = "float16"` (sai với RTX 3050 4GB vì `large-v3` FP16 tốn ~4.5GB VRAM!).<br>- `ui/Gui.py:1655`: `_resolve_rescan_model_and_compute` đang gán cứng `"float16"` cho mọi GPU.<br>- `faster_whisper_service.py:60`: Chỉ hạ xuống `int8_float16` khi VRAM đã dùng > 65%, chưa kiểm tra tổng VRAM `total_gb <= 4.5`. | 1. Tại `ui/subtitle_generation_panel.py:533`: Chỉ khuyên dùng `"float16"` khi `vram_gb >= 6`; với GPU `<= 4GB` (như RTX 3050 4GB), khuyên dùng `★ int8_float16 (Recommended)`.<br>2. Tại `faster_whisper_service.py:19` (`should_downgrade_to_int8_float16`) và `ui/Gui.py:1645` (`_resolve_rescan_model_and_compute`): Nếu `total_gb <= 4.5` (GPU 4GB) hoặc `used/total > 0.65`, chọn ngay `"int8_float16"` từ đầu mà không cần thử nạp `float16` gây tràn VRAM. |
+| **Beam Size / Best Of / Patience**: `5` / `5` / `1.0` | `faster_whisper_service.py:150` mới truyền `"beam_size": 5`, thiếu `"best_of": 5` và `"patience": 1.0`. | Bổ sung `"best_of": 5` và `"patience": 1.0` vào `transcribe_options` trong `FasterWhisperService.transcribe_batch()`. |
+| **Temperature**: `(0.0, 0.2, 0.4)` & **Log Prob Threshold**: `-1.0` | `faster_whisper_service.py:148-155` chưa truyền `temperature` (Faster-Whisper mặc định nhảy tới `0.6, 0.8, 1.0` dễ sinh ảo giác câu không có trong audio) và chưa truyền `log_prob_threshold: -1.0`. | Bổ sung `"temperature": (0.0, 0.2, 0.4)` và `"log_prob_threshold": -1.0` (cùng `"compression_ratio_threshold": 2.4`, `"no_speech_threshold": 0.6` đã có) vào `transcribe_options`. |
+| **Condition on Previous Text**: `ON` (`True`) | `faster_whisper_service.py:154` đang khóa cứng `"condition_on_previous_text": False` cho mọi trường hợp! | Thêm trường `condition_on_previous_text: bool = True` vào `SubtitleGenerationRequest`. Mặc định `True` cho luồng nhận diện tập anime (`transcribe_batch` bảo toàn ngữ cảnh tên riêng/hội thoại nối tiếp). Riêng khi quét lại 1 câu đơn lẻ cực ngắn (`< 3000ms`), có thể truyền từ `request.condition_on_previous_text` (mặc định `True` theo đúng khuyến nghị). |
+| **VAD Filter**: `ON` + `min_silence_duration_ms = 2000` (Anime) | `faster_whisper_service.py:166` truyền `request.min_silence_ms` (đang để 500ms ở `Gui.py:1709, 2007`), dễ cắt vụn khoảng ngắt tự nhiên của nhân vật anime. | Trong `FasterWhisperService.transcribe_batch()`, khi `request.language == "ja"` và `request.min_silence_ms == 500` (giá trị mặc định chưa tùy chỉnh), hoặc trong `_on_segment_scan_requested` / `_on_batch_segment_scan_requested` khi ngôn ngữ là `"ja"`, sử dụng `min_silence_ms = 2000` (vẫn giữ nguyên mặc định `500` ở `TimingState` để không làm gãy 30 unit test cũ của `test_subtitle_generation.py`). |
+| **Language**: Cố định `Japanese (ja)` khi dự án là Anime Nhật | Khi user để `Auto Detect` trên `SubtitleGenerationPanel` (`ui/subtitle_generation_panel.py:843`), `_build_asr_request` truyền `language=None`. | Trong `_build_asr_request` và `_on_segment_scan_requested` / `_on_batch_segment_scan_requested`: Nếu combo đang để `Auto Detect` nhưng dự án đã xác định gốc Nhật (`_is_ja_origin` hoặc câu thoại có Kana), tự động khóa `language="ja"` thay vì để `None`. |
 
 ---
 
 ## 2. Chi Tiết Các Tác Vụ Triển Khai
 
-### Task 1: Chuẩn hóa `segment_id` khi bấm Quét lại trên `SubEditor` (`ui/SubEditor.py` & `ui/Gui.py`)
+### Task 1: Tối ưu `FasterWhisperService` & `SubtitleGenerationRequest` cho RTX 3050 4GB & Anime Nhật
 - **File can thiệp**:
-  - `ui/SubEditor.py` (hàm `_on_current_editor_scan_requested` tại dòng `1130-1143`)
-  - `ui/Gui.py` (hàm `_on_segment_scan_requested` tại dòng `1669-1675`)
+  - `core/subtitle_generation/subtitle_generation_request.py`
+  - `core/subtitle_generation/faster_whisper_service.py`
 - **Thay đổi**:
-  1. Trong `ui/SubEditor.py:_on_current_editor_scan_requested()`:
-     Đảm bảo mỗi segment luôn có `"id"` hợp lệ trước khi emit signal:
+  1. Trong `SubtitleGenerationRequest` (`core/subtitle_generation/subtitle_generation_request.py:31`):
+     Thêm trường cấu hình với giá trị mặc định chuẩn:
      ```python
-     seg_id = str(seg.get("id") or seg.get("stt") or (self.current_index + 1))
-     seg["id"] = seg_id
-     self.segment_scan_requested.emit(seg_id, start_ms, end_ms)
+     condition_on_previous_text: bool = True
+     temperature: tuple = (0.0, 0.2, 0.4)
      ```
-  2. Trong `ui/Gui.py:_on_segment_scan_requested()`:
-     Khi dò segment trong `self.sub_editor.all_segments`, fallback khớp theo cả `s.get("id")` hoặc `s.get("stt")` để an toàn tuyệt đối với mọi nguồn dữ liệu:
+  2. Trong `should_downgrade_to_int8_float16(threshold: float = 0.65)` (`core/subtitle_generation/faster_whisper_service.py:19-30`):
+     - Nếu `0 < total_gb <= 4.5` (GPU 4GB như RTX 3050 Laptop), trả về ngay `(True, ratio)` vì `large-v3` ở `float16` cần ~4.5GB VRAM, bắt buộc dùng `int8_float16` để không tràn bộ nhớ.
+     - Nếu `total_gb > 4.5`, giữ cơ chế kiểm tra `ratio > threshold` (65%).
+  3. Trong `FasterWhisperService.transcribe_batch()` (`core/subtitle_generation/faster_whisper_service.py:148-170`):
+     Chuẩn hóa `transcribe_options` theo đúng bảng thông số khuyến nghị:
      ```python
-     for idx, s in enumerate(self.sub_editor.all_segments):
-         sid = str(s.get("id") or s.get("stt") or (idx + 1))
-         if sid == str(segment_id):
-             s["id"] = sid
-             has_sub = bool(str(s.get("text", "")).strip())
-             break
+     transcribe_options = {
+         "language": request.language,
+         "beam_size": 5,
+         "best_of": 5,
+         "patience": 1.0,
+         "temperature": tuple(getattr(request, "temperature", (0.0, 0.2, 0.4))),
+         "compression_ratio_threshold": 2.4,
+         "log_prob_threshold": -1.0,
+         "no_speech_threshold": 0.6,
+         "condition_on_previous_text": bool(getattr(request, "condition_on_previous_text", True)),
+         "word_timestamps": request.word_timestamps,
+     }
+     ```
+     Và khi `request.use_vad` bật:
+     ```python
+     effective_silence_ms = (
+         2000
+         if (request.language == "ja" and request.min_silence_ms == 500)
+         else request.min_silence_ms
+     )
+     transcribe_options["vad_filter"] = True
+     transcribe_options["vad_parameters"] = {
+         "min_silence_duration_ms": effective_silence_ms
+     }
      ```
 
 ---
 
-### Task 2: Chặn nhân đôi tiền tố trong `_on_timing_log` & Gán `objectName` cho `ActivityLogView` (`ui/Gui.py` & `ui/activity_log.py`)
+### Task 2: Khuyến nghị `int8_float16` cho GPU 4GB trên UI & Đồng bộ Luồng Quét lại (`ui/subtitle_generation_panel.py` & `ui/Gui.py`)
 - **File can thiệp**:
-  - `ui/Gui.py` (hàm `_on_timing_log` tại dòng `4169-4170`)
-  - `ui/activity_log.py` (lớp `ActivityLogView.__init__` tại dòng `253-308`)
+  - `ui/subtitle_generation_panel.py` (dòng `530-540`)
+  - `ui/Gui.py` (dòng `1645-1712`, `1990-2010`, `4169`)
+  - `ui/SubEditor.py` (dòng `1130-1143`)
 - **Thay đổi**:
-  1. Trong `ui/Gui.py:_on_timing_log(self, message: str)`:
-     Nếu `message` đã bắt đầu bằng nhãn nguồn `[...]` (ví dụ `[ASR]` hoặc `[TIMING]`), giữ nguyên khi đẩy vào `self.append_log`:
+  1. Trong `SubtitleGenerationPanel._populate_compute_combo()` (`ui/subtitle_generation_panel.py:533`):
+     Đổi ngưỡng khuyến nghị `float16` từ `vram_gb >= 4` lên `vram_gb >= 6` để máy 4GB VRAM (RTX 3050 Laptop) luôn được gợi ý và chọn mặc định `★ int8_float16  (Recommended)`:
      ```python
-     def _on_timing_log(self, message: str):
-         clean = str(message or "").lstrip()
-         self.append_log(clean if clean.startswith("[") else f"[TIMING] {message}")
+     if has_cuda and vram_gb >= 6:
+         recommended = "float16"
+     elif has_cuda:
+         recommended = "int8_float16"
+     else:
+         recommended = "int8"
      ```
-  2. Trong `ui/activity_log.py` (`ActivityLogView.__init__`):
-     Gán `objectName` chuẩn cho 4 widget điều khiển để `QtDriver` truy xuất:
-     ```python
-     self.level_filter.setObjectName("activity_level_filter")
-     self.source_filter.setObjectName("activity_source_filter")
-     self.clear_button.setObjectName("activity_clear_button")
-     self.text_edit.setObjectName("activity_log_text")
-     ```
+  2. Trong `MainWindow._resolve_rescan_model_and_compute()` (`ui/Gui.py:1645-1656`):
+     - Nếu `device == "cpu"` ➔ `"int8"`.
+     - Nếu `device == "cuda"`: Kiểm tra `should_downgrade_to_int8_float16(0.65)`. Nếu trả về `True` (máy 4GB VRAM như RTX 3050 hoặc VRAM đang > 65%) ➔ trả về ngay `("large-v3", "int8_float16")`; ngược lại trả về `("large-v3", "float16")`.
+     - Trong `_on_segment_scan_requested` và `_on_batch_segment_scan_requested`: Nếu `iso_lang == "ja"` và `settings.get("min_silence_ms", 500) == 500`, truyền `min_silence_ms=2000`.
+  3. **Sửa `BUG-SCAN-ID-001` (`ui/SubEditor.py:1140-1143`)**:
+     Trong `_on_current_editor_scan_requested()`, gán `seg_id = str(seg.get("id") or seg.get("stt") or (self.current_index + 1))` và `seg["id"] = seg_id` trước khi emit `self.segment_scan_requested.emit(seg_id, start_ms, end_ms)`.
+  4. **Sửa `BUG-LOG-PREFIX-002` (`ui/Gui.py:4169`)**:
+     Trong `_on_timing_log(self, message: str)`, không ghép thêm `[TIMING] ` nếu `message.lstrip().startswith("[")`.
 
 ---
 
-### Task 3: Mở rộng Page Object Model (`tests/gui/pages/cat_studio_page.py` & `tests/gui/pages/sub_editor_page.py`)
+### Task 3: Bổ sung `objectName` cho `ActivityLogView` & Mở rộng POM (`ui/activity_log.py`, `tests/gui/pages/`)
 - **File can thiệp**:
+  - `ui/activity_log.py` (dòng `253-308`)
   - `tests/gui/pages/cat_studio_page.py`
   - `tests/gui/pages/sub_editor_page.py`
 - **Thay đổi**:
-  1. Trong `CatStudioPage` (`tests/gui/pages/cat_studio_page.py`):
-     - Bổ sung hằng số locator QML:
-       ```python
-       LOC_SUBJECT_TAG_CHIP = "subjectTagChip"
-       LOC_SUBJECT_TAG_TEXT = "subjectTagText"
-       ```
-     - Bổ sung property `subject_tag_chip_item`, `subject_tag_text_item` dùng `self.driver.find_qml_item(...)`.
-     - Bổ sung helper:
-       - `get_subject_tag_text() -> str`: trả về `str(self.subject_tag_text_item.property("text"))`.
-       - `is_subject_tag_visible() -> bool`: trả về `bool(self.subject_tag_chip_item.property("visible"))`.
-       - `set_subject_pronoun(pronoun_pair: str) -> None`: gọi `self.page_widget._controller.setSubjectPronoun(pronoun_pair)` và `self.driver.wait_ui(50)`.
-  2. Trong `SubEditorPage` (`tests/gui/pages/sub_editor_page.py`):
-     - Bổ sung helper kiểm tra căn lề dọc của ô trong bảng `table_subtitles`:
-       ```python
-       def get_table_cell_alignment(self, row: int, col: int = 4) -> int:
-           item = self.table.item(row, col)
-           return int(item.textAlignment()) if item else 0
-       ```
+  1. Trong `ActivityLogView.__init__` (`ui/activity_log.py`):
+     Gán `objectName` chuẩn cho 4 widget:
+     - `self.level_filter.setObjectName("activity_level_filter")`
+     - `self.source_filter.setObjectName("activity_source_filter")`
+     - `self.clear_button.setObjectName("activity_clear_button")`
+     - `self.text_edit.setObjectName("activity_log_text")`
+  2. Trong `CatStudioPage` (`tests/gui/pages/cat_studio_page.py`):
+     Thêm `LOC_SUBJECT_TAG_CHIP = "subjectTagChip"`, `LOC_SUBJECT_TAG_TEXT = "subjectTagText"`, `is_subject_tag_visible()`, `get_subject_tag_text()`, `set_subject_pronoun(pair)`.
+  3. Trong `SubEditorPage` (`tests/gui/pages/sub_editor_page.py`):
+     Thêm `get_table_cell_alignment(row: int, col: int = 4) -> int`.
 
 ---
 
-### Task 4: Viết Bộ Kiểm Thử E2E Bằng `QtDriver` (`tests/gui/specs/test_cat_studio_flow.py` & `tests/gui/specs/test_sub_editor_flow.py`)
+### Task 4: Kiểm Thử E2E Toàn Diện Bằng `QtDriver` & Unit Test Cấu Hình RTX 3050
 - **File can thiệp**:
   - `tests/gui/specs/test_cat_studio_flow.py`
   - `tests/gui/specs/test_sub_editor_flow.py`
-- **Chi tiết 4 kịch bản E2E chạy qua `QtDriver`**:
-  1. `test_flow_cat_studio_subject_tag_chip_and_pronoun_override(cat_studio_driver)` (trong `test_cat_studio_flow.py`):
-     - Nạp câu thoại anime Nhật `「この俺様に一体何の」` qua `cat_studio_driver.page_widget.load_subtitles_from_studio(...)`.
-     - Dùng `QtDriver` kiểm tra trực tiếp trên QML Scene Graph:
-       - `cat_studio_driver.is_subject_tag_visible() is True`
-       - `cat_studio_driver.get_subject_tag_text() == "Ta ➔ Ngươi (俺様)"`
-     - Đổi đại từ qua `cat_studio_driver.set_subject_pronoun("Tao - Mày")` và xác nhận `cat_studio_driver.get_subject_tag_text()` cập nhật tức thì trên QML thành `"Tao ➔ Mày (俺様)"`.
-  2. `test_flow_sub_editor_vertical_alignment_and_newline_sanitization(sub_editor_driver)` (trong `test_sub_editor_flow.py`):
-     - Nạp segment có ký tự xuống dòng thừa ở đầu `"\n\nEm cảm ơn ngài\n"` vào `sub_editor_driver.editor.load_segments(...)`.
-     - Chọn dòng 0 qua `sub_editor_driver.select_row(0)`.
-     - Xác nhận qua `QtDriver`:
-       - `sub_editor_driver.get_table_cell_text(0, 4) == "Em cảm ơn ngài"` (không còn `\n` đầu dòng).
-       - `sub_editor_driver.get_current_text() == "Em cảm ơn ngài"`.
-       - `bool(sub_editor_driver.get_table_cell_alignment(0, 4) & int(Qt.AlignVCenter)) is True`.
-  3. `test_flow_rescan_button_click_via_qt_driver_triggers_large_v3_and_vram_guard(main_window_driver, monkeypatch)` (trong `test_sub_editor_flow.py`):
-     - Nạp 1 segment (không cần truyền sẵn `"id"`, chỉ có `"stt": 1, "start_ms": 1000, "end_ms": 3000, "text": "Câu cũ"`) vào `win.sub_editor`.
-     - Khởi tạo `sub_page = SubEditorPage(driver, win.sub_editor)`, chọn dòng 0 (`sub_page.select_row(0)`).
-     - Mock `ModelManager.is_installed` trả về `True` cho `"large-v3"`, bắt cấu hình khởi tạo `SingleSegmentScanWorker`, và dùng `sub_page.click_scan()` (`QtDriver.click` thật vào nút `btn_current_sub_scan`).
-     - Xác nhận:
-       - `scan_mode == "asr"` (nhờ đã sửa `BUG-SCAN-ID-001`), `model_size == "large-v3"`, `compute_type == "float16"`.
-       - Khi giả lập callback hoàn tất `_on_segment_scan_finished(seg_id, "Câu mới từ large-v3")`, ô bảng tại dòng 0 cột 4 (`sub_page.get_table_cell_text(0, 4)`) cập nhật thành `"Câu mới từ large-v3"`.
-  4. `test_flow_activity_log_view_filters_and_noise_suppression_via_qt_driver(main_window_driver)` (trong `test_sub_editor_flow.py`):
-     - Dùng `QtDriver` tìm các widget `activity_source_filter`, `activity_clear_button`, `activity_log_text` trong `win.log_box`.
-     - Bấm `driver.click("activity_clear_button", root=win.log_box)` để làm sạch log.
-     - Đẩy qua `win.append_log` và `win._on_timing_log`:
-       - Nhiễu kỹ thuật: `"llama_kv_cache_iswa: using full-size SWA cache"` và `"[MODEL_COMMIT] target=0"`
-       - Log chuẩn: `"[CAT] Câu #1: Ngươi tìm ta đây rốt cuộc có chuyện gì?"`
-       - Log từ timing worker: `win._on_timing_log("[ASR] VRAM đạt 75% (>65%) ➔ Tự động chuyển sang int8_float16.")`
-     - Kiểm tra trên `activity_log_text.toPlainText()`:
-       - Không chứa `"llama_kv_cache_iswa"`, không chứa `"[MODEL_COMMIT]"`, không bị nhân đôi `"[TIMING] [ASR]"`.
-       - Hiển thị tiếng Việt UTF-8 rõ ràng (`"Ngươi tìm ta đây rốt cuộc có chuyện gì?"`).
-       - Khi chọn bộ lọc `source_filter.setCurrentText("CAT")`, chỉ còn dòng `CAT`; khi chọn `"ASR"`, chỉ còn dòng `ASR`.
+  - `tests/core/test_rescan_vram_guard_and_log_compression.py`
+- **Các kịch bản kiểm thử**:
+  1. `test_rtx_3050_4gb_anime_ja_recommended_profile()` (trong `test_rescan_vram_guard_and_log_compression.py`):
+     - Giả lập GPU RTX 3050 Laptop 4GB (`HardwareDetector.get_vram_usage` trả về `(1.2, 4.0)` — mới dùng 30% nhưng tổng VRAM là 4.0GB).
+     - Xác nhận `should_downgrade_to_int8_float16()` trả về `True`, `_resolve_rescan_model_and_compute()` chọn `("large-v3", "int8_float16")`, và `FasterWhisperService.transcribe_batch()` truyền đúng bộ thông số chuẩn anime Nhật:
+       - `beam_size == 5`, `best_of == 5`, `patience == 1.0`
+       - `temperature == (0.0, 0.2, 0.4)`
+       - `condition_on_previous_text is True`
+       - `compression_ratio_threshold == 2.4`, `log_prob_threshold == -1.0`, `no_speech_threshold == 0.6`
+       - `vad_filter is True`, `vad_parameters["min_silence_duration_ms"] == 2000`
+       - `language == "ja"`
+  2. `test_flow_cat_studio_subject_tag_chip_and_pronoun_override(cat_studio_driver)` (E2E `QtDriver` trong `test_cat_studio_flow.py`):
+     - Kiểm tra QML `subjectTagChip` hiển thị `"Ta ➔ Ngươi (俺様)"` với câu `「この俺様に一体何の」` và đổi sang `"Tao ➔ Mày (俺様)"`.
+  3. `test_flow_sub_editor_vertical_alignment_and_newline_sanitization(sub_editor_driver)` (E2E `QtDriver` trong `test_sub_editor_flow.py`):
+     - Kiểm tra cắt `\n` đầu dòng và căn giữa dọc `Qt.AlignVCenter` trên `table_subtitles`.
+  4. `test_flow_rescan_button_click_via_qt_driver_uses_rtx3050_profile(main_window_driver)` (E2E `QtDriver` trong `test_sub_editor_flow.py`):
+     - Nạp segment không có khóa `"id"` sẵn, bấm nút `btn_current_sub_scan` thật qua `SubEditorPage.click_scan()`, xác nhận trên GPU 4GB máy khởi tạo `SegmentScanWorker` ở chế độ `"asr"` với `model_size="large-v3"`, `compute_type="int8_float16"`, `language="ja"`, `min_silence_ms=2000`, và cập nhật câu mới lên bảng sau khi hoàn tất.
+  5. `test_flow_activity_log_view_filters_and_noise_suppression_via_qt_driver(main_window_driver)` (E2E `QtDriver` trong `test_sub_editor_flow.py`):
+     - Dùng `QtDriver` tương tác với `activity_source_filter`, `activity_clear_button`, `activity_log_text` để xác nhận lọc riêng `CAT` / `ASR`, không bị nhân đôi `[TIMING] [ASR]`, và ẩn sạch log rác `llama_kv_cache_iswa` / `[MODEL_COMMIT]`.
 
 ---
 
 ## 3. Lệnh Kiểm Chứng Tự Động (Verification Commands)
 
 ```powershell
-# 1. Chạy toàn bộ Desktop GUI E2E Specs qua QtDriver (bao gồm 4 E2E specs mới)
+# 1. Chạy toàn bộ Desktop GUI E2E Specs qua QtDriver
 .\.venv\Scripts\python.exe -m pytest tests/gui/specs/ -v
 
-# 2. Chạy kiểm thử unit cho Rescan VRAM Guard, Subject Tag & Alignment
-.\.venv\Scripts\python.exe -m pytest tests/core/test_rescan_vram_guard_and_log_compression.py tests/translation/test_subject_tag_and_gemma_prompt.py tests/ui/test_subeditor_alignment_and_leading_newline.py -v
+# 2. Chạy bộ kiểm thử RTX 3050 4GB Profile, VRAM Guard, Subject Tag & Subtitle Generation
+.\.venv\Scripts\python.exe -m pytest tests/core/test_rescan_vram_guard_and_log_compression.py tests/translation/test_subject_tag_and_gemma_prompt.py tests/ui/test_subeditor_alignment_and_leading_newline.py tests/subtitle_generation/test_subtitle_generation.py -v
 ```
