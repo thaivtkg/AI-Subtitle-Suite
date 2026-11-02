@@ -1,4 +1,4 @@
-﻿import re
+import re
 import os
 import json
 import time
@@ -811,6 +811,7 @@ class ProjectController(QObject):
         clean_subtitles = [
             {k: v for k, v in sub.items() if not k.startswith("_")}
             for sub in self._subtitle_model.get_all_data()
+            if sub.get("status") != "ACCEPTED"
         ]
 
         intelligence = {
@@ -928,7 +929,13 @@ class ProjectController(QObject):
                         sub["status"] = "ACCEPTED"
                 is_healed_vi = True
 
-            self._subtitle_model.load_data(subtitles)
+            # AUD-FILTER-001: Hàng đợi CAT Studio chỉ nạp các câu chưa duyệt.
+            # Các câu đã DUYỆT (ACCEPTED) đã hoàn tất trên Timeline và lưu trong TM, không nạp vào hàng đợi.
+            clean_pending_subs = [
+                sub for sub in subtitles
+                if isinstance(sub, dict) and sub.get("status") != "ACCEPTED"
+            ]
+            self._subtitle_model.load_data(clean_pending_subs)
             self.glossary = loaded_glossary
             self.entity_dictionary = loaded_entities
             self.translation_memory = loaded_tm
@@ -939,7 +946,7 @@ class ProjectController(QObject):
             self._is_ja_origin = loaded_is_ja
             self.archetypeChanged.emit()
             self.glossaryChanged.emit()
-            print(f"[PROJECT_LOAD] Loaded {len(subtitles)} subtitles from {os.path.basename(file_path)}")
+            print(f"[PROJECT_LOAD] Loaded {len(clean_pending_subs)} pending subtitles from {os.path.basename(file_path)} (excluded {len(subtitles) - len(clean_pending_subs)} accepted)")
             self.projectLoaded.emit(story_summary)
             
             # --- ĐOẠN ĐÃ SỬA: DỌN DẸP DUPLICATE EMIT ---

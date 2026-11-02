@@ -143,6 +143,9 @@ class TranslationStudioPage(QWidget):
 
         for idx in target_indices:
             s = studio_segments[idx]
+            # Bỏ qua các câu đã duyệt khi nạp toàn bộ từ Timeline (chỉ nạp câu cần dịch)
+            if selected_indices is None and s.get("translation_status") == "ACCEPTED":
+                continue
             cat_data.append({
                 "segment_id": str(s.get("id", idx)),
                 "studio_index": idx,
@@ -238,3 +241,7 @@ class TranslationStudioPage(QWidget):
         """Nạp tệp .aisrt bảo toàn 100% Glossary, TM và tiến độ dịch."""
         if os.path.exists(file_path):
             self.project_controller.loadProject(file_path)
+            if self.subtitle_model.rowCount() > 0:
+                self.translation_controller.loadSubtitle(0)
+            else:
+                self.translation_controller.loadSubtitle(-1)

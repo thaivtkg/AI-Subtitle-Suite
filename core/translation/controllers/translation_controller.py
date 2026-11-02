@@ -38,6 +38,7 @@ class TranslationController(QObject):
         self._context_next = "" # LƯU CONTEXT SAU
         self._current_source_language = "English"
         self._translation_progress = 0
+        self._accepted_count = 0
         
         self._subtitle_model = subtitle_model
         self._worker_factory = worker_factory or TranslationWorker
@@ -49,6 +50,7 @@ class TranslationController(QObject):
         self._entities = None
         self._translation_memory = None
         self._project_controller = None
+        self._subtitle_model.modelReset.connect(self._reset_accepted_count)
         self._subtitle_model.modelReset.connect(self._emit_progress)
         self._subtitle_model.dataChanged.connect(self._emit_progress)
         self._subtitle_model.modelReset.connect(self._emit_qa_status)
@@ -160,13 +162,17 @@ class TranslationController(QObject):
     def _worker(self):
         return self.worker
 
+    def _reset_accepted_count(self):
+        self._accepted_count = 0
+
     @Property(int, notify=progressChanged)
     def totalSubtitleCount(self):
-        return len(self._subtitle_model.get_all_data())
+        return len(self._subtitle_model.get_all_data()) + self._accepted_count
 
     @Property(int, notify=progressChanged)
     def acceptedCount(self):
-        return sum(1 for sub in self._subtitle_model.get_all_data() if str(sub.get("status", "")).upper() == "ACCEPTED")
+        in_model = sum(1 for sub in self._subtitle_model.get_all_data() if str(sub.get("status", "")).upper() == "ACCEPTED")
+        return self._accepted_count + in_model
 
     def _emit_progress(self, *args):
         self.progressChanged.emit()
@@ -609,6 +615,7 @@ class TranslationController(QObject):
         if self.translation_memory is not None and original:
             self.translation_memory.add(original, clean_text)
         self.notify.emit("SUCCESS", f"Đã duyệt và đồng bộ câu #{index + 1} sang Timeline")
+        self._accepted_count += 1
 
         # Xóa câu đã duyệt khỏi hàng đợi CAT Studio theo yêu cầu của người dùng
         self._subtitle_model.remove_subtitle(index)
