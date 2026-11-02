@@ -34,12 +34,13 @@ class QtDriver:
         selector: str,
         parent: Optional[QWidget] = None,
         widget_type: Optional[Type[T]] = None,
+        root: Optional[QWidget] = None,
     ) -> T:
         """
         Locates a QWidget by objectName (e.g., 'txt_current_sub_content' or '#txt_current_sub_content').
         Raises LookupError if not found (equivalent to NoSuchElementException).
         """
-        search_root = parent or self.root_window
+        search_root = root or parent or self.root_window
         obj_name = selector.lstrip("#")
         target_type = widget_type or QWidget
 

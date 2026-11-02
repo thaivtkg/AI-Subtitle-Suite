@@ -130,6 +130,11 @@ class SubEditorPage(BasePage):
         item = self.table.item(row, col)
         return item.text() if item is not None else ""
 
+    def get_table_cell_alignment(self, row: int, col: int = 4) -> int:
+        """Returns the Qt alignment flags for the specified cell in table_subtitles."""
+        item = self.table.item(row, col)
+        return int(item.textAlignment()) if item is not None else 0
+
     def click_prev_segment(self) -> SubEditorPage:
         self.driver.click(self.btn_prev)
         return self

@@ -26,6 +26,8 @@ class CatStudioPage(BasePage):
     LOC_BTN_MODEL_MANAGER = "btnModelManager"
     LOC_BTN_IMPORT_TIMELINE = "btnImportFromTimeline"
     LOC_SOURCE_LANG_COMBO = "sourceLangCombo"
+    LOC_SUBJECT_TAG_CHIP = "subjectTagChip"
+    LOC_SUBJECT_TAG_TEXT = "subjectTagText"
 
     def __init__(self, driver: QtDriver, quick_widget: Optional[QQuickWidget] = None):
         super().__init__(driver)
@@ -86,6 +88,14 @@ class CatStudioPage(BasePage):
         except LookupError:
             return None
 
+    @property
+    def subject_tag_chip_item(self) -> QQuickItem:
+        return self.driver.find_qml_item(self.LOC_SUBJECT_TAG_CHIP, root_item=self.root_qml)
+
+    @property
+    def subject_tag_text_item(self) -> QQuickItem:
+        return self.driver.find_qml_item(self.LOC_SUBJECT_TAG_TEXT, root_item=self.root_qml)
+
     # -------------------------------------------------------------------------
     # User Actions
     # -------------------------------------------------------------------------
@@ -141,3 +151,19 @@ class CatStudioPage(BasePage):
         """Asserts that QQuickWidget is loaded and displaying."""
         assert self.quick_widget is not None and self.quick_widget.isVisible()
         assert self.root_qml is not None
+
+    def get_subject_tag_text(self) -> str:
+        """Returns the text displayed on the QML Subject Tag Chip."""
+        return str(self.subject_tag_text_item.property("text"))
+
+    def is_subject_tag_visible(self) -> bool:
+        """Returns whether the Subject Tag Chip is visible in QML."""
+        return bool(self.subject_tag_chip_item.property("visible"))
+
+    def set_subject_pronoun(self, pronoun_pair: str) -> CatStudioPage:
+        """Sets the subject pronoun pair on the controller and waits for QML reactivity."""
+        ctrl = getattr(self.window, "translation_controller", None) or getattr(self.window, "_controller", None)
+        assert ctrl is not None, "TranslationController not found on window"
+        ctrl.setSubjectPronoun(pronoun_pair)
+        self.wait_ms(50)
+        return self

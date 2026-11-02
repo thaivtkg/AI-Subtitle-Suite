@@ -251,6 +251,7 @@ class ActivityLogView(QFrame):
         header.addWidget(title)
 
         self.level_filter = QComboBox()
+        self.level_filter.setObjectName("activity_level_filter")
         self.level_filter.addItems(["All", "Debug", "Info", "Warning", "Error"])
         self.level_filter.currentTextChanged.connect(self._on_level_filter_changed)
         self.level_filter.setFixedWidth(68)
@@ -259,6 +260,7 @@ class ActivityLogView(QFrame):
         header.addWidget(self.level_filter)
 
         self.source_filter = QComboBox()
+        self.source_filter.setObjectName("activity_source_filter")
         self.source_filter.addItem("All")
         self.source_filter.currentTextChanged.connect(self._on_source_filter_changed)
         self.source_filter.setMinimumWidth(64)
@@ -288,6 +290,7 @@ class ActivityLogView(QFrame):
         header.addWidget(self.auto_scroll_control)
 
         self.clear_button = QPushButton("Clear")
+        self.clear_button.setObjectName("activity_clear_button")
         self.clear_button.setToolTip("Clear activity log")
         self.clear_button.clicked.connect(self.model.clear)
         self.clear_button.setFixedHeight(26)
@@ -302,6 +305,7 @@ class ActivityLogView(QFrame):
         layout.addWidget(header_widget)
 
         self.text_edit = QTextEdit()
+        self.text_edit.setObjectName("activity_log_text")
         self.text_edit.setReadOnly(True)
         self.text_edit.setPlaceholderText("Hệ thống sẵn sàng...")
         self.text_edit.setStyleSheet("border: none; background-color: transparent;")

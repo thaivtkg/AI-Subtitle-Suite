@@ -194,4 +194,25 @@ def test_flow_cat_studio_translate_button_visible_under_draft_or_idle_status(cat
     driver.assert_visible(btn_translate, True)
 
 
+def test_flow_cat_studio_subject_tag_chip_and_pronoun_override(cat_studio_driver):
+    """
+    PLAN-CAT-SUBJECT-TAG-AND-GEMMA-ENHANCEMENT-001 & PLAN-UI-DRIVER-E2E-VERIFICATION-001:
+    Verify via QtDriver on real QML Scene Graph that subjectTagChip displays detected anime
+    pronouns ('Ta ➔ Ngươi (俺様)') and updates live when setSubjectPronoun is triggered.
+    """
+    page_widget, cat_page, driver = cat_studio_driver
+
+    page_widget.load_subtitles_from_studio([
+        {"segment_id": "ja-001", "start": 1000, "end": 3500, "text": "「この俺様に一体何の」"},
+    ])
+    driver.wait_ms(100)
+
+    assert cat_page.is_subject_tag_visible() is True
+    assert cat_page.get_subject_tag_text() == "Ta ➔ Ngươi (俺様)"
+
+    cat_page.set_subject_pronoun("Tao - Mày")
+    assert cat_page.get_subject_tag_text() == "Tao ➔ Mày (俺様)"
+
+
+
 

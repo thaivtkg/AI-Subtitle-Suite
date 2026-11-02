@@ -1321,9 +1321,11 @@ class SubtitleEditorWidget(QWidget):
         if self.current_index < 0 or self.current_index >= len(self.all_segments):
             return
         seg = self.all_segments[self.current_index]
-        start_ms = time_str_to_ms(seg.get("start", "00:00:00,000"))
-        end_ms = time_str_to_ms(seg.get("end", "00:00:00,000"))
-        self.segment_scan_requested.emit(seg.get("id"), start_ms, end_ms)
+        seg_id = str(seg.get("id") or seg.get("stt") or (self.current_index + 1))
+        seg["id"] = seg_id
+        start_ms = seg.get("start_ms") if seg.get("start_ms") is not None else time_str_to_ms(seg.get("start", "00:00:00,000"))
+        end_ms = seg.get("end_ms") if seg.get("end_ms") is not None else time_str_to_ms(seg.get("end", "00:00:00,000"))
+        self.segment_scan_requested.emit(seg_id, int(start_ms), int(end_ms))
 
     def _apply_current_editor(self, values=None):
         manager = self._undo_manager()

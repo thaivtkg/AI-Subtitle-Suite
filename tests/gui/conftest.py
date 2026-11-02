@@ -97,6 +97,12 @@ def timeline_driver(qtbot):
     yield win, driver, timeline_page, sub_page
 
     try:
+        from dataclasses import is_dataclass
+        if hasattr(win, "project_service") and not is_dataclass(getattr(win.project_service, "current_project", None)):
+            win.project_service.current_project = None
+    except Exception:
+        pass
+    try:
         if hasattr(win, "video_player") and hasattr(win.video_player, "cleanup"):
             win.video_player.cleanup()
     except Exception:
@@ -129,6 +135,12 @@ def main_window_driver(qtbot, tmp_path):
 
     yield win, driver, sub_page, cat_page, timeline_page
 
+    try:
+        from dataclasses import is_dataclass
+        if hasattr(win, "project_service") and not is_dataclass(getattr(win.project_service, "current_project", None)):
+            win.project_service.current_project = None
+    except Exception:
+        pass
     try:
         if hasattr(win, "video_player") and hasattr(win.video_player, "cleanup"):
             win.video_player.cleanup()

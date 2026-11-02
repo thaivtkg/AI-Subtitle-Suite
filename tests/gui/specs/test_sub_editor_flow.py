@@ -109,3 +109,109 @@ def test_flow_cursor_preservation_under_live_qtbot(sub_editor_driver):
     # Cursor must remain at end of text, not reset to 0
     actual_pos = txt_widget.textCursor().position()
     assert actual_pos == len("Gõ kiểm tra con trỏ"), f"Cursor jumped to {actual_pos} instead of {len('Gõ kiểm tra con trỏ')}"
+
+
+def test_flow_sub_editor_vertical_alignment_and_newline_sanitization(sub_editor_driver):
+    """
+    PLAN-SUBEDITOR-ALIGNMENT-AND-SANITIZATION-001 & PLAN-UI-DRIVER-E2E-VERIFICATION-001:
+    Verify via QtDriver that leading/trailing newlines are stripped in both table_subtitles
+    and CurrentSubtitleEditor, and table cells are vertically centered (Qt.AlignVCenter).
+    """
+    editor, page, driver = sub_editor_driver
+
+    editor.all_segments = [
+        {"stt": "1", "start": "00:00:01,000", "end": "00:00:03,000", "text": "\n\nEm cảm ơn ngài\n"},
+    ]
+    editor.render_page()
+    page.select_row(0)
+    driver.wait_ms(50)
+
+    assert page.get_table_cell_text(0, 4) == "Em cảm ơn ngài"
+    assert page.get_current_text() == "Em cảm ơn ngài"
+    assert bool(page.get_table_cell_alignment(0, 4) & int(Qt.AlignVCenter)) is True
+
+
+def test_flow_rescan_button_click_via_qt_driver_triggers_large_v3_and_vram_guard(main_window_driver, monkeypatch):
+    """
+    BUG-SCAN-ID-001 & PLAN-RESCAN-LARGEV3-VRAM-GUARD-AND-LOG-COMPRESSION-001:
+    Click real btn_current_sub_scan via QtDriver on a segment without explicit 'id' (only 'stt').
+    Verify scan_mode=='asr', model_size=='large-v3', compute_type=='float16', and callback updates table.
+    """
+    from unittest.mock import MagicMock
+    from core.services.model_manager import ModelManager
+    from workers.SegmentScanWorker import SegmentScanWorker
+
+    win, driver, sub_page, _cat_page, _timeline_page = main_window_driver
+
+    win.project_service.current_project = MagicMock(project_id="p_e2e", video_path="dummy.mp4")
+    win.current_vid = "dummy.mp4"
+    win.subtitle_whisper_service.device = "cuda"
+
+    win.sub_editor.all_segments = [
+        {"stt": 1, "start": "00:00:01,000", "end": "00:00:03,000", "text": "Câu cũ"},
+    ]
+    win.sub_editor.render_page()
+    sub_page.select_row(0)
+    driver.wait_ms(50)
+
+    monkeypatch.setattr(ModelManager, "is_installed", staticmethod(lambda m: True))
+    monkeypatch.setattr(SegmentScanWorker, "start", lambda self: None)
+
+    # Real QtDriver click on btn_current_sub_scan
+    sub_page.click_scan()
+    driver.wait_ms(50)
+
+    assert hasattr(win, "scan_worker") and win.scan_worker is not None
+    assert win.scan_worker.scan_mode == "asr"
+    assert win.scan_worker.request.model_size == "large-v3"
+    assert win.scan_worker.request.compute_type == "float16"
+
+    # Simulate worker completion callback and verify UI table updates
+    win._on_segment_scan_finished(win.scan_worker.segment_id, "Câu mới từ large-v3")
+    driver.wait_ms(50)
+
+    assert sub_page.get_table_cell_text(0, 4) == "Câu mới từ large-v3"
+    assert sub_page.get_current_text() == "Câu mới từ large-v3"
+    win.project_service.current_project = None
+
+
+def test_flow_activity_log_view_filters_and_noise_suppression_via_qt_driver(main_window_driver):
+    """
+    BUG-LOG-PREFIX-002 & GAP-UI-DRIVER-003:
+    Verify ActivityLogView objectName locators, noise suppression, single prefix on _on_timing_log,
+    and source filter switching ('CAT' vs 'ASR') via QtDriver.
+    """
+    from PySide6.QtWidgets import QComboBox, QPushButton, QTextEdit
+
+    win, driver, _sub_page, _cat_page, _timeline_page = main_window_driver
+
+    source_filter = driver.find_widget("activity_source_filter", root=win.log_box, widget_type=QComboBox)
+    clear_btn = driver.find_widget("activity_clear_button", root=win.log_box, widget_type=QPushButton)
+    log_text = driver.find_widget("activity_log_text", root=win.log_box, widget_type=QTextEdit)
+
+    driver.click(clear_btn)
+    driver.wait_ms(50)
+
+    win.append_log("llama_kv_cache_iswa: using full-size SWA cache")
+    win.append_log("[MODEL_COMMIT] target=0")
+    win.append_log("[CAT] Câu #1: Ngươi tìm ta đây rốt cuộc có chuyện gì?")
+    win._on_timing_log("[ASR] VRAM đạt 75% (>65%) ➔ Tự động chuyển sang int8_float16.")
+    driver.wait_ms(50)
+
+    plain = log_text.toPlainText()
+    assert "llama_kv_cache_iswa" not in plain
+    assert "[MODEL_COMMIT]" not in plain
+    assert "[TIMING] [ASR]" not in plain
+    assert "Ngươi tìm ta đây rốt cuộc có chuyện gì?" in plain
+    assert "Tự động chuyển sang int8_float16" in plain
+
+    source_filter.setCurrentText("CAT")
+    driver.wait_ms(50)
+    assert "Ngươi tìm ta đây rốt cuộc có chuyện gì?" in log_text.toPlainText()
+    assert "Tự động chuyển sang int8_float16" not in log_text.toPlainText()
+
+    source_filter.setCurrentText("ASR")
+    driver.wait_ms(50)
+    assert "Tự động chuyển sang int8_float16" in log_text.toPlainText()
+    assert "Ngươi tìm ta đây rốt cuộc có chuyện gì?" not in log_text.toPlainText()
+

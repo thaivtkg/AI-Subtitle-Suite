@@ -1667,8 +1667,10 @@ class MainWindow(QMainWindow):
         # Xác định trạng thái dòng: chưa có sub nếu text rỗng hoặc placeholder
         current_text = ""
         if self.sub_editor.all_segments:
-            for s in self.sub_editor.all_segments:
-                if str(s.get("id")) == str(segment_id):
+            for idx, s in enumerate(self.sub_editor.all_segments):
+                sid = str(s.get("id") or s.get("stt") or (idx + 1))
+                if sid == str(segment_id):
+                    s["id"] = sid
                     current_text = str(s.get("text", "")).strip()
                     break
         has_sub = bool(current_text and current_text != "[ Chưa có nội dung ]")
@@ -1736,7 +1738,9 @@ class MainWindow(QMainWindow):
         abs_idx = -1
         target_seg = None
         for i, s in enumerate(self.sub_editor.all_segments):
-            if str(s.get("id")) == str(segment_id):
+            sid = str(s.get("id") or s.get("stt") or (i + 1))
+            if sid == str(segment_id):
+                s["id"] = sid
                 abs_idx = i
                 target_seg = s
                 break
@@ -1782,7 +1786,9 @@ class MainWindow(QMainWindow):
         if self.sub_editor.all_segments:
             abs_idx = -1
             for i, s in enumerate(self.sub_editor.all_segments):
-                if str(s.get("id")) == str(segment_id):
+                sid = str(s.get("id") or s.get("stt") or (i + 1))
+                if sid == str(segment_id):
+                    s["id"] = sid
                     abs_idx = i
                     break
             if abs_idx >= 0:
@@ -3827,7 +3833,8 @@ class MainWindow(QMainWindow):
             self.lbl_speed_eta.setText(message)
 
     def _on_timing_log(self, message: str):
-        self.append_log(f"[TIMING] {message}")
+        clean = str(message or "").lstrip()
+        self.append_log(clean if clean.startswith("[") else f"[TIMING] {message}")
 
     def _on_timing_error(self, message: str):
         self.append_log(f"❌ [TIMING] {message}")
