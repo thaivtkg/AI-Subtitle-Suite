@@ -46,7 +46,7 @@ Khắc phục triệt để lỗi khi người dùng đang làm việc ở bất
 * Sửa đổi: `core/services/workspace_service.py:20-85`
 * Kiểm thử: `tests/core/test_workspace_tab_persistence.py`
 
-- [ ] **Bước 1.1: Viết test thất bại kiểm tra capture và restore cho toàn bộ các tab**
+- [x] **Bước 1.1: Viết test thất bại kiểm tra capture và restore cho toàn bộ các tab**
   Tạo `tests/core/test_workspace_tab_persistence.py`:
   - Test capture: Kiểm tra khi `_active_nav_index` là 8 (Dịch), `workspace.active_page == "translation"`.
   - Test capture: Kiểm tra khi `_active_nav_index` là 6 (Settings), `workspace.active_page == "settings"`.
@@ -56,9 +56,9 @@ Khắc phục triệt để lỗi khi người dùng đang làm việc ở bất
   - Test restore: Kiểm tra khi `active_page == "settings"`, gọi `switch_page(6)`.
   - Test restore: Kiểm tra khi `active_page == "help"`, gọi `switch_page(7)`.
   - Test restore: Kiểm tra khi `active_page == "dashboard"` hoặc giá trị lạ, gọi `switch_page(1)` (Studio Workspace), không bao giờ văng về 0.
-- [ ] **Bước 1.2: Chạy test để xác nhận test thất bại**
+- [x] **Bước 1.2: Chạy test để xác nhận test thất bại**
   Chạy `.\.venv\Scripts\python.exe -m pytest tests/core/test_workspace_tab_persistence.py -v`.
-- [ ] **Bước 1.3: Cập nhật `core/services/workspace_service.py`**
+- [x] **Bước 1.3: Cập nhật `core/services/workspace_service.py`**
   Định nghĩa bảng ánh xạ chuẩn ở cấp độ class hoặc module:
   ```python
   NAV_TO_PAGE_MAP = {
@@ -87,9 +87,9 @@ Khắc phục triệt để lỗi khi người dùng đang làm việc ở bất
   ```
   - Trong `capture_workspace()`: Sử dụng `NAV_TO_PAGE_MAP.get(original_idx, "workspace")`.
   - Trong `restore_workspace()`: Sử dụng `PAGE_TO_NAV_MAP.get(workspace.active_page, 1)`.
-- [ ] **Bước 1.4: Chạy lại test xác nhận PASS**
+- [x] **Bước 1.4: Chạy lại test xác nhận PASS**
   Chạy `.\.venv\Scripts\python.exe -m pytest tests/core/test_workspace_tab_persistence.py -v`.
-- [ ] **Bước 1.5: Commit mã nguồn Tác vụ 1**
+- [x] **Bước 1.5: Commit mã nguồn Tác vụ 1**
   `git commit -m "fix(workspace): support 2-way tab mapping for all 8 nav pages with dashboard safeguard (PLAN-TAB-PERSISTENCE-RESTORE-001)"`
 
 ---
@@ -99,7 +99,7 @@ Khắc phục triệt để lỗi khi người dùng đang làm việc ở bất
 * Sửa đổi: `ui/Gui.py:2560-2625, 4980-4995`
 * Kiểm thử: `tests/ui/test_tab_switch_persistence_integration.py`
 
-- [ ] **Bước 2.1: Viết test thất bại kiểm tra chuyển trang tự cập nhật workspace**
+- [x] **Bước 2.1: Viết test thất bại kiểm tra chuyển trang tự cập nhật workspace**
   Tạo `tests/ui/test_tab_switch_persistence_integration.py`:
   - Khởi tạo MainWindow với một Project đang mở.
   - Gọi `gui.switch_page(8)`.
@@ -108,9 +108,9 @@ Khắc phục triệt để lỗi khi người dùng đang làm việc ở bất
   - Xác nhận `project.state.workspace.active_page == "export"`.
   - Gọi `gui.action_save_project()`.
   - Đọc tệp `workspace.json` trên đĩa cứng và xác nhận `"active_page": "export"`.
-- [ ] **Bước 2.2: Chạy test xác nhận thất bại**
+- [x] **Bước 2.2: Chạy test xác nhận thất bại**
   Chạy `.\.venv\Scripts\python.exe -m pytest tests/ui/test_tab_switch_persistence_integration.py -v`.
-- [ ] **Bước 2.3: Cập nhật `switch_page` trong `ui/Gui.py`**
+- [x] **Bước 2.3: Cập nhật `switch_page` trong `ui/Gui.py`**
   - Tại cuối hàm `switch_page(self, original_index)` (khoảng dòng 2615-2625):
     ```python
     if hasattr(self, 'workspace_service') and getattr(getattr(self, 'project_service', None), 'current_project', None):
@@ -128,9 +128,9 @@ Khắc phục triệt để lỗi khi người dùng đang làm việc ở bất
         except Exception as e:
             pass
     ```
-- [ ] **Bước 2.4: Chạy lại test xác nhận PASS**
+- [x] **Bước 2.4: Chạy lại test xác nhận PASS**
   Chạy `.\.venv\Scripts\python.exe -m pytest tests/ui/test_tab_switch_persistence_integration.py -v`.
-- [ ] **Bước 2.5: Commit mã nguồn Tác vụ 2**
+- [x] **Bước 2.5: Commit mã nguồn Tác vụ 2**
   `git commit -m "feat(ui): persist active tab to workspace.json immediately on page switch (PLAN-TAB-PERSISTENCE-RESTORE-001)"`
 
 ---
@@ -140,7 +140,7 @@ Khắc phục triệt để lỗi khi người dùng đang làm việc ở bất
 * Sửa đổi: `ui/Gui.py:5190-5215`
 * Kiểm thử: `tests/ui/test_open_project_restores_saved_tab.py`
 
-- [ ] **Bước 3.1: Viết test thất bại kiểm tra mở dự án phục hồi đúng tab**
+- [x] **Bước 3.1: Viết test thất bại kiểm tra mở dự án phục hồi đúng tab**
   Tạo `tests/ui/test_open_project_restores_saved_tab.py`:
   - Tạo project mẫu có `workspace.json` với `"active_page": "translation"`.
   - Gọi `gui._open_project_by_path(project_dir)`.
@@ -148,14 +148,14 @@ Khắc phục triệt để lỗi khi người dùng đang làm việc ở bất
   - Tạo project mẫu có `workspace.json` với `"active_page": "export"`.
   - Gọi `gui._open_project_by_path(project_dir)`.
   - Xác nhận: `gui._active_nav_index == 5`.
-- [ ] **Bước 3.2: Chạy test xác nhận thất bại**
+- [x] **Bước 3.2: Chạy test xác nhận thất bại**
   Chạy `.\.venv\Scripts\python.exe -m pytest tests/ui/test_open_project_restores_saved_tab.py -v`.
-- [ ] **Bước 3.3: Hiệu chỉnh luồng mở dự án trong `ui/Gui.py`**
+- [x] **Bước 3.3: Hiệu chỉnh luồng mở dự án trong `ui/Gui.py`**
   - Tại `_open_project_by_path()` (dòng 5190-5210):
     Đảm bảo lệnh `self.workspace_service.restore_workspace()` được thực thi sau khi hoàn tất nạp dữ liệu và chuyển trang đúng theo `workspace.active_page` mà không bị ghi đè bởi bất kỳ lệnh `switch_page(1)` nào sau đó.
-- [ ] **Bước 3.4: Chạy lại test xác nhận PASS**
+- [x] **Bước 3.4: Chạy lại test xác nhận PASS**
   Chạy `.\.venv\Scripts\python.exe -m pytest tests/ui/test_open_project_restores_saved_tab.py -v`.
-- [ ] **Bước 3.5: Commit mã nguồn Tác vụ 3**
+- [x] **Bước 3.5: Commit mã nguồn Tác vụ 3**
   `git commit -m "fix(ui): ensure open project restores saved active tab seamlessly (PLAN-TAB-PERSISTENCE-RESTORE-001)"`
 
 ---
@@ -164,7 +164,7 @@ Khắc phục triệt để lỗi khi người dùng đang làm việc ở bất
 **Files:**
 * Kiểm thử: Toàn bộ suite Desktop GUI Flow Specs & Translation/Core Tests
 
-- [ ] **Bước 4.1: Chạy kiểm định toàn bộ các bộ test hệ thống**
+- [x] **Bước 4.1: Chạy kiểm định toàn bộ các bộ test hệ thống**
   ```powershell
   # 1. Bộ test phục hồi tab workspace & switch page
   .\.venv\Scripts\python.exe -m pytest tests/core/test_workspace_tab_persistence.py tests/ui/test_tab_switch_persistence_integration.py tests/ui/test_open_project_restores_saved_tab.py -v
@@ -178,5 +178,5 @@ Khắc phục triệt để lỗi khi người dùng đang làm việc ở bất
   # 4. Toàn bộ Desktop GUI Flow Specs (POM Triad: CAT Studio, SubEditor, Timeline)
   .\.venv\Scripts\python.exe -m pytest tests/gui/specs/ -v
   ```
-- [ ] **Bước 4.2: Commit hoàn tất kế hoạch**
+- [x] **Bước 4.2: Commit hoàn tất kế hoạch**
   `git commit -m "chore: verify tab persistence across save/autosave and full regression suite (PLAN-TAB-PERSISTENCE-RESTORE-001)"`
