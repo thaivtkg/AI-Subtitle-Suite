@@ -92,3 +92,33 @@ def test_tc_stab_02_cancel_translation_resets_state(qapp):
     sub = model.get_all_data()[0]
     assert sub["status"] == "PENDING"
 
+
+def test_tc_stab_03_empty_queue_guard_blocks_stale_worker(qapp):
+    """
+    Tác vụ 3.1: Khi hàng đợi rỗng (_current_index == -1), tín hiệu từ worker cũ không được phép
+    làm sống lại giao diện (không được set status thành TRANSLATING/TRANSLATED).
+    """
+    model = SubtitleModel()
+    model.load_data([])
+    controller = TranslationController(subtitle_model=model)
+
+    controller.loadSubtitle(-1)
+    assert controller.status == "IDLE"
+    assert controller.currentTranslation == ""
+
+    # Mô phỏng worker rác phát tín hiệu progress và finished
+    controller._active_translation_index = 0
+    controller.on_progress(0, "Stale text from dead worker")
+
+    assert controller.status == "IDLE", (
+        f"Lỗi bảo vệ hàng đợi: on_progress làm sống lại status={controller.status} khi queue rỗng!"
+    )
+    assert controller.currentTranslation == ""
+
+    controller.on_finished(0, "Stale finished translation")
+    assert controller.status == "IDLE", (
+        f"Lỗi bảo vệ hàng đợi: on_finished làm sống lại status={controller.status} khi queue rỗng!"
+    )
+    assert controller.currentTranslation == ""
+
+

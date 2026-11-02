@@ -919,6 +919,7 @@ ColumnLayout {
                     currentIndex = 0
                 }
                 if (count === 0) {
+                    currentIndex = -1
                     root.selectedIndices = []
                     root.selectionChanged([])
                     if (typeof translationController !== "undefined") {

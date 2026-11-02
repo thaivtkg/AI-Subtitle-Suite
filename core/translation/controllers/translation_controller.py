@@ -311,6 +311,9 @@ class TranslationController(QObject):
     @Slot(int)
     def loadSubtitle(self, index):
         if index < 0: 
+            if self.is_busy():
+                self.cancelTranslation()
+            self._active_translation_index = -1
             self._current_index = -1
             self._current_display_index = -1
             self._current_original = ""
@@ -328,6 +331,7 @@ class TranslationController(QObject):
             self.originalUpdated.emit(self._current_original)
             self.contextUpdated.emit()
             self.qaStatusChanged.emit()
+            self.appliedTermsChanged.emit()
             return
             
         subtitles = self._subtitle_model.get_all_data()
@@ -527,9 +531,7 @@ class TranslationController(QObject):
         if hasattr(self, "_progress_timer") and self._progress_timer.isActive():
             self._progress_timer.stop()
         self._subtitle_model.update_translation(index, text, "TRANSLATING")
-        if index == self._active_translation_index and (
-            self._current_index < 0 or index == self._current_index
-        ):
+        if index == self._active_translation_index and self._current_index >= 0 and index == self._current_index:
             self._current_translation = text
             self._status = "TRANSLATING"
             expected_len = max(len(self._current_original) * 2, 20)
@@ -560,10 +562,7 @@ class TranslationController(QObject):
             self._subtitle_model.update_translation(index, message, "ERROR")
             if index == self._active_translation_index:
                 self._active_translation_index = -1
-                if (
-                    not self._selection_changed_during_translation
-                    or index == self._current_index
-                ):
+                if self._current_index >= 0 and index == self._current_index:
                     self._status = "ERROR"
                     self._current_translation = message
                     self.statusChanged.emit(self._status)
@@ -584,10 +583,7 @@ class TranslationController(QObject):
         self.translationProgressChanged.emit(100)
         if index == self._active_translation_index:
             self._active_translation_index = -1
-            if (
-                not self._selection_changed_during_translation
-                or index == self._current_index
-            ):
+            if self._current_index >= 0 and index == self._current_index:
                 self._status = "TRANSLATED"
                 self._current_translation = clean_text
                 self.statusChanged.emit(self._status)
@@ -614,10 +610,7 @@ class TranslationController(QObject):
         self._subtitle_model.update_translation(index, message, "ERROR")
         if index == self._active_translation_index:
             self._active_translation_index = -1
-            if (
-                not self._selection_changed_during_translation
-                or index == self._current_index
-            ):
+            if self._current_index >= 0 and index == self._current_index:
                 self._status = "ERROR"
                 self._current_translation = message
                 self.statusChanged.emit(self._status)
