@@ -1927,7 +1927,6 @@ class MainWindow(QMainWindow):
         if not selected_indices:
             return
 
-        self._pending_translation_indices = list(selected_indices)
         project = self.project_service.current_project
         vid_path = self.get_current_video_path()
         if not vid_path or not os.path.exists(vid_path):
@@ -2564,10 +2563,6 @@ class MainWindow(QMainWindow):
                 if getattr(self, "_pending_translation_indices", None):
                     target_indices = list(self._pending_translation_indices)
                     self._pending_translation_indices = []
-                else:
-                    sel = self.sub_editor._get_selected_source_indices() if hasattr(self.sub_editor, "_get_selected_source_indices") else []
-                    if len(sel) > 1:
-                        target_indices = sel
                 if target_indices is not None:
                     self.page_translation.load_subtitles_from_studio(self.sub_editor.all_segments, selected_indices=target_indices)
         self._active_nav_index = original_index
@@ -3837,10 +3832,6 @@ class MainWindow(QMainWindow):
             prev_count = len(self.sub_editor.all_segments)
             self.sub_editor.load_srt_file(artifact.path)
             new_count = len(self.sub_editor.all_segments)
-            if new_count > prev_count and prev_count > 0:
-                self._pending_translation_indices = list(range(prev_count, new_count))
-            elif _added_count > 0 and new_count > _added_count:
-                self._pending_translation_indices = list(range(new_count - _added_count, new_count))
             if getattr(self, "quality_inspector_panel", None):
                 self.quality_inspector_panel.set_segments(self.sub_editor.all_segments)
             self.video_player.sub_controller.load_srt(artifact.path)
