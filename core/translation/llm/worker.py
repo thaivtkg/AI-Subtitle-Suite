@@ -1,4 +1,4 @@
-﻿import os
+import os
 import re
 from PySide6.QtCore import QThread, Signal
 from core.translation.llm.model_manager import ModelManager
@@ -165,13 +165,8 @@ class TranslationWorker(QThread):
                 final_clean = self._visible_translation(raw_text)
                 auto_terms = self.extract_auto_terms(raw_text)
             self.extracted_terms = auto_terms
-            print(
-                f"[TRANSLATION_FINISH] target={self.target_index} "
-                f"raw_len={len(raw_text)} clean_len={len(final_clean)} "
-                f"terms_count={len(auto_terms)} "
-                f"clean_text={final_clean!a}",
-                flush=True,
-            )
+            if final_clean:
+                print(f"[CAT] Câu #{self.target_index + 1}: {final_clean}", flush=True)
             if auto_terms:
                 self.termsExtracted.emit(self.target_index, auto_terms)
             self.finished.emit(self.target_index, final_clean)

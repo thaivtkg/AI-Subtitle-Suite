@@ -186,12 +186,11 @@ class TestPlaybackSyncFixes(unittest.TestCase):
         from core.subtitle_generation.subtitle_generation_result import SubtitleGenerationResult, WhisperSegmentResult
 
         mock_whisper = MagicMock()
-        mock_result = SubtitleGenerationResult(
-            batch_id="scan_seg_1",
+        mock_whisper.transcribe_batch.side_effect = lambda req_arg, batch_arg, cancel_fn: SubtitleGenerationResult(
+            batch_id=batch_arg.batch_id,
             error=None,
-            segments=[WhisperSegmentResult(start_ms=0, end_ms=2000, text="Hello world")],
+            segments=[WhisperSegmentResult(start_ms=batch_arg.start_ms, end_ms=batch_arg.end_ms, text="Hello world")],
         )
-        mock_whisper.transcribe_batch.return_value = mock_result
 
         req = SubtitleGenerationRequest(
             request_id="req1",
@@ -200,7 +199,7 @@ class TestPlaybackSyncFixes(unittest.TestCase):
             video_path="test.mp4",
             model_size="base",
             compute_type="int8",
-            language="ja",
+            language="en",
             use_vad=True,
             min_silence_ms=500,
             word_timestamps=False,

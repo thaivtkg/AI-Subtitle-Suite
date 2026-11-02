@@ -1642,6 +1642,19 @@ class MainWindow(QMainWindow):
                 if seg:
                     track.set_selection({seg.segment_id})
             
+    def _resolve_rescan_model_and_compute(self, settings: dict) -> tuple[str, str]:
+        configured_model = (settings or {}).get("model_size", "large-v3") or "large-v3"
+        rescan_model = "large-v3"
+        try:
+            from core.services.model_manager import ModelManager
+            if not ModelManager.is_installed("large-v3") and ModelManager.is_installed(configured_model):
+                rescan_model = configured_model
+        except Exception:
+            rescan_model = "large-v3"
+        device = getattr(getattr(self, "subtitle_whisper_service", None), "device", "cuda")
+        rescan_compute = "int8" if str(device).lower() == "cpu" else "float16"
+        return rescan_model, rescan_compute
+
     def _on_segment_scan_requested(self, segment_id, start_ms, end_ms):
         project = self.project_service.current_project
         if not project:
@@ -1664,7 +1677,7 @@ class MainWindow(QMainWindow):
         settings = self.generation_panel._timing_settings()
         scan_lang = settings.get("language", None)
         if not scan_lang or scan_lang == "Auto Detect":
-            proj_ctrl = getattr(self.page_translation, "project_controller", None)
+            proj_ctrl = getattr(getattr(self, "page_translation", None), "project_controller", None)
             if proj_ctrl and getattr(proj_ctrl, "_is_ja_origin", False):
                 scan_lang = "ja"
             elif hasattr(self, "page_translation") and hasattr(self.page_translation, "translation_controller"):
@@ -1687,8 +1700,8 @@ class MainWindow(QMainWindow):
             project_id=project.project_id,
             source_fingerprint=getattr(getattr(project, "source", None), "fingerprint", vid_path),
             video_path=vid_path,
-            model_size=settings.get("model_size", "large-v3-turbo"),
-            compute_type=settings.get("compute_type", "int8"),
+            model_size=self._resolve_rescan_model_and_compute(settings)[0],
+            compute_type=self._resolve_rescan_model_and_compute(settings)[1],
             language=iso_lang,
             use_vad=settings.get("use_vad", True),
             min_silence_ms=settings.get("min_silence_ms", 500),
@@ -1961,7 +1974,7 @@ class MainWindow(QMainWindow):
         from core.subtitle_generation.language_utils import normalize_to_iso_code, get_initial_prompt_for_language
         batch_lang = settings.get("language", None)
         if not batch_lang or batch_lang == "Auto Detect":
-            proj_ctrl = getattr(self.page_translation, "project_controller", None)
+            proj_ctrl = getattr(getattr(self, "page_translation", None), "project_controller", None)
             if proj_ctrl and getattr(proj_ctrl, "_is_ja_origin", False):
                 batch_lang = "ja"
             elif hasattr(self, "page_translation") and hasattr(self.page_translation, "translation_controller"):
@@ -1981,8 +1994,8 @@ class MainWindow(QMainWindow):
             project_id=project_id,
             source_fingerprint=source_fp,
             video_path=vid_path,
-            model_size=settings.get("model_size", "large-v3-turbo"),
-            compute_type=settings.get("compute_type", "int8"),
+            model_size=self._resolve_rescan_model_and_compute(settings)[0],
+            compute_type=self._resolve_rescan_model_and_compute(settings)[1],
             language=iso_batch_lang,
             use_vad=settings.get("use_vad", True),
             min_silence_ms=settings.get("min_silence_ms", 500),
@@ -4166,6 +4179,9 @@ class MainWindow(QMainWindow):
             self.lbl_speed_eta.setText(msg)
 
     def append_log(self, msg):
+        text_str = str(msg or "").strip()
+        if any(noise in text_str for noise in ("llama_kv_cache", "ggml_", "llama_model_loader", "[MODEL_COMMIT]", "[MODEL_AFTER]", "[TRANSLATION_CALLBACK]")):
+            return
         self.page_dashboard.append_activity_log(msg)
         speed_match = re.search(r"speed=\s*([0-9\.]+x)", msg)
         if speed_match:

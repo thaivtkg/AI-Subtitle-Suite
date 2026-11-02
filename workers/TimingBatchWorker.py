@@ -1,9 +1,11 @@
+import gc
 import os
 import tempfile
 import subprocess
 import traceback
 from PySide6.QtCore import QThread, Signal
 
+from core.subtitle_generation.faster_whisper_service import should_downgrade_to_int8_float16
 from core.timing.timing_run_request import TimingRunRequest
 
 class TimingBatchWorker(QThread):
@@ -95,19 +97,26 @@ class TimingBatchWorker(QThread):
             from faster_whisper import WhisperModel
             import torch
             from core.runtime.runtime_paths import RuntimePaths
-            from core.services.model_manager import ModelManager # <--- THÊM DOAN NÀY ĐỂ SỬ DỤNG ModelManager
+            from core.services.model_manager import ModelManager
 
             # [TỐI ƯU HÓA HIỆU NĂNG]
             # Chỉ nạp Whisper Model vào RAM/VRAM đúng 1 lần duy nhất cho toàn bộ Batch
             device = "cuda" if torch.cuda.is_available() else "cpu"
             compute_type = self.effective_compute_type(device, self.request.compute_type)
+            if device == "cuda" and compute_type == "float16":
+                downgrade, ratio = should_downgrade_to_int8_float16(0.65)
+                if downgrade:
+                    compute_type = "int8_float16"
+                    self.log_signal.emit(
+                        f"[ASR] VRAM đạt {ratio * 100:.0f}% (>65%) ➔ Tự động chuyển sang int8_float16."
+                    )
             self.effective_compute_signal.emit(compute_type)
             
             self.log_signal.emit(f"[Batch Worker] Đang tải Model Whisper ({self.request.model_size})...")
             # [S7.2-T14] Ép Model Manager quyết định đường dẫn tải
             safe_model_path = ModelManager.get_model_path_for_inference(self.request.model_size)
             model = WhisperModel(
-                safe_model_path, # <--- TRUYỀN ĐƯỜNG DẪN QUYẾT ĐỊNH VÀO ĐÂY
+                safe_model_path,
                 device=device, 
                 compute_type=compute_type,
                 download_root=str(RuntimePaths.get_models_dir())
@@ -127,6 +136,26 @@ class TimingBatchWorker(QThread):
             while len(all_final_segments) < self.request.target_segment_count:
                 if self.is_cancelled:
                     return
+
+                # Giám sát VRAM thời gian thực (>65%) giữa các cửa sổ trượt
+                if device == "cuda" and compute_type == "float16":
+                    downgrade, ratio = should_downgrade_to_int8_float16(0.65)
+                    if downgrade:
+                        compute_type = "int8_float16"
+                        self.log_signal.emit(
+                            f"[ASR] VRAM đạt {ratio * 100:.0f}% (>65%) ➔ Tự động chuyển sang int8_float16."
+                        )
+                        del model
+                        gc.collect()
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                        model = WhisperModel(
+                            safe_model_path,
+                            device=device,
+                            compute_type=compute_type,
+                            download_root=str(RuntimePaths.get_models_dir()),
+                        )
+                        self.effective_compute_signal.emit(compute_type)
 
                 overlap = self.request.overlap_ms if current_start_ms > 0 else 0
                 actual_start_ms = max(0, current_start_ms - overlap)

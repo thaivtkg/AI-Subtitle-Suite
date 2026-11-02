@@ -849,7 +849,8 @@ class ProjectController(QObject):
             "intelligence": intelligence,
         }
         # Log tổng hợp 1 dòng duy nhất thay vì vòng lặp 2.000 dòng gây đơ UI
-        print(f"[PROJECT_SAVE] Saving {len(clean_subtitles)} subtitles to {os.path.basename(file_path)}")
+        if len(clean_subtitles) > 0:
+            print(f"[PROJECT] Đã lưu {len(clean_subtitles)} câu vào {os.path.basename(file_path)}", flush=True)
 
         temp_path = f"{file_path}.{uuid4().hex[:8]}.tmp"
         try:

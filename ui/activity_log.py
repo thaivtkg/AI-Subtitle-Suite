@@ -31,6 +31,13 @@ _SOURCE_PREFIX = re.compile(r"^\[([^\]]+)\]\s*(.*)$")
 
 _SOURCE_ALIASES = {
     "TIMING": "TIMING",
+    "ASR": "ASR",
+    "BATCH WORKER": "ASR",
+    "CAT": "CAT",
+    "DỊCH": "CAT",
+    "PROJECT": "PROJECT",
+    "PROJECT_LOAD": "PROJECT",
+    "PROJECT_SAVE": "PROJECT",
     "QUEUE": "QUEUE",
     "AI": "AI",
     "FFMPEG": "FFMPEG",
@@ -41,6 +48,8 @@ _SOURCE_ALIASES = {
 _SOURCE_COLORS = {
     "SYSTEM": Theme.TEXT_MUTED,
     "TIMING": Theme.WARNING,
+    "ASR": Theme.WARNING,
+    "CAT": Theme.CYAN,
     "QUEUE": Theme.PRIMARY_PURPLE,
     "AI": Theme.CYAN,
     "FFMPEG": Theme.SUCCESS,

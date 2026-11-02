@@ -1,3 +1,4 @@
+import gc
 import os
 import shutil
 import subprocess
@@ -15,6 +16,20 @@ from core.runtime.runtime_paths import RuntimePaths
 from core.services.model_manager import ModelManager, ModelStorageError
 
 
+def should_downgrade_to_int8_float16(threshold: float = 0.65) -> Tuple[bool, float]:
+    """Kiểm tra mức sử dụng VRAM qua nvcuda.dll (<0.05ms); trả về (True, ratio) khi vượt threshold."""
+    try:
+        from core.translation.core.hardware_detector import HardwareDetector
+
+        used_gb, total_gb = HardwareDetector.get_vram_usage()
+        if total_gb and total_gb > 0:
+            ratio = float(used_gb) / float(total_gb)
+            return (ratio > threshold, ratio)
+    except Exception:
+        pass
+    return (False, 0.0)
+
+
 class FasterWhisperService:
     """Thin ASR adapter: inference in, segment objects out; no artifact I/O."""
 
@@ -23,6 +38,7 @@ class FasterWhisperService:
         self.model = None
         self.current_model_size: Optional[str] = None
         self.current_compute_type: Optional[str] = None
+        self._vram_downgraded: bool = False
 
     def is_loaded(self, model_size: str, compute_type: str) -> bool:
         if self.model is None:
@@ -30,11 +46,30 @@ class FasterWhisperService:
         if self.current_model_size is not None and self.current_model_size != model_size:
             return False
         if self.current_compute_type is not None and self.current_compute_type != compute_type:
+            if (
+                compute_type == "float16"
+                and self.current_compute_type == "int8_float16"
+                and self._vram_downgraded
+            ):
+                return True
             return False
         return True
 
     def load_model(self, model_size: str, compute_type: str) -> None:
-        if self.is_loaded(model_size, compute_type):
+        effective_compute = compute_type
+        if self.device == "cuda" and compute_type == "float16":
+            downgrade, ratio = should_downgrade_to_int8_float16(0.65)
+            if downgrade:
+                effective_compute = "int8_float16"
+                self._vram_downgraded = True
+                print(
+                    f"[ASR] VRAM đạt {ratio * 100:.0f}% (>65%) ➔ Tự động chuyển sang int8_float16.",
+                    flush=True,
+                )
+            else:
+                self._vram_downgraded = False
+
+        if self.is_loaded(model_size, effective_compute):
             return
 
         self.unload_model()
@@ -48,20 +83,30 @@ class FasterWhisperService:
             self.model = WhisperModel(
                 model_path,
                 device=self.device,
-                compute_type=compute_type,
+                compute_type=effective_compute,
                 download_root=str(models_dir),
             )
             self.current_model_size = model_size
-            self.current_compute_type = compute_type
+            self.current_compute_type = effective_compute
         except ModelStorageError:
             raise
         except Exception as exc:
             raise RuntimeError(f"Failed to load Faster-Whisper model: {exc}") from exc
 
     def unload_model(self) -> None:
+        had_model = self.model is not None
         self.model = None
         self.current_model_size = None
         self.current_compute_type = None
+        if had_model:
+            try:
+                gc.collect()
+                import torch
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
 
     def transcribe_batch(
         self,
@@ -83,6 +128,20 @@ class FasterWhisperService:
             )
         if is_cancelled():
             return SubtitleGenerationResult(batch.batch_id, [], "Cancelled.")
+
+        # Kiểm tra áp lực VRAM động trước mỗi batch nếu đang chạy float16
+        if self.device == "cuda" and self.current_compute_type == "float16":
+            downgrade, ratio = should_downgrade_to_int8_float16(0.65)
+            if downgrade:
+                target_size = self.current_model_size or request.model_size
+                self._vram_downgraded = True
+                print(
+                    f"[ASR] VRAM đạt {ratio * 100:.0f}% (>65%) ➔ Tự động chuyển sang int8_float16.",
+                    flush=True,
+                )
+                self.unload_model()
+                self.load_model(target_size, "int8_float16")
+                self._vram_downgraded = True
 
         temp_dir = None
         try:
@@ -109,11 +168,34 @@ class FasterWhisperService:
             else:
                 transcribe_options["vad_filter"] = False
 
-            segments, _info = self.model.transcribe(
-                input_path, **transcribe_options
-            )
+            try:
+                segments, _info = self.model.transcribe(
+                    input_path, **transcribe_options
+                )
+                raw_seg_list = list(segments)
+            except RuntimeError as oom_exc:
+                if (
+                    "out of memory" in str(oom_exc).lower()
+                    and self.device == "cuda"
+                    and self.current_compute_type == "float16"
+                ):
+                    target_size = self.current_model_size or request.model_size
+                    print(
+                        "[ASR] Phát hiện tràn VRAM (OOM) ➔ Tự động chuyển sang int8_float16.",
+                        flush=True,
+                    )
+                    self.unload_model()
+                    self.load_model(target_size, "int8_float16")
+                    self._vram_downgraded = True
+                    segments, _info = self.model.transcribe(
+                        input_path, **transcribe_options
+                    )
+                    raw_seg_list = list(segments)
+                else:
+                    raise
+
             results = []
-            for segment in segments:
+            for segment in raw_seg_list:
                 if is_cancelled():
                     return SubtitleGenerationResult(batch.batch_id, [], "Cancelled.")
 
