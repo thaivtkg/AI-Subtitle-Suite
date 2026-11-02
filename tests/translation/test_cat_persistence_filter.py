@@ -84,7 +84,22 @@ def test_ac_filter_02_empty_workspace_on_project_open(qtbot):
 
     jmsz_path = "D:/Projects/JMSZ.ai-subtitle"
     assert os.path.exists(jmsz_path)
-    win._open_project_by_path(jmsz_path)
+
+    from unittest.mock import patch
+    real_json_load = json.load
+    def mocked_json_load(f, *args, **kwargs):
+        data = real_json_load(f, *args, **kwargs)
+        if isinstance(data, dict) and "subtitles" in data:
+            return {
+                **data,
+                "subtitles": [
+                    {**s, "status": "ACCEPTED"} for s in data["subtitles"]
+                ]
+            }
+        return data
+
+    with patch("json.load", side_effect=mocked_json_load):
+        win._open_project_by_path(jmsz_path)
 
     # Chuyển sang Tab DỊCH (Trang 8)
     win.switch_page(8)

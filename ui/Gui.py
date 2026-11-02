@@ -2786,10 +2786,15 @@ class MainWindow(QMainWindow):
         
         if "output_dir" in s:
             saved_dir = s["output_dir"]
-            # Chống khôi phục thư mục tạm thời gian chạy đã bị xoá
+            # Chống khôi phục thư mục tạm thời gian chạy đã bị xoá hoặc thư mục rác pytest
             import tempfile
-            is_stale_temp = "Temp" in saved_dir or saved_dir.startswith(tempfile.gettempdir())
-            if not os.path.exists(saved_dir) and is_stale_temp:
+            is_stale_temp = (
+                "temp" in saved_dir.lower()
+                or "pytest" in saved_dir.lower()
+                or "tmp" in saved_dir.lower()
+                or saved_dir.startswith(tempfile.gettempdir())
+            )
+            if is_stale_temp or not os.path.exists(saved_dir):
                 saved_dir = ""
             self.out_input.blockSignals(True)
             self.page_export.out_edit.blockSignals(True)
@@ -2818,6 +2823,11 @@ class MainWindow(QMainWindow):
             self.page_settings.chk_auto_audio_style.setChecked(bool(s["auto_audio_style"]))
 
     def _persist_canonical_setting(self, key, value):
+        if key == "output_dir" and isinstance(value, str):
+            import tempfile
+            lower_val = value.lower()
+            if "temp" in lower_val or "pytest" in lower_val or "tmp" in lower_val or value.startswith(tempfile.gettempdir()):
+                return
         settings = load_settings()
         settings[key] = value
         save_settings(settings)

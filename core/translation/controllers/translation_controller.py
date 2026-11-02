@@ -56,6 +56,10 @@ class TranslationController(QObject):
         self._progress_timer = QTimer(self)
         self._progress_timer.setInterval(250)
         self._progress_timer.timeout.connect(self._on_thinking_progress_tick)
+        self._watchdog_timer = QTimer(self)
+        self._watchdog_timer.setSingleShot(True)
+        self._watchdog_timer.setInterval(90000)
+        self._watchdog_timer.timeout.connect(self._on_translation_timeout)
         app = QCoreApplication.instance()
         if app:
             app.aboutToQuit.connect(self.shutdown)
@@ -63,6 +67,8 @@ class TranslationController(QObject):
     def shutdown(self):
         if hasattr(self, "_progress_timer") and self._progress_timer.isActive():
             self._progress_timer.stop()
+        if hasattr(self, "_watchdog_timer") and self._watchdog_timer.isActive():
+            self._watchdog_timer.stop()
         for w in (self.worker, self.alt_worker, self._extract_worker):
             if w is not None:
                 try:
@@ -114,10 +120,29 @@ class TranslationController(QObject):
             elif self._translation_progress < 95:
                 if getattr(self, "_progress_tick_count", 0) % 6 == 0:
                     self._translation_progress = min(95, self._translation_progress + 1)
+            elif self._translation_progress < 98:
+                if getattr(self, "_progress_tick_count", 0) % 12 == 0:
+                    self._translation_progress = min(98, self._translation_progress + 1)
             self._progress_tick_count = getattr(self, "_progress_tick_count", 0) + 1
             self.translationProgressChanged.emit(self._translation_progress)
         else:
             self._progress_timer.stop()
+
+    def _on_translation_timeout(self):
+        """Watchdog Timeout: Tự động ngắt worker nếu mô hình bị treo quá 90 giây mà không trả về kết quả."""
+        if self._status == "TRANSLATING":
+            target_idx = self._active_translation_index
+            self.cancelTranslation()
+            error_msg = "Thời gian suy luận vượt quá 90s. Vui lòng kiểm tra tải mô hình hoặc cấu hình GPU."
+            if target_idx >= 0:
+                self._subtitle_model.update_translation(target_idx, error_msg, "ERROR")
+                if self._current_index == target_idx:
+                    self._status = "ERROR"
+                    self._current_translation = error_msg
+                    self.statusChanged.emit(self._status)
+                    self.translationUpdated.emit(error_msg)
+                self.translationFailed.emit(target_idx, error_msg)
+            self._set_engine_status("Error")
 
     @Slot()
     def openHotkeys(self):
@@ -131,6 +156,8 @@ class TranslationController(QObject):
         """Hủy quá trình dịch hiện tại, ngắt worker và đưa trạng thái câu về PENDING."""
         if hasattr(self, "_progress_timer") and self._progress_timer.isActive():
             self._progress_timer.stop()
+        if hasattr(self, "_watchdog_timer") and self._watchdog_timer.isActive():
+            self._watchdog_timer.stop()
         if self.worker is not None:
             try:
                 if hasattr(self.worker, "cancel"):
@@ -513,6 +540,8 @@ class TranslationController(QObject):
         self.worker.finished.connect(self.on_finished)
         self.worker.error.connect(self.on_error)
         self._progress_timer.start()
+        if hasattr(self, "_watchdog_timer"):
+            self._watchdog_timer.start(90000)
         self.worker.start()
 
     @Slot(int, list)
@@ -545,6 +574,8 @@ class TranslationController(QObject):
     def on_finished(self, index, text):
         if hasattr(self, "_progress_timer") and self._progress_timer.isActive():
             self._progress_timer.stop()
+        if hasattr(self, "_watchdog_timer") and self._watchdog_timer.isActive():
+            self._watchdog_timer.stop()
         sender = self.sender()
         if sender is not None and sender is not self.worker:
             return
@@ -603,6 +634,8 @@ class TranslationController(QObject):
     def on_error(self, index, err_msg):
         if hasattr(self, "_progress_timer") and self._progress_timer.isActive():
             self._progress_timer.stop()
+        if hasattr(self, "_watchdog_timer") and self._watchdog_timer.isActive():
+            self._watchdog_timer.stop()
         sender = self.sender()
         if sender is not None and sender is not self.worker:
             return

@@ -133,7 +133,7 @@ def format_chat(system_prompt: str, user_prompt: str, model_family: str = "qwen"
         )
     elif "deepseek" in family:
         return (
-            f"{system_prompt}\n\n<｜User｜>{user_prompt}<｜Assistant｜><think>\n"
+            f"{system_prompt}\n\n<｜User｜>{user_prompt}<｜Assistant｜><think>\n</think>\n"
         )
     else:
         return (
