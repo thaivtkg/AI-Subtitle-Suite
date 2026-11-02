@@ -19,6 +19,10 @@ class SubtitleGenerationValidator:
         "視聴ありがとうございました",
         "チャンネル登録",
         "thank you for watching",
+        "diyorlar",
+        "diyorlar.",
+        "thank you.",
+        "watching!",
     )
 
     @staticmethod

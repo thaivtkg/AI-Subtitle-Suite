@@ -122,3 +122,25 @@ def test_tc_stab_03_empty_queue_guard_blocks_stale_worker(qapp):
     assert controller.currentTranslation == ""
 
 
+def test_tc_stab_04_hallucination_validator():
+    """
+    Tác vụ 4.1: SubtitleGenerationValidator loại bỏ các từ ảo giác Whisper ngoại lai
+    (như 'Diyorlar.', 'thank you.', 'watching!').
+    """
+    from core.subtitle_generation.generation_validator import SubtitleGenerationValidator
+    from core.subtitle_generation.subtitle_generation_result import WhisperSegmentResult
+
+    segments = [
+        WhisperSegmentResult(1000, 2000, "Diyorlar."),
+        WhisperSegmentResult(2500, 3500, "diyorlar"),
+        WhisperSegmentResult(4000, 5000, "Thank you."),
+        WhisperSegmentResult(5500, 6500, "Thanks for watching!"),
+        WhisperSegmentResult(7000, 8000, "俺に忠誠を誓うというか"),
+    ]
+
+    valid = SubtitleGenerationValidator.validate(segments, batch_start_ms=0, batch_end_ms=10000)
+    assert len(valid) == 1, f"Kỳ vọng lọc bỏ 4 câu ảo giác, nhưng còn lại {len(valid)} câu: {[s.text for s in valid]}"
+    assert valid[0].text == "俺に忠誠を誓うというか"
+
+
+

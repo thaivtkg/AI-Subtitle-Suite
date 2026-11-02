@@ -1662,6 +1662,15 @@ class MainWindow(QMainWindow):
         scan_mode = "asr" if has_sub else "timing"
             
         settings = self.generation_panel._timing_settings()
+        scan_lang = settings.get("language", None)
+        if not scan_lang or scan_lang == "Auto Detect":
+            proj_ctrl = getattr(self.page_translation, "project_controller", None)
+            if proj_ctrl and getattr(proj_ctrl, "_is_ja_origin", False):
+                scan_lang = "Japanese"
+            elif hasattr(self, "page_translation") and hasattr(self.page_translation, "translation_controller"):
+                tc_lang = getattr(self.page_translation.translation_controller, "currentSourceLanguage", None)
+                if tc_lang and tc_lang != "Auto Detect":
+                    scan_lang = tc_lang
         
         from core.subtitle_generation.subtitle_generation_request import SubtitleGenerationRequest
         request = SubtitleGenerationRequest(
@@ -1676,7 +1685,7 @@ class MainWindow(QMainWindow):
             video_path=vid_path,
             model_size=settings.get("model_size", "large-v3-turbo"),
             compute_type=settings.get("compute_type", "int8"),
-            language=settings.get("language", None),
+            language=scan_lang,
             use_vad=settings.get("use_vad", True),
             min_silence_ms=settings.get("min_silence_ms", 500),
             word_timestamps=False,
