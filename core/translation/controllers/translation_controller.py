@@ -20,6 +20,7 @@ class TranslationController(QObject):
     alternativeTranslationReady = Signal(int, str, str)
     alternativeTranslationLoading = Signal(bool)
     appliedTermsChanged = Signal()
+    currentSubjectTagChanged = Signal()
     translationProgressChanged = Signal(int)
 
     def __init__(self, subtitle_model, worker_factory=None):
@@ -37,6 +38,7 @@ class TranslationController(QObject):
         self._context_prev = "" # LƯU CONTEXT TRƯỚC
         self._context_next = "" # LƯU CONTEXT SAU
         self._current_source_language = "English"
+        self._manual_pronoun_pair = ""
         self._translation_progress = 0
         
         self._subtitle_model = subtitle_model
@@ -198,6 +200,11 @@ class TranslationController(QObject):
                 project_controller.glossaryChanged.connect(self.appliedTermsChanged.emit)
             except Exception:
                 pass
+        if project_controller and hasattr(project_controller, "archetypeChanged"):
+            try:
+                project_controller.archetypeChanged.connect(self.currentSubjectTagChanged.emit)
+            except Exception:
+                pass
 
     @property
     def glossary(self):
@@ -335,6 +342,89 @@ class TranslationController(QObject):
                             terms.append({"source": src, "target": tgt, "is_glossary": False})
         return terms
 
+    def _resolve_pronoun_pair_for_index(self, index: int, text: str) -> str:
+        subtitles = self._subtitle_model.get_all_data()
+        if 0 <= index < len(subtitles):
+            sub_override = (subtitles[index].get("subject_pronoun_pair") or "").strip()
+            if sub_override:
+                return "" if sub_override.lower() == "tự do" else sub_override
+        proj_pronoun = (
+            getattr(self._project_controller, "activePronounPair", "")
+            if self._project_controller
+            else self._manual_pronoun_pair
+        )
+        if proj_pronoun and proj_pronoun.strip():
+            return "" if proj_pronoun.strip().lower() == "tự do" else proj_pronoun.strip()
+        detected = ContextAnalyzer.detect_japanese_subject_pronoun(text or "")
+        return detected.get("pair", "")
+
+    @Property("QVariantMap", notify=currentSubjectTagChanged)
+    def currentSubjectTag(self):
+        detected = ContextAnalyzer.detect_japanese_subject_pronoun(self._current_original or "")
+        subtitles = self._subtitle_model.get_all_data()
+        sub_override = ""
+        if 0 <= self._current_index < len(subtitles):
+            sub_override = (subtitles[self._current_index].get("subject_pronoun_pair") or "").strip()
+
+        if sub_override:
+            if sub_override.lower() == "tự do":
+                return {
+                    "text": "Tự do",
+                    "subject": "Tự do",
+                    "source_pronoun": detected.get("source_pronoun", ""),
+                    "pair": "",
+                    "tone": detected.get("tone", "neutral"),
+                    "is_detected": False,
+                }
+            arrow = sub_override.replace(" - ", " ➔ ")
+            src_pron = detected.get("source_pronoun", "")
+            return {
+                "text": f"{arrow} ({src_pron})" if src_pron else arrow,
+                "subject": arrow,
+                "source_pronoun": src_pron,
+                "pair": sub_override,
+                "tone": detected.get("tone", "manual"),
+                "is_detected": True,
+            }
+
+        if detected.get("is_detected"):
+            return detected
+
+        proj_pronoun = (
+            getattr(self._project_controller, "activePronounPair", "")
+            if self._project_controller
+            else self._manual_pronoun_pair
+        )
+        if proj_pronoun and proj_pronoun.strip() and proj_pronoun.strip().lower() != "tự do":
+            pair_clean = proj_pronoun.strip()
+            arrow = pair_clean.replace(" - ", " ➔ ")
+            return {
+                "text": arrow,
+                "subject": arrow,
+                "source_pronoun": "",
+                "pair": pair_clean,
+                "tone": "project",
+                "is_detected": True,
+            }
+
+        return detected
+
+    @Slot(str)
+    def setSubjectPronoun(self, pronoun_pair: str):
+        pair = (pronoun_pair or "").strip()
+        subtitles = self._subtitle_model.get_all_data()
+        if 0 <= self._current_index < len(subtitles):
+            subtitles[self._current_index]["subject_pronoun_pair"] = pair or "Tự do"
+        self._manual_pronoun_pair = "" if pair.lower() == "tự do" else pair
+        if self._project_controller is not None:
+            self._project_controller._active_pronoun_pair = self._manual_pronoun_pair
+            if hasattr(self._project_controller, "archetypeChanged"):
+                try:
+                    self._project_controller.archetypeChanged.emit()
+                except Exception:
+                    pass
+        self.currentSubjectTagChanged.emit()
+
     @Slot(int)
     def loadSubtitle(self, index):
         if index < 0: 
@@ -359,6 +449,7 @@ class TranslationController(QObject):
             self.contextUpdated.emit()
             self.qaStatusChanged.emit()
             self.appliedTermsChanged.emit()
+            self.currentSubjectTagChanged.emit()
             return
             
         subtitles = self._subtitle_model.get_all_data()
@@ -402,6 +493,7 @@ class TranslationController(QObject):
         self.contextUpdated.emit()
         self.qaStatusChanged.emit()
         self.appliedTermsChanged.emit()
+        self.currentSubjectTagChanged.emit()
 
     @Slot()
     def markAsEdited(self):
@@ -489,11 +581,7 @@ class TranslationController(QObject):
                 enriched_glossary_hits.append((hit, forbidden))
 
         entity_hits = self.entities.match(current, word_boundary=True) if self.entities else ()
-        active_pronoun = (
-            getattr(self._project_controller, "activePronounPair", "")
-            if self._project_controller
-            else ""
-        )
+        active_pronoun = self._resolve_pronoun_pair_for_index(index, current)
         active_archetype = (
             getattr(self._project_controller, "activeArchetype", "")
             if self._project_controller
@@ -742,7 +830,7 @@ class TranslationController(QObject):
                 enriched_glossary_hits.append((hit, forbidden))
 
         entity_hits = self.entities.match(current, word_boundary=True) if self.entities else ()
-        active_pronoun = getattr(self._project_controller, "activePronounPair", "") if self._project_controller else ""
+        active_pronoun = self._resolve_pronoun_pair_for_index(index, current)
         is_ja = getattr(self._project_controller, "isJaOrigin", False) if self._project_controller else False
         story_summary = getattr(self._project_controller, "storySummary", "") if self._project_controller else ""
         target_lang = "Vietnamese"

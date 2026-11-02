@@ -136,6 +136,107 @@ def detect_native_language(text: str) -> str:
     return "English"
 
 
+def detect_japanese_subject_pronoun(text: str) -> dict[str, Any]:
+    """
+    Nhận diện đại từ nhân xưng và khẩu khí anime trong câu tiếng Nhật.
+    Trả về dict: {"subject": str, "pair": str, "tone": str, "source_pronoun": str, "is_detected": bool, "text": str}
+    """
+    if not text or not text.strip():
+        return {
+            "subject": "Tự do",
+            "pair": "",
+            "tone": "neutral",
+            "source_pronoun": "",
+            "is_detected": False,
+            "text": "Tự do",
+        }
+
+    clean = text.strip()
+
+    # 1. Ngôi 1 ngạo mạn / bề trên (俺様, 我輩, 吾輩, わらわ)
+    arrogant_m = re.search(r"(俺様|おれさま|オレサマ|我輩|吾輩|わらわ)", clean)
+    if arrogant_m:
+        pron = arrogant_m.group(1)
+        return {
+            "subject": f"Ta đây ({pron})",
+            "pair": "Ta - Ngươi",
+            "tone": "arrogant",
+            "source_pronoun": pron,
+            "is_detected": True,
+            "text": f"Ta ➔ Ngươi ({pron})",
+        }
+
+    # 2. Ngôi 2 đối địch / trịch thượng (貴様, お前, てめえ, あんた, お主)
+    hostile_m = re.search(r"(貴様|きさま|お前|おまえ|てめえ|てめぇ|あんた|お主)", clean)
+    if hostile_m:
+        pron = hostile_m.group(1)
+        return {
+            "subject": f"Ngươi ({pron})",
+            "pair": "Ta - Ngươi",
+            "tone": "hostile",
+            "source_pronoun": pron,
+            "is_detected": True,
+            "text": f"Ta ➔ Ngươi ({pron})",
+        }
+
+    # 3. Kính ngữ Senpai (先輩)
+    senpai_m = re.search(r"(先輩|せんぱい|\bsenpai\b)", clean, re.IGNORECASE)
+    if senpai_m:
+        pron = senpai_m.group(1)
+        return {
+            "subject": f"Tiền bối ({pron})",
+            "pair": "Em - Tiền bối",
+            "tone": "respectful",
+            "source_pronoun": pron,
+            "is_detected": True,
+            "text": f"Em ➔ Tiền bối ({pron})",
+        }
+
+    # 4. Ngôi 1 thông dụng (あたし, 僕, 俺, 私)
+    first_person_rules = [
+        (r"(あたし|アタシ|わたくし)", "Tớ - Cậu", "feminine", "Tớ/Em"),
+        (r"(僕|ぼく|ボク)", "Tôi - Cậu", "polite", "Tôi/Tớ"),
+        (r"(俺|おれ|オレ)", "Tôi - Cậu", "casual_male", "Tôi/Ta"),
+        (r"(私|わたし|ワタシ)", "Tôi - Cậu", "polite", "Tôi"),
+    ]
+    for pattern, pair, tone, label in first_person_rules:
+        m = re.search(pattern, clean)
+        if m:
+            pron = m.group(1)
+            return {
+                "subject": f"{label} ({pron})",
+                "pair": pair,
+                "tone": tone,
+                "source_pronoun": pron,
+                "is_detected": True,
+                "text": f"{pair.replace(' - ', ' ➔ ')} ({pron})",
+            }
+
+    # 5. Đuôi câu nữ tính / khẳng định (〜わ, 〜わよ, 〜わね, 〜かしら)
+    ending_m = re.search(
+        r"(わよ|わね|かしら|(?:だ|る|く|う|つ|ぬ|む|ぶ|ぐ|す|ない|たい)わ)[。！!？?」』\s]*$",
+        clean,
+    )
+    if ending_m:
+        return {
+            "subject": "Nữ tính (〜わ)",
+            "pair": "Tớ - Cậu",
+            "tone": "feminine_assertive",
+            "source_pronoun": "〜わ",
+            "is_detected": True,
+            "text": "Tớ ➔ Cậu (〜わ)",
+        }
+
+    return {
+        "subject": "Tự do",
+        "pair": "",
+        "tone": "neutral",
+        "source_pronoun": "",
+        "is_detected": False,
+        "text": "Tự do",
+    }
+
+
 def detect_ja_translated_en(subtitles_text_sample: str, summary: str = "") -> dict[str, Any]:
     """
     Phát hiện phụ đề tiếng Anh có phải được dịch từ tiếng Nhật hay không
@@ -294,3 +395,7 @@ class ContextAnalyzer:
     @staticmethod
     def detect_ja_translated_en(subtitles_text_sample: str, summary: str = "") -> dict[str, Any]:
         return detect_ja_translated_en(subtitles_text_sample, summary)
+
+    @staticmethod
+    def detect_japanese_subject_pronoun(text: str) -> dict[str, Any]:
+        return detect_japanese_subject_pronoun(text)

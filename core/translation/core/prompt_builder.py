@@ -94,6 +94,32 @@ def build_translation_prompt(
             "ABSOLUTELY DO NOT output Chinese Hanzi (e.g., NEVER output '太天真了', translate as 'quá ngây thơ' or 'ngây thơ quá'), "
             "Japanese Kanji/Kana, or mixed script. Every single word in the output must be proper Vietnamese."
         )
+        # 4. CHỈ DẪN CẶP NGÔI XƯNG BẮT BUỘC (NẾU CÓ)
+        if active_pronoun_pair and active_pronoun_pair.strip() and active_pronoun_pair.strip().lower() != "tự do":
+            pair_clean = active_pronoun_pair.strip()
+            parts = [p.strip() for p in pair_clean.replace("➔", "-").split("-") if p.strip()]
+            if len(parts) == 2:
+                rules.append(
+                    f"- MANDATORY PRONOUN PAIR: You MUST translate the dialogue using the pronoun pair '{pair_clean}' (First person: '{parts[0]}', Second person: '{parts[1]}')."
+                )
+            else:
+                rules.append(
+                    f"- MANDATORY PRONOUN PAIR: You MUST translate the dialogue using the pronoun pair '{pair_clean}'."
+                )
+
+        # 5. QUY TẮC BẢN ĐỊA HÓA HỘI THOẠI ANIME TIẾNG NHẬT
+        if (source_lang or "").strip().lower() == "japanese" or is_ja_origin:
+            rules.append(
+                "4. JAPANESE ANIME DIALOGUE LOCALIZATION:\n"
+                "   - PRONOUN & PERSONA ACCURACY: '俺様 (oresama)' expresses an arrogant/dominant persona -> MUST translate as 'ta / ta đây / bổn gia' and address the listener as 'ngươi'. NEVER translate '俺様' as 'tớ' or 'mình'.\n"
+                "   - IMPLICIT SUBJECT RECOVERY (ELLIPSIS): Japanese anime often drops subjects or trails off mid-sentence (e.g., 'この俺様に一体何の[用だ]'). Restore the implicit subject and verb naturally in Vietnamese (e.g., translate 'この俺様に一体何の' as 'Ngươi tìm ta đây rốt cuộc có chuyện gì?').\n"
+                "   - COLLOQUIAL SENTENCE ENDINGS: Translate idiomatic expressions and feminine/assertive sentence endings ('〜わ', '〜わよ') by their natural conversational intent, NOT literal word-by-word meanings (e.g., translate 'そんなの決まってるわ' as 'Chuyện đó còn phải hỏi sao!' or 'Cái đó còn phải nói sao!', NOT 'Chuyện đó đã được quyết định rồi')."
+            )
+
+        # 6. RÀNG BUỘC TRÍCH XUẤT TỪ GỐC [TỪ GỐC] CHống CẮT VỤN NGỮ PHÁP
+        rules.append(
+            "- TERM EXTRACTION ([TỪ GỐC]) INTEGRITY: Under '[TỪ GỐC]', extract ONLY meaningful standalone vocabulary or compound expressions with accurate contextual meanings (e.g., 'この俺様 -> ta đây', '一体 -> rốt cuộc', '決まってる -> tất nhiên / còn phải hỏi'). NEVER split grammatical particles into awkward fragments like 'đến tớ đây', 'thì', or 'làm cái gì'."
+        )
         system_prompt += "\n".join(rules) + "\n"
 
     # 5. USER PROMPT

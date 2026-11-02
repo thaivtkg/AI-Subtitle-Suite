@@ -888,9 +888,115 @@ Item {
             Layout.topMargin: 4
             spacing: 6
             visible: typeof translationController !== "undefined" && (
-                (translationController.currentAppliedTerms && translationController.currentAppliedTerms.length > 0) ||
-                (translationController.currentOriginal !== "" && translationController.currentTranslation !== "" && translationController.status !== "TRANSLATING")
+                translationController.currentOriginal !== "" ||
+                (translationController.currentAppliedTerms && translationController.currentAppliedTerms.length > 0)
             )
+
+            // THẺ CHỦ NGỮ (SUBJECT TAG CHIP)
+            Rectangle {
+                id: subjectTagChip
+                objectName: "subjectTagChip"
+                visible: typeof translationController !== "undefined" && translationController.currentOriginal !== ""
+                implicitHeight: 26
+                implicitWidth: subjectChipRow.implicitWidth + 20
+                radius: 13
+                color: subjectChipMouse.containsMouse ? Qt.rgba(0.545, 0.361, 0.965, 0.28) : Qt.rgba(0.545, 0.361, 0.965, 0.18)
+                border.color: "#8B5CF6"
+                border.width: 1.5
+
+                RowLayout {
+                    id: subjectChipRow
+                    anchors.centerIn: parent
+                    spacing: 6
+
+                    Text {
+                        text: (typeof translationController !== "undefined" && translationController.currentSubjectTag && translationController.currentSubjectTag.is_detected) ? "👑" : "👤"
+                        font.pixelSize: 11
+                        Layout.alignment: Qt.AlignVCenter
+                    }
+
+                    Text {
+                        text: "Chủ ngữ:"
+                        color: "#C4B5FD"
+                        font.pixelSize: 11
+                        font.bold: true
+                        Layout.alignment: Qt.AlignVCenter
+                    }
+
+                    Text {
+                        objectName: "subjectTagText"
+                        text: (typeof translationController !== "undefined" && translationController.currentSubjectTag && translationController.currentSubjectTag.text)
+                              ? translationController.currentSubjectTag.text
+                              : "Tự do"
+                        color: "#F8FAFC"
+                        font.pixelSize: 11
+                        font.bold: true
+                        Layout.alignment: Qt.AlignVCenter
+                    }
+
+                    Text {
+                        text: "▾"
+                        color: "#A78BFA"
+                        font.pixelSize: 10
+                        font.bold: true
+                        Layout.alignment: Qt.AlignVCenter
+                    }
+                }
+
+                MouseArea {
+                    id: subjectChipMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    ToolTip.visible: containsMouse
+                    ToolTip.text: "Nhấp để chọn nhanh cặp ngôi xưng / chủ ngữ cho câu thoại"
+                    onClicked: subjectPronounMenu.open()
+                }
+
+                Menu {
+                    id: subjectPronounMenu
+                    y: subjectTagChip.height + 4
+                    width: 290
+                    background: Rectangle {
+                        color: "#0F172A"
+                        border.color: "#8B5CF6"
+                        border.width: 1
+                        radius: 8
+                    }
+
+                    Repeater {
+                        model: [
+                            { pair: "Ta - Ngươi", label: "👑 Ta ➔ Ngươi (Ngạo mạn / Chiến đấu)" },
+                            { pair: "Tôi - Cậu", label: "👤 Tôi ➔ Cậu (Đồng trang lứa / Hiện đại)" },
+                            { pair: "Tớ - Cậu", label: "🌸 Tớ ➔ Cậu (Thanh xuân / Học đường)" },
+                            { pair: "Anh - Em", label: "💫 Anh ➔ Em (Lãng mạn / Thân thiết)" },
+                            { pair: "Em - Tiền bối", label: "🎓 Em ➔ Tiền bối (Senpai - Kouhai)" },
+                            { pair: "Tự do", label: "🔮 Tự do (Tự động theo ngữ cảnh)" }
+                        ]
+                        delegate: MenuItem {
+                            id: pronItem
+                            implicitHeight: 32
+                            background: Rectangle {
+                                color: pronItem.highlighted ? Qt.rgba(0.545, 0.361, 0.965, 0.25) : "transparent"
+                                radius: 4
+                            }
+                            contentItem: Text {
+                                text: modelData.label
+                                color: "#F8FAFC"
+                                font.pixelSize: 12
+                                font.bold: (typeof translationController !== "undefined" && translationController.currentSubjectTag && translationController.currentSubjectTag.pair === modelData.pair)
+                                verticalAlignment: Text.AlignVCenter
+                                leftPadding: 8
+                            }
+                            onTriggered: {
+                                if (typeof translationController !== "undefined") {
+                                    translationController.setSubjectPronoun(modelData.pair)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
             Repeater {
                 model: (typeof translationController !== "undefined" && translationController.currentAppliedTerms) ? translationController.currentAppliedTerms : []
