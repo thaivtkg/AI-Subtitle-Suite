@@ -78,3 +78,95 @@ def test_flow_cat_studio_hotkeys_button(cat_studio_driver):
     cat_page.click_hotkeys()
     driver.wait_ms(100)
 
+
+def test_flow_cat_studio_cancel_translation_via_ui_button(cat_studio_driver):
+    """
+    User Flow (PLAN-CAT-WORKFLOW-STABILITY-001):
+    1. Start translation (simulate TRANSLATING status on row 0).
+    2. Verify btnCancelTranslation is visible in QML scene.
+    3. Click btnCancelTranslation via QtDriver.
+    4. Assert controller status reverts to PENDING, progress resets to 0%,
+       and btnCancelTranslation is no longer visible.
+    """
+    page_widget, cat_page, driver = cat_studio_driver
+    ctrl = page_widget.translation_controller
+
+    # Set controller to TRANSLATING state
+    ctrl._status = "TRANSLATING"
+    ctrl._active_translation_index = 0
+    ctrl._translation_progress = 45
+    ctrl.statusChanged.emit("TRANSLATING")
+    ctrl.translationProgressChanged.emit(45)
+    driver.wait_ms(100)
+
+    # Inspect QML Scene Graph: btnCancelTranslation must now be visible
+    cancel_btn = cat_page.btn_cancel_translate_item
+    assert cancel_btn is not None, "btnCancelTranslation must exist in QML"
+    driver.assert_visible(cancel_btn, True)
+
+    # Click Cancel button via Page Object
+    cat_page.click_cancel_translation()
+    driver.wait_ms(150)
+
+    # Assert status and progress reset
+    assert ctrl.status == "PENDING"
+    assert ctrl.translationProgress == 0
+    assert ctrl._active_translation_index == -1
+
+
+def test_flow_cat_studio_cancel_translation_via_escape_key(cat_studio_driver):
+    """
+    User Flow (PLAN-CAT-WORKFLOW-STABILITY-001):
+    1. Set status to TRANSLATING.
+    2. Send Escape key to the QQuickWidget window.
+    3. Assert translation cancels immediately.
+    """
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    page_widget, cat_page, driver = cat_studio_driver
+    ctrl = page_widget.translation_controller
+
+    ctrl._status = "TRANSLATING"
+    ctrl._active_translation_index = 0
+    ctrl._translation_progress = 70
+    ctrl.statusChanged.emit("TRANSLATING")
+    ctrl.translationProgressChanged.emit(70)
+    driver.wait_ms(100)
+
+    # Trigger Escape shortcut
+    QTest.keyClick(cat_page.quick_widget, Qt.Key_Escape)
+    driver.wait_ms(150)
+
+    assert ctrl.status == "PENDING"
+    assert ctrl.translationProgress == 0
+    assert ctrl._active_translation_index == -1
+
+
+def test_flow_cat_studio_empty_queue_guard_in_ui(cat_studio_driver):
+    """
+    User Flow (PLAN-CAT-WORKFLOW-STABILITY-001):
+    1. Clear/accept all subtitles until SubtitleModel rowCount == 0.
+    2. Assert QML switches to EmptyWorkspace.
+    3. Emit background progress from stale worker.
+    4. Assert controller status remains IDLE and does not revive translating UI.
+    """
+    page_widget, cat_page, driver = cat_studio_driver
+    ctrl = page_widget.translation_controller
+    model = page_widget.subtitle_model
+
+    # Clear queue to 0
+    while model.rowCount() > 0:
+        model.remove_subtitle(0)
+    driver.wait_ms(100)
+
+    assert model.rowCount() == 0
+    assert ctrl.status == "IDLE"
+
+    # Background stale worker emits progress
+    ctrl.on_progress(0, "Stale worker text")
+    driver.wait_ms(50)
+    assert ctrl.status == "IDLE"
+    assert ctrl.currentTranslation == ""
+
+

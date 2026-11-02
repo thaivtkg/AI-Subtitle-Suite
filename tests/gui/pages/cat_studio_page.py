@@ -19,6 +19,7 @@ class CatStudioPage(BasePage):
     LOC_ORIG_TEXT = "origTextArea"
     LOC_TRANSLATION_INPUT = "translationInput"
     LOC_BTN_TRANSLATE = "btnTranslate"
+    LOC_BTN_CANCEL_TRANSLATE = "btnCancelTranslation"
     LOC_BTN_ACCEPT = "btnAccept"
     LOC_BTN_RETRY = "btnRetry"
     LOC_BTN_HOTKEYS = "btnHotkeys"
@@ -52,6 +53,13 @@ class CatStudioPage(BasePage):
     @property
     def btn_translate_item(self) -> QQuickItem:
         return self.driver.find_qml_item(self.LOC_BTN_TRANSLATE, root_item=self.root_qml)
+
+    @property
+    def btn_cancel_translate_item(self) -> Optional[QQuickItem]:
+        try:
+            return self.driver.find_qml_item(self.LOC_BTN_CANCEL_TRANSLATE, root_item=self.root_qml)
+        except LookupError:
+            return None
 
     @property
     def btn_accept_item(self) -> QQuickItem:
@@ -99,6 +107,13 @@ class CatStudioPage(BasePage):
     def click_translate(self) -> CatStudioPage:
         """Clicks the ⚡ Dịch câu này button."""
         self.driver.click(self.btn_translate_item)
+        self.wait_ms(100)
+        return self
+
+    def click_cancel_translation(self) -> CatStudioPage:
+        """Clicks the 🛑 Hủy dịch button."""
+        assert self.btn_cancel_translate_item is not None, "btnCancelTranslation not found in QML"
+        self.driver.click(self.btn_cancel_translate_item)
         self.wait_ms(100)
         return self
 
