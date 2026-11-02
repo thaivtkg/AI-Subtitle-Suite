@@ -32,7 +32,7 @@
 * Sửa đổi / Dọn dẹp: `deployment/build/ai_subtitle_studio.spec` -> `deployment/build/ai_subtitle_suite.spec`
 * Kiểm thử: `tests/packaging/test_pyinstaller_spec_integrity.py`
 
-- [ ] **Bước 1.1: Viết test kiểm thử cấu trúc và tính toàn vẹn của file spec**
+- [x] **Bước 1.1: Viết test kiểm thử cấu trúc và tính toàn vẹn của file spec**
   Tạo `tests/packaging/test_pyinstaller_spec_integrity.py`:
   - Kiểm tra file `AI Subtitle Suite.spec` tồn tại ở thư mục gốc.
   - File cũ `AI Subtitle Studio.spec` không còn tồn tại.
@@ -41,9 +41,9 @@
     - `datas` có chứa đường dẫn tới `ui/qml_translation` và `llama_cpp`.
     - `binaries` có chứa dynamic libs của `llama_cpp` và `ctranslate2`.
     - `hiddenimports` có chứa `PySide6.QtQuick`, `PySide6.QtQuickWidgets`, `PySide6.QtQml`, `llama_cpp`.
-- [ ] **Bước 1.2: Chạy test để xác nhận test thất bại**
+- [x] **Bước 1.2: Chạy test để xác nhận test thất bại**
   Chạy `.\.venv\Scripts\python.exe -m pytest tests/packaging/test_pyinstaller_spec_integrity.py -v`.
-- [ ] **Bước 1.3: Khởi tạo `AI Subtitle Suite.spec` với đầy đủ cấu hình mới**
+- [x] **Bước 1.3: Khởi tạo `AI Subtitle Suite.spec` với đầy đủ cấu hình mới**
   - Đổi tên tệp và cập nhật:
     ```python
     # 1. Thu thập data & dynamic libs
@@ -100,9 +100,9 @@
   - Cập nhật tên EXE và COLLECT thành `'AI Subtitle Suite'`.
   - Xóa file cũ `AI Subtitle Studio.spec`.
   - Đồng bộ `deployment/build/ai_subtitle_suite.spec` tương ứng.
-- [ ] **Bước 1.4: Chạy lại test xác nhận PASS**
+- [x] **Bước 1.4: Chạy lại test xác nhận PASS**
   Chạy `.\.venv\Scripts\python.exe -m pytest tests/packaging/test_pyinstaller_spec_integrity.py -v`.
-- [ ] **Bước 1.5: Commit mã nguồn Tác vụ 1**
+- [x] **Bước 1.5: Commit mã nguồn Tác vụ 1**
   `git commit -m "build: replace AI Subtitle Studio.spec with AI Subtitle Suite.spec supporting QML and llama-cpp (PLAN-PACKAGING-SPEC-BRANDING-001)"`
 
 ---
@@ -115,14 +115,14 @@
 * Sửa đổi: `README.md`
 * Kiểm thử: `tests/packaging/test_build_scripts_config.py`
 
-- [ ] **Bước 2.1: Viết test thất bại kiểm tra cấu hình build script**
+- [x] **Bước 2.1: Viết test thất bại kiểm tra cấu hình build script**
   Tạo `tests/packaging/test_build_scripts_config.py`:
   - Xác nhận `build.py` trỏ vào `AI Subtitle Suite.spec`.
   - Xác nhận `installer.iss` cấu hình `AppName=AI Subtitle Suite`, file nguồn `dist\AI Subtitle Suite\*`, và output filename `AI_Subtitle_Suite_Setup_v1.0.0.exe`.
   - Xác nhận lệnh trong `README.md` sử dụng `AI Subtitle Suite.spec`.
-- [ ] **Bước 2.2: Chạy test xác nhận thất bại**
+- [x] **Bước 2.2: Chạy test xác nhận thất bại**
   Chạy `.\.venv\Scripts\python.exe -m pytest tests/packaging/test_build_scripts_config.py -v`.
-- [ ] **Bước 2.3: Chỉnh sửa `build.py`, `installer.iss` và `README.md`**
+- [x] **Bước 2.3: Chỉnh sửa `build.py`, `installer.iss` và `README.md`**
   - Trong `build.py`:
     - Đổi banner: `"BAT DAU QUY TRINH DONG GOI AI SUBTITLE SUITE"`.
     - Đổi `spec_path = os.path.join(project_root, "AI Subtitle Suite.spec")`.
@@ -136,9 +136,9 @@
     - `Source: "dist\AI Subtitle Suite\*"`
     - `Filename: "{app}\AI Subtitle Suite.exe"`
   - Trong `README.md`: Cập nhật câu lệnh đóng gói `pyinstaller --noconfirm --clean "AI Subtitle Suite.spec"`.
-- [ ] **Bước 2.4: Chạy lại test xác nhận PASS**
+- [x] **Bước 2.4: Chạy lại test xác nhận PASS**
   Chạy `.\.venv\Scripts\python.exe -m pytest tests/packaging/test_build_scripts_config.py -v`.
-- [ ] **Bước 2.5: Commit mã nguồn Tác vụ 2**
+- [x] **Bước 2.5: Commit mã nguồn Tác vụ 2**
   `git commit -m "build: update build.py, installer scripts and docs to AI Subtitle Suite (PLAN-PACKAGING-SPEC-BRANDING-001)"`
 
 ---
@@ -152,13 +152,13 @@
 * Sửa đổi: `ui/qml_translation/components/StudioLaunchpad.qml:127`
 * Kiểm thử: `tests/core/test_runtime_paths_suite_migration.py`
 
-- [ ] **Bước 3.1: Viết test thất bại kiểm tra định danh ứng dụng và cơ chế kế thừa dữ liệu cũ**
+- [x] **Bước 3.1: Viết test thất bại kiểm tra định danh ứng dụng và cơ chế kế thừa dữ liệu cũ**
   Tạo `tests/core/test_runtime_paths_suite_migration.py`:
   - Kiểm tra `RuntimePaths.APP_NAME == "AI Subtitle Suite"`.
   - Kiểm tra cơ chế `get_user_data_dir()`: Nếu thư mục `AI Subtitle Suite` chưa có nhưng `AI Subtitle Studio` có sẵn file `settings.json` hoặc thư mục `models/`, hệ thống hỗ trợ kế thừa hoặc tự động di chuyển an toàn mà không làm mất dữ liệu người dùng.
-- [ ] **Bước 3.2: Chạy test xác nhận thất bại**
+- [x] **Bước 3.2: Chạy test xác nhận thất bại**
   Chạy `.\.venv\Scripts\python.exe -m pytest tests/core/test_runtime_paths_suite_migration.py -v`.
-- [ ] **Bước 3.3: Triển khai cập nhật định danh và migration guard**
+- [x] **Bước 3.3: Triển khai cập nhật định danh và migration guard**
   - Trong `core/runtime/runtime_paths.py`:
     - Đặt `APP_NAME = "AI Subtitle Suite"`.
     - Trong `ensure_user_data_dirs()`: Thêm kiểm tra nếu thư mục mới trống và thư mục cũ `%LOCALAPPDATA%\AI Subtitle Studio` tồn tại, tự động sao chép hoặc trỏ mềm để giữ nguyên các model GGUF và cơ sở dữ liệu glossary/TM.
@@ -166,9 +166,9 @@
   - Trong `main.py:72`: Đổi `myappid = 'aisubtitlesuite.v1.0'`.
   - Trong `ui/qml_translation/components/AppHeader.qml`: Đổi text hiển thị thành `"⚡ AI Subtitle Suite"`.
   - Trong `ui/qml_translation/components/StudioLaunchpad.qml`: Đổi text thành `"AI Subtitle Suite"`.
-- [ ] **Bước 3.4: Chạy lại test xác nhận PASS**
+- [x] **Bước 3.4: Chạy lại test xác nhận PASS**
   Chạy `.\.venv\Scripts\python.exe -m pytest tests/core/test_runtime_paths_suite_migration.py -v`.
-- [ ] **Bước 3.5: Commit mã nguồn Tác vụ 3**
+- [x] **Bước 3.5: Commit mã nguồn Tác vụ 3**
   `git commit -m "feat(branding): update app name to AI Subtitle Suite with legacy user data migration guard (PLAN-PACKAGING-SPEC-BRANDING-001)"`
 
 ---
@@ -177,12 +177,12 @@
 **Files:**
 * Kiểm thử: Toàn bộ suite Desktop GUI Specs & Packaging Specs
 
-- [ ] **Bước 4.1: Kiểm tra tính hợp lệ cú pháp của tệp `.spec` mới**
+- [x] **Bước 4.1: Kiểm tra tính hợp lệ cú pháp của tệp `.spec` mới**
   Chạy lệnh kiểm tra cú pháp Python trên `AI Subtitle Suite.spec`:
   ```powershell
   .\.venv\Scripts\python.exe -c "import ast; ast.parse(open('AI Subtitle Suite.spec', encoding='utf-8').read()); print('[OK] Spec syntax is valid')"
   ```
-- [ ] **Bước 4.2: Chạy kiểm định toàn bộ các bộ test hệ thống**
+- [x] **Bước 4.2: Chạy kiểm định toàn bộ các bộ test hệ thống**
   ```powershell
   # 1. Bộ test packaging & build script
   .\.venv\Scripts\python.exe -m pytest tests/packaging/ tests/core/test_runtime_paths_suite_migration.py -v
@@ -196,5 +196,5 @@
   # 4. Toàn bộ Desktop GUI Flow Specs (POM Triad)
   .\.venv\Scripts\python.exe -m pytest tests/gui/specs/ -v
   ```
-- [ ] **Bước 4.3: Commit hoàn tất kế hoạch**
+- [x] **Bước 4.3: Commit hoàn tất kế hoạch**
   `git commit -m "chore: verify packaging spec dry-run and full regression suite (PLAN-PACKAGING-SPEC-BRANDING-001)"`
