@@ -111,6 +111,9 @@ class TranslationController(QObject):
             elif self._translation_progress < 85:
                 if getattr(self, "_progress_tick_count", 0) % 3 == 0:
                     self._translation_progress = min(85, self._translation_progress + 1)
+            elif self._translation_progress < 95:
+                if getattr(self, "_progress_tick_count", 0) % 6 == 0:
+                    self._translation_progress = min(95, self._translation_progress + 1)
             self._progress_tick_count = getattr(self, "_progress_tick_count", 0) + 1
             self.translationProgressChanged.emit(self._translation_progress)
         else:
@@ -325,8 +328,12 @@ class TranslationController(QObject):
         self._context_prev = "\n\n".join(prev_ctx) if prev_ctx else "Không có dữ liệu trước."
         self._context_next = "\n\n".join(next_ctx) if next_ctx else "Không có dữ liệu sau."
         
-        self._translation_progress = 0
-        self.translationProgressChanged.emit(0)
+        # Bảo toàn mốc tiến trình nếu câu đang được dịch
+        if self._active_translation_index >= 0 and index == self._active_translation_index:
+            self.translationProgressChanged.emit(self._translation_progress)
+        else:
+            self._translation_progress = 0
+            self.translationProgressChanged.emit(0)
         self.statusChanged.emit(self._status)
         self.translationUpdated.emit(self._current_translation)
         self.originalUpdated.emit(self._current_original)
