@@ -1666,11 +1666,15 @@ class MainWindow(QMainWindow):
         if not scan_lang or scan_lang == "Auto Detect":
             proj_ctrl = getattr(self.page_translation, "project_controller", None)
             if proj_ctrl and getattr(proj_ctrl, "_is_ja_origin", False):
-                scan_lang = "Japanese"
+                scan_lang = "ja"
             elif hasattr(self, "page_translation") and hasattr(self.page_translation, "translation_controller"):
                 tc_lang = getattr(self.page_translation.translation_controller, "currentSourceLanguage", None)
                 if tc_lang and tc_lang != "Auto Detect":
                     scan_lang = tc_lang
+        
+        from core.subtitle_generation.language_utils import normalize_to_iso_code, get_initial_prompt_for_language
+        iso_lang = normalize_to_iso_code(scan_lang)
+        prompt_ctx = get_initial_prompt_for_language(iso_lang) if iso_lang == "ja" else ""
         
         from core.subtitle_generation.subtitle_generation_request import SubtitleGenerationRequest
         request = SubtitleGenerationRequest(
@@ -1685,10 +1689,11 @@ class MainWindow(QMainWindow):
             video_path=vid_path,
             model_size=settings.get("model_size", "large-v3-turbo"),
             compute_type=settings.get("compute_type", "int8"),
-            language=scan_lang,
+            language=iso_lang,
             use_vad=settings.get("use_vad", True),
             min_silence_ms=settings.get("min_silence_ms", 500),
             word_timestamps=False,
+            prompt_context=prompt_ctx,
         )
         
         from workers.SegmentScanWorker import SegmentScanWorker
@@ -1954,6 +1959,19 @@ class MainWindow(QMainWindow):
         project_id = project.project_id if project else "adhoc_project"
         source_fp = getattr(getattr(project, "source", None), "fingerprint", vid_path) if project else vid_path
 
+        from core.subtitle_generation.language_utils import normalize_to_iso_code, get_initial_prompt_for_language
+        batch_lang = settings.get("language", None)
+        if not batch_lang or batch_lang == "Auto Detect":
+            proj_ctrl = getattr(self.page_translation, "project_controller", None)
+            if proj_ctrl and getattr(proj_ctrl, "_is_ja_origin", False):
+                batch_lang = "ja"
+            elif hasattr(self, "page_translation") and hasattr(self.page_translation, "translation_controller"):
+                tc_lang = getattr(self.page_translation.translation_controller, "currentSourceLanguage", None)
+                if tc_lang and tc_lang != "Auto Detect":
+                    batch_lang = tc_lang
+        iso_batch_lang = normalize_to_iso_code(batch_lang)
+        batch_prompt_ctx = get_initial_prompt_for_language(iso_batch_lang) if iso_batch_lang == "ja" else ""
+
         request = SubtitleGenerationRequest(
             request_id=f"batch_scan_{len(segments_data)}",
             audio_boost=bool(
@@ -1966,10 +1984,11 @@ class MainWindow(QMainWindow):
             video_path=vid_path,
             model_size=settings.get("model_size", "large-v3-turbo"),
             compute_type=settings.get("compute_type", "int8"),
-            language=settings.get("language", None),
+            language=iso_batch_lang,
             use_vad=settings.get("use_vad", True),
             min_silence_ms=settings.get("min_silence_ms", 500),
             word_timestamps=False,
+            prompt_context=batch_prompt_ctx,
         )
 
         progress = self._create_batch_scan_progress_dialog(len(segments_data))
