@@ -426,7 +426,8 @@ Item {
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: 2
                                 clip: true
-                                opacity: translationController.status === "TRANSLATING" ? 1.0 : 0.0
+                                visible: translationController.status === "TRANSLATING" && !scrambleOverlay.visible
+                                opacity: (translationController.status === "TRANSLATING" && !scrambleOverlay.visible) ? 1.0 : 0.0
                                 Behavior on opacity { NumberAnimation { duration: 250 } }
 
                                 Rectangle {
@@ -494,6 +495,7 @@ Item {
                             id: scrambleOverlay
                             anchors.fill: parent
                             anchors.margins: Theme.spaceMedium
+                            anchors.topMargin: 40
                             visible: translationController.status === "TRANSLATING" && translationInput.text.trim().length === 0
                             z: 5
 

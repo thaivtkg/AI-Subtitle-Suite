@@ -34,15 +34,20 @@ def test_flow_cat_studio_manual_translation_and_accept(cat_studio_driver):
     cat_page.type_translation(translated_text, clear_first=True)
     assert cat_page.get_translation_text() == translated_text
 
+    committed_events = []
+    page_widget.translation_committed.connect(lambda idx, text: committed_events.append((idx, text)))
+
     # Click Accept button
     cat_page.click_accept()
     driver.wait_ms(150)
 
-    # Verify model state
-    seg = page_widget.subtitle_model.get_item(0)
-    assert seg is not None
-    assert seg.get("translation") == translated_text
-    assert seg.get("status") == "ACCEPTED"
+    # Verify committed signal and item removal from queue (CAT Studio queue model)
+    assert len(committed_events) == 1
+    assert committed_events[0] == (0, translated_text)
+    # Approved item was removed from CAT queue; seg-002 shifted to index 0
+    assert page_widget.subtitle_model.rowCount() == 1
+    next_seg = page_widget.subtitle_model.get_item(0)
+    assert next_seg["original"] == "This is an automated speech translation demo."
 
 
 def test_flow_cat_studio_action_buttons_visibility(cat_studio_driver):

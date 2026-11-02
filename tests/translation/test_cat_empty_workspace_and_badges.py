@@ -124,9 +124,10 @@ def test_ac_cat_lifecycle_badges_04_05_06(main_window):
     # AC-CAT-BADGE-06: User accepts translation (Ctrl+Enter) -> ACCEPTED & Timeline sync
     cat_ctrl.acceptTranslation(0, "Bản dịch đã duyệt")
     QTest.qWait(100)
-    assert cat_ctrl.status == "ACCEPTED"
-    assert sub_model.get_item(0)["status"] == "ACCEPTED"
     # Timeline sync check
     assert win.sub_editor.all_segments[0]["text"] == "Bản dịch đã duyệt"
     assert win.sub_editor.all_segments[0]["translation"] == "Bản dịch đã duyệt"
     assert win.sub_editor.all_segments[0]["translation_status"] == "ACCEPTED"
+    # Khi đã duyệt, câu biến mất khỏi hàng đợi CAT Studio theo yêu cầu
+    assert sub_model.rowCount() == 0
+    assert cat_ctrl.status == "IDLE"

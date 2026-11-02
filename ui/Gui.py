@@ -4955,13 +4955,8 @@ class MainWindow(QMainWindow):
                 }
             self.workspace_service.capture_workspace()
 
-            # Giai đoạn 4 & 5: Đồng bộ dữ liệu dịch sang SubEditor và lưu artifacts/translation/project.aisrt
+            # Giai đoạn 4 & 5: Lưu artifacts/translation/project.aisrt (Không gọi export/render làm gián đoạn Video Workspace)
             if hasattr(self, "page_translation") and self.page_translation:
-                if hasattr(self, "sub_editor") and self.sub_editor.all_segments:
-                    self.page_translation.export_subtitles_to_studio(self.sub_editor.all_segments)
-                    self.sub_editor.render_page()
-                    if hasattr(self, "video_player"):
-                        self.video_player.refresh_current_subtitle()
                 proj_dir = getattr(self.project_service, "project_dir", None)
                 if proj_dir and os.path.exists(proj_dir):
                     trans_dir = os.path.join(proj_dir, "artifacts", "translation")

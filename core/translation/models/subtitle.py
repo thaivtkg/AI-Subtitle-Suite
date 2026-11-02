@@ -91,6 +91,17 @@ class SubtitleModel(QAbstractListModel):
         self.endInsertRows()
         self.progressStatsChanged.emit()
 
+    @Slot(int, result=bool)
+    def remove_subtitle(self, index: int) -> bool:
+        """Xóa 1 subtitle khỏi danh sách CAT Studio sau khi đã được duyệt."""
+        if 0 <= index < len(self._subtitles):
+            self.beginRemoveRows(QModelIndex(), index, index)
+            self._subtitles.pop(index)
+            self.endRemoveRows()
+            self.progressStatsChanged.emit()
+            return True
+        return False
+
     @Slot(result="QVariantList")
     def get_all_data(self):
         """Trả về toàn bộ danh sách subtitle để Context Engine và QML xử lý"""

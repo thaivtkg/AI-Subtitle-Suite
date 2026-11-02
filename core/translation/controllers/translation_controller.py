@@ -102,12 +102,17 @@ class TranslationController(QObject):
         return False
 
     def _on_thinking_progress_tick(self):
-        """AUD-UX-001: Tăng tiến độ động từ 10% đến 35% trong giai đoạn suy luận / nạp model."""
-        if self._status == "TRANSLATING" and self._translation_progress < 35:
-            self._translation_progress = min(35, self._translation_progress + 2)
+        """AUD-UX-001: Tăng tiến độ động từ 10% và tiếp tục bò mượt trong giai đoạn model suy luận (<think>)."""
+        if self._status == "TRANSLATING":
+            if self._translation_progress < 35:
+                self._translation_progress = min(35, self._translation_progress + 2)
+            elif self._translation_progress < 70:
+                self._translation_progress += 1
+            elif self._translation_progress < 85:
+                if getattr(self, "_progress_tick_count", 0) % 3 == 0:
+                    self._translation_progress = min(85, self._translation_progress + 1)
+            self._progress_tick_count = getattr(self, "_progress_tick_count", 0) + 1
             self.translationProgressChanged.emit(self._translation_progress)
-            if self._translation_progress >= 35:
-                self._progress_timer.stop()
         else:
             self._progress_timer.stop()
 
@@ -281,7 +286,7 @@ class TranslationController(QObject):
             self._current_end_time = ""
             self._context_prev = ""
             self._context_next = ""
-            self._status = "PENDING"
+            self._status = "IDLE"
             self._translation_progress = 0
             self.translationProgressChanged.emit(0)
             self.statusChanged.emit(self._status)
@@ -379,6 +384,7 @@ class TranslationController(QObject):
         self._status = "TRANSLATING"
         self._set_engine_status("Translating")
         self._translation_progress = 10
+        self._progress_tick_count = 0
         self.translationProgressChanged.emit(10)
         self.statusChanged.emit(self._status)
         self._current_translation = ""
@@ -489,6 +495,8 @@ class TranslationController(QObject):
             self._current_translation = text
             self._status = "TRANSLATING"
             expected_len = max(len(self._current_original) * 2, 20)
+            if hasattr(self, "_progress_timer") and self._progress_timer.isActive():
+                self._progress_timer.stop()
             self._translation_progress = min(95, max(35, int((len(text) / expected_len) * 60) + 35))
             self.translationProgressChanged.emit(self._translation_progress)
             self.translationUpdated.emit(text)
@@ -600,9 +608,18 @@ class TranslationController(QObject):
         self._subtitle_model.update_translation(index, final_text, "ACCEPTED")
         if self.translation_memory is not None and original:
             self.translation_memory.add(original, clean_text)
-        self._status = "ACCEPTED"
-        self.statusChanged.emit(self._status)
-        self.notify.emit("SUCCESS", f"Đã lưu thành công câu #{index + 1}")
+        self.notify.emit("SUCCESS", f"Đã duyệt và đồng bộ câu #{index + 1} sang Timeline")
+
+        # Xóa câu đã duyệt khỏi hàng đợi CAT Studio theo yêu cầu của người dùng
+        self._subtitle_model.remove_subtitle(index)
+
+        # Tự động chọn câu tiếp theo trong hàng đợi
+        remaining = self._subtitle_model.rowCount()
+        if remaining > 0:
+            next_idx = min(index, remaining - 1)
+            self.loadSubtitle(next_idx)
+        else:
+            self.loadSubtitle(-1)
         return True
 
     @staticmethod

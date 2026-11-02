@@ -220,8 +220,9 @@ def test_translation_controller_dynamic_progress_and_timer():
 
     for _ in range(20):
         controller._on_thinking_progress_tick()
-    assert controller.translationProgress == 35
-    assert controller._progress_timer.isActive() is False
+    # Tiến trình không bị đóng băng ở 35% mà tiếp tục bò mượt trong suốt giai đoạn suy luận
+    assert controller.translationProgress > 35
+    assert controller._progress_timer.isActive() is True
 
     # Khi token đầu tiên được stream về qua on_progress
     controller.on_progress(0, "Đây là một câu dài")

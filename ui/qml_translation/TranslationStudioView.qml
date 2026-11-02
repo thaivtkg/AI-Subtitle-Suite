@@ -144,10 +144,7 @@ Item {
 
                     onAcceptRequested: (text) => {
                         if (typeof translationController !== "undefined" && translationController !== null) {
-                            let isSuccess = translationController.acceptTranslation(subListView.currentRawIndex, text)
-                            if (isSuccess) {
-                                subListView.selectNextRowAndFocus()
-                            }
+                            translationController.acceptTranslation(subListView.currentRawIndex, text)
                         }
                     }
 
