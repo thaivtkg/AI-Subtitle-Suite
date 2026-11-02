@@ -4,6 +4,30 @@ from PySide6.QtCore import QTimer
 
 class WorkspaceService:
     """Service chịu trách nhiệm đồng bộ giữa Giao diện (Qt UI) và Trạng thái Dự án (Project State)"""
+
+    NAV_TO_PAGE_MAP = {
+        0: "dashboard",
+        1: "workspace",
+        2: "queue",
+        3: "queue",
+        4: "draft",
+        5: "export",
+        6: "settings",
+        7: "help",
+        8: "translation",
+    }
+
+    PAGE_TO_NAV_MAP = {
+        "dashboard": 1,  # Dự án đang mở không hiển thị dashboard, mở Workspace
+        "workspace": 1,
+        "editor": 1,     # Hỗ trợ backward compatibility dữ liệu cũ
+        "queue": 3,
+        "draft": 4,
+        "export": 5,
+        "settings": 6,
+        "help": 7,
+        "translation": 8,
+    }
     
     def __init__(self, main_window, project_service: ProjectService):
         self.ui = main_window  # Tham chiếu đến class MainWindow (Gui.py)
@@ -21,8 +45,7 @@ class WorkspaceService:
         try:
             # [FIX SPRINT 7.1] Tránh dùng .currentIndex() của AnimatedStack 
             original_idx = getattr(self.ui, '_active_nav_index', 0)
-            page_map = {0: "dashboard", 1: "workspace", 2: "editor", 3: "queue", 4: "draft", 5: "export", 6: "settings"}
-            workspace.active_page = page_map.get(original_idx, "dashboard")
+            workspace.active_page = self.NAV_TO_PAGE_MAP.get(original_idx, "workspace")
         except Exception as e:
             print(f"Lỗi capture trang: {e}")
 
@@ -70,8 +93,7 @@ class WorkspaceService:
 
         # 1. Phục hồi trang trên Sidebar (Sử dụng đúng hàm switch_page của Gui.py)
         try:
-            page_map = {"dashboard": 0, "workspace": 1, "editor": 2, "queue": 3, "draft": 4, "export": 5}
-            target_idx = page_map.get(workspace.active_page, 0)
+            target_idx = self.PAGE_TO_NAV_MAP.get(workspace.active_page, 1)
             self.ui.switch_page(target_idx)
         except Exception as e:
             print(f"Lỗi khi khôi phục trang: {e}")
