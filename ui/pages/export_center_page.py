@@ -69,6 +69,7 @@ class ExportCenterPage(QWidget):
 
         lbl_hs_title = QLabel("Xuất Video Hardsub (FFmpeg GPU Acceleration):")
         lbl_hs_title.setStyleSheet(f"font-weight: bold; color: {Theme.CYAN}; border: none;")
+        lbl_hs_title.setToolTip("Tự động kích hoạt bộ tăng tốc phần cứng GPU (NVIDIA NVENC, Intel QSV, AMD AMF) hoặc fallback về CPU (libx264).")
         hs_layout.addWidget(lbl_hs_title)
 
         self.chk_hardsub = QCheckBox("Render MP4 Hardsub (Chèn cứng phụ đề vào video)")

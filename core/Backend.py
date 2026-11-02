@@ -225,6 +225,48 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     return header + "\n".join(dialogues) + "\n"
 
 
+_CACHED_VIDEO_ENCODER = None
+
+
+def detect_video_encoder(ffmpeg_path: str = None) -> tuple[str, str]:
+    """
+    Tự động dò tìm bộ mã hóa video tăng tốc phần cứng tốt nhất (NVIDIA NVENC, Intel QSV, AMD AMF)
+    với cơ chế dự phòng an toàn về CPU (libx264).
+    Trả về: (codec_name, display_desc) ví dụ: ('h264_nvenc', 'NVIDIA NVENC (GPU)')
+    """
+    global _CACHED_VIDEO_ENCODER
+    if _CACHED_VIDEO_ENCODER is not None:
+        return _CACHED_VIDEO_ENCODER
+
+    if not ffmpeg_path:
+        from core.runtime.runtime_paths import RuntimePaths
+        ffmpeg_path = RuntimePaths.get_ffmpeg_exe()
+
+    candidates = [
+        ("h264_nvenc", "NVIDIA NVENC (GPU)"),
+        ("h264_qsv", "Intel QuickSync (GPU)"),
+        ("h264_amf", "AMD AMF (GPU)"),
+    ]
+    creation_flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+
+    for enc, desc in candidates:
+        try:
+            res = subprocess.run(
+                [ffmpeg_path, "-f", "lavfi", "-i", "color=c=black:s=64x64:d=0.04", "-c:v", enc, "-f", "null", "-"],
+                capture_output=True,
+                creationflags=creation_flags,
+                timeout=3
+            )
+            if res.returncode == 0:
+                _CACHED_VIDEO_ENCODER = (enc, desc)
+                return _CACHED_VIDEO_ENCODER
+        except Exception:
+            continue
+
+    _CACHED_VIDEO_ENCODER = ("libx264", "CPU Software (libx264)")
+    return _CACHED_VIDEO_ENCODER
+
+
 def burn_hardsub(video_path, srt_path, output_path, font_size=42, font_color="white", font_name="Arial", progress_callback=None, log_callback=None, process_callback=None, placement_state=None, video_resolution=None, segments=None, outline_width=2.0, custom_presets=None):
     base_name, _ = os.path.splitext(output_path)
     final_output_path = f"{base_name}.mp4"
@@ -238,6 +280,9 @@ def burn_hardsub(video_path, srt_path, output_path, font_size=42, font_color="wh
 
     from core.runtime.runtime_paths import RuntimePaths
     ffmpeg_path = RuntimePaths.get_ffmpeg_exe()
+    encoder, encoder_desc = detect_video_encoder(ffmpeg_path)
+    if log_callback:
+        log_callback(f"[FFmpeg] Bộ mã hóa video: {encoder_desc} ({encoder})")
     
     temp_ass = None
     subtitle_path = srt_path
@@ -272,22 +317,22 @@ def burn_hardsub(video_path, srt_path, output_path, font_size=42, font_color="wh
     safe_font_name = str(font_name).replace('\\', r'\\').replace(',', r'\,').replace("'", r"\'")
 
     use_temp_ass = (temp_ass is not None)
-    cmd = [
-        ffmpeg_path, "-y",
-        "-i", video_path,
-        "-vf", f"subtitles='{formatted_subtitle_path}'" if use_temp_ass else f"subtitles='{formatted_subtitle_path}':force_style='FontSize={font_size},FontName={safe_font_name},PrimaryColour=&H00FFFFFF&'",
-        "-c:a", "aac", 
-        "-async", "1",
-        "-ignore_unknown",
-        final_output_path
-    ]
+    creation_flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 
-    creation_flags = 0
-    if os.name == 'nt':
-        creation_flags = subprocess.CREATE_NO_WINDOW
+    def _build_cmd(codec):
+        return [
+            ffmpeg_path, "-y",
+            "-i", video_path,
+            "-vf", f"subtitles='{formatted_subtitle_path}'" if use_temp_ass else f"subtitles='{formatted_subtitle_path}':force_style='FontSize={font_size},FontName={safe_font_name},PrimaryColour=&H00FFFFFF&'",
+            "-c:v", codec,
+            "-c:a", "aac", 
+            "-async", "1",
+            "-ignore_unknown",
+            final_output_path
+        ]
 
-    outcome = "failure"
-    try:
+    def _execute_ffmpeg(codec):
+        cmd = _build_cmd(codec)
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -319,9 +364,19 @@ def burn_hardsub(video_path, srt_path, output_path, font_size=42, font_color="wh
                     pass
             process.wait()
 
-        if process.returncode not in (0, -9, -15):
-            raise Exception(f"FFmpeg gặp lỗi khi render hardsub (Mã lỗi: {process.returncode})")
-        outcome = "success" if process.returncode == 0 else "cancel"
+        return process.returncode
+
+    outcome = "failure"
+    try:
+        ret = _execute_ffmpeg(encoder)
+        if ret not in (0, -9, -15) and encoder != "libx264":
+            if log_callback:
+                log_callback(f"[FFmpeg] GPU encoder {encoder} thất bại (mã {ret}), tự động chuyển về CPU (libx264)...")
+            ret = _execute_ffmpeg("libx264")
+
+        if ret not in (0, -9, -15):
+            raise Exception(f"FFmpeg gặp lỗi khi render hardsub (Mã lỗi: {ret})")
+        outcome = "success" if ret == 0 else "cancel"
 
         if log_callback:
             log_callback(f"[FFmpeg] Hoàn tất: {os.path.basename(final_output_path)}")
