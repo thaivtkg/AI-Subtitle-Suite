@@ -189,9 +189,14 @@ class SubtitleModel(QAbstractListModel):
             sub["_qa_severity"] = "ERROR" if has_error else "WARNING"
             sub["_qa_tooltip"] = "\n".join(f"• {i.message}" for i in issues)
 
-    @staticmethod
-    def _normalize_translation_state(sub):
-        status = str(sub.get("status", "PENDING") or "PENDING").upper()
+    VALID_CAT_STATUSES = {"PENDING", "TRANSLATING", "TRANSLATED", "EDITED", "ACCEPTED", "ERROR"}
+
+    @classmethod
+    def _normalize_translation_state(cls, sub):
+        status = str(sub.get("status", "PENDING") or "PENDING").strip().upper()
+        if status not in cls.VALID_CAT_STATUSES:
+            translation = str(sub.get("translation", "") or "").strip()
+            status = "TRANSLATED" if translation else "PENDING"
         sub["status"] = status
         translation = str(sub.get("translation", "") or "")
         if status in {"TRANSLATED", "EDITED", "ACCEPTED"} and not translation.strip():

@@ -143,8 +143,12 @@ class TranslationStudioPage(QWidget):
 
         for idx in target_indices:
             s = studio_segments[idx]
-            raw_status = s.get("translation_status") or s.get("status")
-            status = raw_status if raw_status else ("PENDING" if not s.get("translation") else "TRANSLATED")
+            VALID_CAT_STATUSES = {"PENDING", "TRANSLATING", "TRANSLATED", "EDITED", "ACCEPTED", "ERROR"}
+            trans_status = str(s.get("translation_status") or "").strip().upper()
+            if trans_status in VALID_CAT_STATUSES:
+                status = trans_status
+            else:
+                status = "TRANSLATED" if str(s.get("translation", "")).strip() else "PENDING" 
             # CAT Queue Invariant: Khi nap chu dong tu Timeline (selected_indices is None),
             # chi nap cac cau chua duyet. Bo qua cac cau da duyet (ACCEPTED).
             if selected_indices is None and str(status).upper() == "ACCEPTED":
