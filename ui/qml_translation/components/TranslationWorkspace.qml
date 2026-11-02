@@ -21,6 +21,13 @@ Item {
     signal openProjectRequested()
     signal addGlossaryRequested(string sourceText, string targetText)
     signal hotkeysRequested()
+    signal cancelRequested()
+    
+    onCancelRequested: {
+        if (typeof translationController !== "undefined" && translationController !== null) {
+            translationController.cancelTranslation()
+        }
+    }
     
     function setSourceLanguage(lang) { langSelector.setLanguage(lang) }
     function getSourceLanguage() { return langSelector.sourceLang }
@@ -1139,9 +1146,21 @@ Item {
                 }
 
                 AppButton {
+                    objectName: "btnCancelTranslation"
+                    text: "🛑 Hủy dịch (Esc)"
+                    Layout.alignment: Qt.AlignVCenter
+                    Layout.preferredWidth: 125
+                    Layout.minimumWidth: 85
+                    isDestructive: true
+                    visible: translationController.status === "TRANSLATING"
+                    enabled: translationController.status === "TRANSLATING"
+                    onClicked: workspace.cancelRequested()
+                }
+
+                AppButton {
                     objectName: "btnTranslate"
-                    visible: translationController.status === "PENDING" || translationController.status === "TRANSLATING"
-                    text: translationController.status === "TRANSLATING" ? "◌ Đang dịch..." : "⚡ Dịch (Ctrl+T)"
+                    visible: translationController.status === "PENDING"
+                    text: "⚡ Dịch (Ctrl+T)"
                     Layout.alignment: Qt.AlignVCenter
                     Layout.preferredWidth: 112
                     Layout.minimumWidth: 80
@@ -1218,6 +1237,12 @@ Item {
             var tgt = (typeof translationInput !== "undefined" && translationInput.selectedText) ? translationInput.selectedText.trim() : ""
             workspace.addGlossaryRequested(src, tgt)
         }
+    }
+
+    Shortcut {
+        sequence: "Escape"
+        enabled: translationController.status === "TRANSLATING"
+        onActivated: workspace.cancelRequested()
     }
 
     Shortcut {

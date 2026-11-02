@@ -126,6 +126,37 @@ class TranslationController(QObject):
         dialog = HotkeysCheatsheetDialog()
         dialog.exec()
 
+    @Slot()
+    def cancelTranslation(self):
+        """Hủy quá trình dịch hiện tại, ngắt worker và đưa trạng thái câu về PENDING."""
+        if hasattr(self, "_progress_timer") and self._progress_timer.isActive():
+            self._progress_timer.stop()
+        if self.worker is not None:
+            try:
+                if hasattr(self.worker, "cancel"):
+                    self.worker.cancel()
+                if hasattr(self.worker, "isRunning") and self.worker.isRunning():
+                    self.worker.wait(200)
+            except (RuntimeError, Exception):
+                pass
+        try:
+            from core.translation.llm.model_manager import ModelManager
+            ModelManager.get_instance().cancel()
+        except Exception:
+            pass
+
+        target_idx = self._active_translation_index
+        self._active_translation_index = -1
+        self._status = "PENDING"
+        self._translation_progress = 0
+        if 0 <= target_idx < len(self._subtitle_model.get_all_data()):
+            self._subtitle_model.update_translation(target_idx, "", "PENDING")
+        if target_idx == self._current_index or self._current_index < 0:
+            self._current_translation = ""
+            self.translationUpdated.emit("")
+        self.statusChanged.emit(self._status)
+        self.translationProgressChanged.emit(0)
+
     def _emit_qa_status(self, *args):
         self.qaStatusChanged.emit()
 

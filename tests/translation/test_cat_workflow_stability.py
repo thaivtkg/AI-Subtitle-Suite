@@ -63,3 +63,32 @@ def test_tc_stab_01_selection_preserves_translating_progress(qapp):
         f"Lỗi: Tiến trình dịch bị reset về {controller.translationProgress}% khi chọn lại câu đang dịch!"
     )
     assert controller.status == "TRANSLATING"
+
+
+def test_tc_stab_02_cancel_translation_resets_state(qapp):
+    """
+    Tác vụ 2.1: Slot cancelTranslation() ngắt worker, reset trạng thái về PENDING và progress về 0.
+    """
+    model = SubtitleModel()
+    model.load_data([
+        {"id": "s1", "original": "Hello", "translation": "", "status": "PENDING"},
+    ])
+    controller = TranslationController(subtitle_model=model)
+
+    assert hasattr(controller, "cancelTranslation"), "TranslationController phải có slot cancelTranslation"
+
+    controller._current_index = 0
+    controller._active_translation_index = 0
+    controller._status = "TRANSLATING"
+    controller._translation_progress = 50
+    model.update_translation(0, "partial...", "TRANSLATING")
+
+    # Bấm hủy dịch
+    controller.cancelTranslation()
+
+    assert controller.status == "PENDING"
+    assert controller.translationProgress == 0
+    assert controller._active_translation_index == -1
+    sub = model.get_all_data()[0]
+    assert sub["status"] == "PENDING"
+

@@ -153,6 +153,12 @@ Item {
                     }
 
                     onHotkeysRequested: hotkeysDialog.open()
+
+                    onCancelRequested: {
+                        if (typeof translationController !== "undefined" && translationController !== null) {
+                            translationController.cancelTranslation()
+                        }
+                    }
                 }
             }
 
