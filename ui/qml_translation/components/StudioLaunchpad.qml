@@ -124,7 +124,7 @@ Item {
 
             Text {
                 Layout.fillWidth: true
-                text: "AI Subtitle Studio"
+                text: "AI Subtitle Suite"
                 color: "#FFFFFF"
                 font.pixelSize: 26
                 font.bold: true

@@ -355,7 +355,7 @@ class MainWindow(QMainWindow):
         self.shortcut_export.setContext(Qt.ApplicationShortcut)
         self.shortcut_export.activated.connect(self._trigger_export_softsub)
 
-        self.setWindowTitle("AI Subtitle Studio")
+        self.setWindowTitle("AI Subtitle Suite")
         
         self.setMinimumSize(1280, 720)
         self.resize(1366, 768)

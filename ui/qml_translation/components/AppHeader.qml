@@ -97,7 +97,7 @@ ToolBar {
                 spacing: Theme.spaceSmall
 
                 Text {
-                    text: root.isCompact ? "◈ Studio" : "◈ AI Subtitle Studio"
+                    text: root.isCompact ? "◈ Suite" : "◈ AI Subtitle Suite"
                     color: Theme.textPrimaryGlass
                     font.pixelSize: 13
                     font.bold: true

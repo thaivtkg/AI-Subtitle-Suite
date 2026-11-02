@@ -69,7 +69,7 @@ def main():
 
     # --- THÊM ĐOẠN CODE NÀY ĐỂ FIX ICON TASKBAR TRÊN WINDOWS ---
     if os.name == 'nt':
-        myappid = 'aisubtitlestudio.v0.1.alpha' # Một chuỗi ID định danh tùy ý
+        myappid = 'aisubtitlesuite.v1.0' # Một chuỗi ID định danh tùy ý
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
     # -----------------------------------------------------------
     # Khởi tạo ứng dụng

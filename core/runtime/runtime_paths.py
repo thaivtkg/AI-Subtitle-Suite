@@ -5,7 +5,8 @@ from pathlib import Path
 
 class RuntimePaths:
     """[S7.2-T05] Quản lý toàn bộ đường dẫn của ứng dụng (Dev & PyInstaller Release)"""
-    APP_NAME = "AI Subtitle Studio"
+    APP_NAME = "AI Subtitle Suite"
+    LEGACY_APP_NAME = "AI Subtitle Studio"
 
     @staticmethod
     def get_app_dir() -> Path:
@@ -120,9 +121,42 @@ class RuntimePaths:
         return RuntimePaths.get_user_data_dir() / "tm.db"
 
     @classmethod
+    def get_legacy_user_data_dir(cls) -> Path:
+        local_app_data = os.environ.get('LOCALAPPDATA')
+        if not local_app_data:
+            local_app_data = os.path.expanduser('~')
+        return Path(local_app_data) / cls.LEGACY_APP_NAME
+
+    @classmethod
+    def _migrate_legacy_user_data(cls) -> None:
+        """Kế thừa an toàn settings, database và models từ AI Subtitle Studio sang AI Subtitle Suite."""
+        legacy_dir = cls.get_legacy_user_data_dir()
+        target_dir = cls.get_user_data_dir()
+        if not legacy_dir.exists() or legacy_dir.resolve() == target_dir.resolve():
+            return
+
+        for item_name in ["settings.json", "glossary.db", "tm.db", "tutorial_progress.json"]:
+            src = legacy_dir / item_name
+            dst = target_dir / item_name
+            if src.exists() and not dst.exists():
+                try:
+                    shutil.copy2(src, dst)
+                except Exception:
+                    pass
+
+        src_models = legacy_dir / "models"
+        dst_models = target_dir / "models"
+        if src_models.exists() and not dst_models.exists():
+            try:
+                shutil.copytree(src_models, dst_models)
+            except Exception:
+                pass
+
+    @classmethod
     def ensure_user_data_dirs(cls) -> None:
         """Prepare app-root and recovery directories needed during startup."""
         cls.get_user_data_dir().mkdir(parents=True, exist_ok=True)
+        cls._migrate_legacy_user_data()
         cls.get_logs_dir().mkdir(exist_ok=True)
         cls.get_recovery_dir().mkdir(parents=True, exist_ok=True)
         cls.get_recovery_sessions_dir().mkdir(parents=True, exist_ok=True)
