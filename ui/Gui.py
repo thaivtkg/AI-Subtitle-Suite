@@ -630,6 +630,7 @@ class MainWindow(QMainWindow):
             self.sub_editor.manual_add_requested.connect(self._on_add_manual_timing_triggered)
         self.video_player = VideoPlayerWidget()
         self.video_player.setMinimumHeight(200)
+        self.undo_manager.state_changed.connect(self._sync_live_subtitle_on_undo_redo)
         
         self.tm_matches_panel = TMMatchesPanel()
         
@@ -1776,6 +1777,8 @@ class MainWindow(QMainWindow):
                     self.sub_editor.current_editor.text_edit.setText(text)
                 self.sub_editor.render_page()
                 self.sub_editor.live_edit_applied.emit(self.sub_editor.all_segments)
+                if hasattr(self, "video_player") and hasattr(self.video_player, "refresh_current_subtitle"):
+                    self.video_player.refresh_current_subtitle()
 
     def _on_segment_scan_error(self, segment_id, error_msg):
         self.sub_editor.current_editor.text_edit.setPlaceholderText("Nội dung phụ đề...")
@@ -2030,9 +2033,17 @@ class MainWindow(QMainWindow):
             next_source_text=next_orig
         )
 
+    def _sync_live_subtitle_on_undo_redo(self):
+        if hasattr(self, "sub_editor") and hasattr(self.sub_editor, "live_edit_applied"):
+            self.sub_editor.live_edit_applied.emit(self.sub_editor.all_segments)
+        if hasattr(self, "video_player") and hasattr(self.video_player, "refresh_current_subtitle"):
+            self.video_player.refresh_current_subtitle()
+
     def _on_tm_match_applied(self, target_text):
         self.sub_editor.current_editor.text_edit.setPlainText(target_text)
-        self.sub_editor.current_editor._schedule_emit()
+        self.sub_editor.current_editor.commit_pending_edit()
+        if hasattr(self, "video_player") and hasattr(self.video_player, "refresh_current_subtitle"):
+            self.video_player.refresh_current_subtitle()
 
     def _setup_global_shortcuts(self):
         self.shortcut_undo = QShortcut(QKeySequence("Ctrl+Z"), self)

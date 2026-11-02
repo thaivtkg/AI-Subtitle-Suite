@@ -918,7 +918,8 @@ class SubtitleEditorWidget(QWidget):
             self.table.closeEditor(editor, QAbstractItemDelegate.NoHint)
 
     def on_table_edit(self, row, col):
-        if self.is_rendering or self.undo_manager is None: return
+        manager = self._undo_manager()
+        if self.is_rendering or manager is None: return
         
         abs_idx = self._source_index_for_row(row)
         if not (0 <= abs_idx < len(self.all_segments)): return
@@ -954,15 +955,28 @@ class SubtitleEditorWidget(QWidget):
             if raw_text == "[ Chưa có nội dung ]": raw_text = ""
             if new_start != old_start or new_end != old_end:
                 changes = self._build_timing_changes(abs_idx, old_start, old_end, new_start, new_end)
-                self.undo_manager.push(
+                manager.push(
                     EditTimingCommand(changes, data_provider=self.all_segments)
                 )
                 self.live_edit_applied.emit(self.all_segments)
+                main_win = self.window()
+                if hasattr(main_win, "video_player") and hasattr(main_win.video_player, "refresh_current_subtitle"):
+                    main_win.video_player.refresh_current_subtitle()
 
             if segment['text'] != raw_text:
-                self.undo_manager.push(
-                    EditTextCommand(abs_idx, segment['text'], raw_text, self.all_segments)
+                def _on_table_edit_executed():
+                    self.live_edit_applied.emit(self.all_segments)
+                    win = self.window()
+                    if hasattr(win, "video_player") and hasattr(win.video_player, "refresh_current_subtitle"):
+                        win.video_player.refresh_current_subtitle()
+
+                manager.push(
+                    EditTextCommand(abs_idx, segment['text'], raw_text, self.all_segments, on_executed=_on_table_edit_executed)
                 )
+                self.live_edit_applied.emit(self.all_segments)
+                main_win = self.window()
+                if hasattr(main_win, "video_player") and hasattr(main_win.video_player, "refresh_current_subtitle"):
+                    main_win.video_player.refresh_current_subtitle()
                 
             # Emit TM commit
             orig = segment.get("original_text", "").strip()
@@ -1304,7 +1318,8 @@ class SubtitleEditorWidget(QWidget):
         self.segment_scan_requested.emit(seg.get("id"), start_ms, end_ms)
 
     def _apply_current_editor(self, values=None):
-        if self._is_syncing_ui or self._is_applying_current_editor or self.current_index < 0 or self.undo_manager is None:
+        manager = self._undo_manager()
+        if self._is_syncing_ui or self._is_applying_current_editor or self.current_index < 0 or manager is None:
             return
         self._is_applying_current_editor = True
         try:
@@ -1366,17 +1381,30 @@ class SubtitleEditorWidget(QWidget):
                     new_start,
                     new_end,
                 )
-                self.undo_manager.push(
+                manager.push(
                     EditTimingCommand(
                         changes,
                         data_provider=self.all_segments,
                     )
                 )
                 self.live_edit_applied.emit(self.all_segments)
+                main_win = self.window()
+                if hasattr(main_win, "video_player") and hasattr(main_win.video_player, "refresh_current_subtitle"):
+                    main_win.video_player.refresh_current_subtitle()
             if values["text"] != segment["text"]:
-                self.undo_manager.push(
-                    EditTextCommand(abs_idx, segment["text"], values["text"], self.all_segments)
+                def _on_editor_edit_executed():
+                    self.live_edit_applied.emit(self.all_segments)
+                    win = self.window()
+                    if hasattr(win, "video_player") and hasattr(win.video_player, "refresh_current_subtitle"):
+                        win.video_player.refresh_current_subtitle()
+
+                manager.push(
+                    EditTextCommand(abs_idx, segment["text"], values["text"], self.all_segments, on_executed=_on_editor_edit_executed)
                 )
+                self.live_edit_applied.emit(self.all_segments)
+                main_win = self.window()
+                if hasattr(main_win, "video_player") and hasattr(main_win.video_player, "refresh_current_subtitle"):
+                    main_win.video_player.refresh_current_subtitle()
                 
             # Emit TM commit
             orig = segment.get("original_text", "").strip()

@@ -158,6 +158,7 @@ class SubtitleController(QObject):
             return getattr(getattr(x, 'start', None), 'ordinal', 0)
 
         self.subtitles = sorted(parsed_data, key=_get_start)
+        self.live_data = self.subtitles
         
         # [Safety] Kiểm tra danh sách rỗng trước khi nội suy start_times
         if self.subtitles:
@@ -167,4 +168,7 @@ class SubtitleController(QObject):
             
         # Ép Controller quên trạng thái cũ để bắt buộc vẽ lại khung hình hiện tại
         self.current_idx = -1 
+        self.current_stt = None
         self.sync_position(self.last_ms)
+        if hasattr(self, 'video_player') and hasattr(self.video_player, 'refresh_current_subtitle'):
+            self.video_player.refresh_current_subtitle()

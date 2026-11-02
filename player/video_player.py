@@ -310,6 +310,7 @@ class VideoPlayerWidget(QWidget):
         self.player.setVideoOutput(self.video_item)
 
         self.sub_controller = SubtitleController()
+        self.sub_controller.video_player = self
         self.player.positionChanged.connect(self._sync_subtitle_position)
         
         # [FIX CRITICAL] Đã xóa bỏ kết nối subtitle_cleared tại đây.
@@ -450,7 +451,10 @@ class VideoPlayerWidget(QWidget):
             self.sub_controller.sync_position(position)
 
     def get_current_time_ms(self):
-        return self.player.position()
+        pos = self.player.position()
+        if pos == 0 and getattr(self, "_current_pos_ms", 0) > 0:
+            return self._current_pos_ms
+        return pos
 
     def refresh_current_subtitle(self):
         """Ép làm mới lại lớp phủ phụ đề tại vị trí kim thời gian hiện tại."""
@@ -476,6 +480,7 @@ class VideoPlayerWidget(QWidget):
             self.btn_play.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
 
     def position_changed(self, position):
+        self._current_pos_ms = int(position)
         bounds = getattr(self, "_segment_bounds", None)
         playback_active = getattr(self, "_segment_playback_active", False)
         if bounds and playback_active:
@@ -502,7 +507,7 @@ class VideoPlayerWidget(QWidget):
         if hasattr(main_window, 'sub_editor') and hasattr(main_window.sub_editor, 'all_segments'):
             subs = main_window.sub_editor.all_segments
         else:
-            subs = getattr(self.sub_controller, 'subs', []) or getattr(self.sub_controller, 'live_data', [])
+            subs = getattr(self.sub_controller, 'subs', []) or getattr(self.sub_controller, 'live_data', []) or getattr(self.sub_controller, 'subtitles', [])
 
         current_seg = None
 
@@ -578,6 +583,7 @@ class VideoPlayerWidget(QWidget):
         self.update_time_label()
 
     def set_position(self, position):
+        self._current_pos_ms = int(position)
         bounds = getattr(self, "_segment_bounds", None)
         if bounds and not (bounds[0] <= position < bounds[1]):
             self.clear_segment_focus()
