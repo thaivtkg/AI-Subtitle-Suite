@@ -145,6 +145,50 @@ class TestRecentProjectsUI(unittest.TestCase):
         win._refresh_recent_projects_menu.assert_called_once()
         win.page_dashboard.refresh_recent_projects.assert_called_once()
 
+    def test_dashboard_recent_projects_row_click_emits_open(self):
+        """
+        Tác vụ 4: Click vào bất kỳ vị trí nào trên thẻ dự án gần đây (tên, đường dẫn, icon)
+        đều phát tín hiệu open_project_requested.
+        Nút ✕ chỉ phát tín hiệu remove_recent_requested, không mở dự án.
+        """
+        from PySide6.QtCore import Qt, QPoint
+        from PySide6.QtGui import QMouseEvent
+        from PySide6.QtWidgets import QWidget
+
+        add_recent_project("D:/Projects/Gamma.ai-subtitle", "Gamma")
+        page = DashboardPage()
+        page.refresh_recent_projects()
+
+        emitted_open = []
+        emitted_remove = []
+        page.open_project_requested.connect(emitted_open.append)
+        page.remove_recent_requested.connect(emitted_remove.append)
+
+        # Lấy widget hàng đầu tiên trong recent_list_layout
+        self.assertGreater(page.recent_list_layout.count(), 0)
+        row = page.recent_list_layout.itemAt(0).widget()
+        self.assertIsNotNone(row)
+        self.assertEqual(row.cursor().shape(), Qt.PointingHandCursor)
+
+        # Mô phỏng click chuột trái vào hàng
+        press_event = QMouseEvent(
+            QMouseEvent.Type.MouseButtonPress,
+            QPoint(10, 10),
+            Qt.LeftButton,
+            Qt.LeftButton,
+            Qt.NoModifier,
+        )
+        row.mousePressEvent(press_event)
+
+        self.assertEqual(len(emitted_open), 1)
+        self.assertTrue(emitted_open[0].endswith("Gamma.ai-subtitle"))
+
+        # Kiểm tra nút Xóa (✕): chỉ emit remove, không emit open
+        btn_remove = [b for b in row.findChildren(QPushButton) if b.text() == "✕"][0]
+        btn_remove.click()
+        self.assertEqual(len(emitted_remove), 1)
+        self.assertEqual(len(emitted_open), 1)  # Vẫn là 1, không tăng thêm
+
 
 if __name__ == "__main__":
     unittest.main()

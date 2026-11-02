@@ -295,17 +295,20 @@ class DashboardPage(QWidget):
 
         for item in items:
             row = QWidget()
+            row.setCursor(Qt.PointingHandCursor)
             row_layout = QHBoxLayout(row)
             row_layout.setContentsMargins(6, 4, 6, 4)
             row_layout.setSpacing(10)
 
             lbl_icon = QLabel("📁")
+            lbl_icon.setAttribute(Qt.WA_TransparentForMouseEvents, True)
             lbl_icon.setStyleSheet("border: none; font-size: 14px;")
             row_layout.addWidget(lbl_icon)
 
             info_col = QVBoxLayout()
             info_col.setSpacing(2)
             lbl_name = QLabel(item["name"])
+            lbl_name.setAttribute(Qt.WA_TransparentForMouseEvents, True)
             lbl_name.setStyleSheet(
                 f"font-weight: 600; font-size: 12px; color: {Theme.TEXT_PRIMARY}; border: none;"
             )
@@ -315,6 +318,7 @@ class DashboardPage(QWidget):
             display_path = path_text if len(path_text) <= 60 else "..." + path_text[-57:]
             lbl_path = QLabel(display_path)
             lbl_path.setToolTip(path_text)
+            lbl_path.setAttribute(Qt.WA_TransparentForMouseEvents, True)
             lbl_path.setStyleSheet(f"font-size: 11px; color: {Theme.TEXT_MUTED}; border: none;")
             info_col.addWidget(lbl_path)
 
@@ -342,6 +346,10 @@ class DashboardPage(QWidget):
             )
             btn_remove.clicked.connect(lambda _=False, p=item["path"]: self.remove_recent_requested.emit(p))
             row_layout.addWidget(btn_remove)
+
+            row.mousePressEvent = lambda e, p=item["path"]: (
+                self.open_project_requested.emit(p) if e.button() == Qt.LeftButton else None
+            )
 
             row.setStyleSheet(
                 f"QWidget:hover {{ background-color: {Theme.SURFACE_SOFT}; border-radius: 6px; }}"
