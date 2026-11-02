@@ -5,12 +5,18 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules, coll
 
 project_root = os.path.abspath(SPECPATH)
 
-# 1. Thu thập data files & dynamic libs từ các thư viện AI
+# 1. Thu thập data files & dynamic libs từ các thư viện AI và lõi dịch
 datas = []
 datas += collect_data_files('faster_whisper')
 datas += collect_data_files('ctranslate2')
 datas += collect_data_files('huggingface_hub')
 datas += collect_data_files('tokenizers')
+datas += collect_data_files('llama_cpp')
+
+# Đóng gói giao diện QML của CAT Studio
+qml_dir = os.path.join(project_root, 'ui', 'qml_translation')
+if os.path.exists(qml_dir):
+    datas.append((qml_dir, os.path.join('ui', 'qml_translation')))
 
 # Đóng gói FFmpeg và Resources theo đúng Contract của RuntimePaths
 ffmpeg_dir = os.path.join(project_root, 'resources', 'ffmpeg')
@@ -25,6 +31,7 @@ if os.path.exists(resources_dir):
 
 binaries = []
 binaries += collect_dynamic_libs('ctranslate2')
+binaries += collect_dynamic_libs('llama_cpp')
 
 # Loại trừ Poppler ICU xung đột nếu có
 _poppler_icu_names = {'icuuc.dll', 'icudt78.dll'}
@@ -53,8 +60,13 @@ hiddenimports = [
     'PySide6.QtWidgets',
     'PySide6.QtMultimedia',
     'PySide6.QtMultimediaWidgets',
+    'PySide6.QtQuick',
+    'PySide6.QtQuickWidgets',
+    'PySide6.QtQml',
+    'PySide6.QtQuickControls2',
     'faster_whisper',
     'ctranslate2',
+    'llama_cpp',
     'huggingface_hub',
     'tokenizers',
     'torch',
@@ -64,12 +76,15 @@ hiddenimports = [
     'unittest.mock',
     # Modules nội bộ của dự án
     'core',
+    'core.translation',
+    'core.subtitle_generation',
     'player',
     'ui',
     'workers',
 ]
 hiddenimports += collect_submodules('faster_whisper')
 hiddenimports += collect_submodules('ctranslate2')
+hiddenimports += collect_submodules('llama_cpp')
 
 # 3. Phân tích mã nguồn
 a = Analysis(
@@ -98,7 +113,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='AI Subtitle Studio',
+    name='AI Subtitle Suite',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -119,5 +134,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name='AI Subtitle Studio',
+    name='AI Subtitle Suite',
 )
