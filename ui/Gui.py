@@ -2568,6 +2568,10 @@ class MainWindow(QMainWindow):
         self._active_nav_index = original_index
         if original_index == 0 and hasattr(self, "page_dashboard") and hasattr(self.page_dashboard, "refresh_recent_projects"):
             self.page_dashboard.refresh_recent_projects()
+        if original_index == 5 and hasattr(self, "page_export") and hasattr(self, "queue_mgr") and self.queue_mgr.active_vid:
+            if hasattr(self.page_export, "out_edit") and not self.page_export.out_edit.text().strip():
+                import os
+                self.page_export.out_edit.setText(os.path.dirname(self.queue_mgr.active_vid))
         if original_index in (6, 7) and hasattr(self, "page_help"):
             self.page_help.refresh()
 
@@ -3395,6 +3399,25 @@ class MainWindow(QMainWindow):
             return
             
         _, srt_path = self.queue_mgr.get_active_data()
+        all_segs = getattr(self.sub_editor, "all_segments", [])
+        
+        # Tác vụ 1 (PLAN-EXPORT-DELIVERY-REMEDIATION-001): Tự động sinh SRT từ in-memory all_segments nếu chưa có trên đĩa
+        if (not srt_path or not os.path.exists(srt_path) or srt_path.lower().endswith('.ai-subtitle-draft')) and all_segs:
+            from core.subtitle_exporter import SubtitleExportService
+            effective_out_dir = self.page_export.out_edit.text().strip() or self.out_input.text().strip()
+            target_dir = effective_out_dir or (os.path.dirname(self.queue_mgr.active_vid) if self.queue_mgr.active_vid else os.getcwd())
+            os.makedirs(target_dir, exist_ok=True)
+            base_name = os.path.splitext(os.path.basename(self.queue_mgr.active_vid))[0]
+            auto_srt_path = os.path.join(target_dir, f"{base_name}.srt")
+            sub_tuples = []
+            for s in all_segs:
+                start_ms = self.sub_editor.time_str_to_ms(s.get('start', 0)) if hasattr(self.sub_editor, 'time_str_to_ms') else s.get('start_ms', 0)
+                end_ms = self.sub_editor.time_str_to_ms(s.get('end', 0)) if hasattr(self.sub_editor, 'time_str_to_ms') else s.get('end_ms', 0)
+                sub_tuples.append((start_ms, end_ms, s.get('text', '')))
+            SubtitleExportService.export_srt(sub_tuples, auto_srt_path)
+            srt_path = auto_srt_path
+            self.queue_mgr.set_srt_for_video(self.queue_mgr.active_vid, auto_srt_path)
+
         if not srt_path or not os.path.exists(srt_path):
             Toast.show_error(self, "Không tìm thấy file phụ đề SRT tương ứng.")
             return
@@ -4547,8 +4570,7 @@ class MainWindow(QMainWindow):
 
         out_dir = self.page_export.out_edit.text().strip() or self.out_input.text().strip()
         if not out_dir:
-            Toast.show_error(self, "Vui lòng chọn thư mục lưu.")
-            return
+            out_dir = os.path.dirname(self.queue_mgr.active_vid) if self.queue_mgr.active_vid else os.getcwd()
             
         try:
             os.makedirs(out_dir, exist_ok=True)
@@ -4597,6 +4619,9 @@ class MainWindow(QMainWindow):
                 if getattr(self, 'project_service', None) and self.project_service.current_project:
                     self.project_service.current_project.state.export_status = "READY"
                 Toast.show_success(self, f"Đã xuất thành công: {', '.join(exported)}")
+                # Tác vụ 3 (PLAN-EXPORT-DELIVERY-REMEDIATION-001): Liên hoàn Hardsub nếu checkbox được tích
+                if hasattr(self.page_export, 'chk_hardsub') and self.page_export.chk_hardsub.isChecked():
+                    QTimer.singleShot(150, self._trigger_export_hardsub)
             else:
                 Toast.show_info(self, "Vui lòng chọn ít nhất một định dạng xuất.")
         except (OSError, ValueError, RuntimeError) as e:
@@ -4655,13 +4680,13 @@ class MainWindow(QMainWindow):
             if isinstance(e_time, (int, float)):
                 from ui.SubEditor import ms_to_time_str
                 e_time = ms_to_time_str(int(e_time))
-            text = seg.get("text", "")
+            text = seg.get("original_text") or seg.get("text", "")
             if text == "[ Chưa có nội dung ]":
                 text = ""
             srt_lines.append(f"{i}\n{s_time} --> {e_time}\n{text}\n")
         try:
-            with open(save_path, "w", encoding="utf-8") as f:
-                f.write("\n".join(srt_lines).strip() + "\n")
+            from core.utils.file_utils import atomic_save_text
+            atomic_save_text(save_path, "\n".join(srt_lines).strip() + "\n")
             Toast.show_success(self, f"Đã xuất đợt dịch {len(target_segments)} câu (Câu #{start_num} ➔ #{end_num})!")
         except OSError as e:
             Toast.show_error(self, f"Không thể lưu file: {e}")
@@ -4709,7 +4734,9 @@ class MainWindow(QMainWindow):
                     best_diff = diff
                     best_idx = idx
             if best_idx >= 0:
-                # Ghi đè text, giữ nguyên 100% Timing, ID và Style Preset
+                # Ghi đè text, giữ nguyên 100% Timing, ID và Style Preset (Overwrite Guard bảo vệ câu gốc)
+                if not all_segs[best_idx].get("original_text"):
+                    all_segs[best_idx]["original_text"] = all_segs[best_idx].get("text", "")
                 all_segs[best_idx]["text"] = new_text
                 updated_count += 1
                 if best_idx > max_updated_idx:
