@@ -1159,7 +1159,8 @@ Item {
 
                 AppButton {
                     objectName: "btnTranslate"
-                    visible: translationController.status === "PENDING"
+                    visible: translationController.status !== "TRANSLATING" &&
+                             ["TRANSLATED", "EDITED", "ACCEPTED"].indexOf(translationController.status) < 0
                     text: "⚡ Dịch (Ctrl+T)"
                     Layout.alignment: Qt.AlignVCenter
                     Layout.preferredWidth: 112

@@ -170,3 +170,28 @@ def test_flow_cat_studio_empty_queue_guard_in_ui(cat_studio_driver):
     assert ctrl.currentTranslation == ""
 
 
+def test_flow_cat_studio_translate_button_visible_under_draft_or_idle_status(cat_studio_driver):
+    """
+    PLAN-CAT-TRANSLATE-BUTTON-RESTORE-001:
+    Verify that btnTranslate is visible when controller status is DRAFT, IDLE, or other non-translating statuses.
+    """
+    page_widget, cat_page, driver = cat_studio_driver
+    ctrl = page_widget.translation_controller
+
+    # 1. Test under DRAFT status (simulating legacy contamination)
+    ctrl._status = "DRAFT"
+    ctrl.statusChanged.emit("DRAFT")
+    driver.wait_ms(50)
+
+    btn_translate = cat_page.btn_translate_item
+    assert btn_translate is not None, "btnTranslate must exist in QML"
+    driver.assert_visible(btn_translate, True)
+
+    # 2. Test under IDLE status
+    ctrl._status = "IDLE"
+    ctrl.statusChanged.emit("IDLE")
+    driver.wait_ms(50)
+    driver.assert_visible(btn_translate, True)
+
+
+
