@@ -31,3 +31,22 @@ def atomic_save_json(filepath: str, data: dict) -> None:
         if os.path.exists(temp_path):
             os.remove(temp_path)
         raise e
+
+
+def atomic_save_text(filepath: str, content: str) -> None:
+    """Lưu Text nguyên tử (Atomic Save) bảo đảm an toàn dữ liệu khi mất điện/crash."""
+    dir_name = os.path.dirname(filepath)
+    if dir_name:
+        os.makedirs(dir_name, exist_ok=True)
+    suffix = os.path.splitext(filepath)[1] or ".tmp"
+    fd, temp_path = tempfile.mkstemp(dir=dir_name, prefix="tmp_save_", suffix=suffix)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, filepath)
+    except Exception as e:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise e

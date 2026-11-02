@@ -52,8 +52,11 @@ class WaveformService:
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         raw_audio, _ = process.communicate()
 
-        if not raw_audio:
-            raise ValueError("Không thể trích xuất luồng âm thanh từ video này.")
+        if not raw_audio or len(raw_audio) == 0:
+            # Fallback an toàn cho video câm (không có audio track) hoặc rỗng
+            dummy_peaks = np.zeros((100, 2), dtype=np.float32)
+            np.save(str(cache_file), dummy_peaks)
+            return dummy_peaks
 
         # Đọc luồng byte thẳng vào mảng Numpy RAM
         audio_data = np.frombuffer(raw_audio, dtype=np.int16)
@@ -63,7 +66,10 @@ class WaveformService:
         num_chunks = len(audio_data) // samples_per_chunk
 
         if num_chunks == 0:
-            raise ValueError("Video quá ngắn để hiển thị sóng âm.")
+            # Fallback an toàn cho video quá ngắn
+            dummy_peaks = np.zeros((100, 2), dtype=np.float32)
+            np.save(str(cache_file), dummy_peaks)
+            return dummy_peaks
 
         # Cắt gọt mảng cho vừa khít số lượng Chunk và Reshape thành ma trận 2D
         audio_data = audio_data[:num_chunks * samples_per_chunk]

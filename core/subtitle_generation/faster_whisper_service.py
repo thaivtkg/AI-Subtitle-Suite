@@ -6,6 +6,7 @@ from typing import Callable, Optional, Tuple
 
 from core.subtitle_generation.subtitle_generation_batch import SubtitleGenerationBatch
 from core.subtitle_generation.subtitle_generation_request import SubtitleGenerationRequest
+from core.subtitle_generation.generation_validator import SubtitleGenerationValidator
 from core.subtitle_generation.subtitle_generation_result import (
     SubtitleGenerationResult,
     WhisperSegmentResult,
@@ -137,6 +138,7 @@ class FasterWhisperService:
                         words=words,
                     )
                 )
+            results = SubtitleGenerationValidator.validate(results, batch.start_ms, batch.end_ms)
             return SubtitleGenerationResult(batch.batch_id, results)
         except Exception as exc:
             return SubtitleGenerationResult(batch.batch_id, [], str(exc))

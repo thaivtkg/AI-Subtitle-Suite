@@ -1,4 +1,5 @@
 import os
+from core.utils.file_utils import atomic_save_text
 
 class SubtitleExportService:
     """
@@ -43,44 +44,48 @@ class SubtitleExportService:
 
     @classmethod
     def export_srt(cls, subtitles, output_path):
-        """ Xuất danh sách Subtitle ra định dạng chuẩn .srt """
+        """ Xuất danh sách Subtitle ra định dạng chuẩn .srt bằng atomic_save_text """
         cls.validate_output_path(output_path)
         try:
-            with open(output_path, 'w', encoding='utf-8') as f:
-                for i, (start, end, text) in enumerate(subtitles, 1):
-                    start_str = cls.ms_to_srt_time(start)
-                    end_str = cls.ms_to_srt_time(end)
-                    # Text rỗng vẫn hợp lệ, in ra 1 dòng trắng. Multiline được bảo toàn nguyên vẹn.
-                    f.write(f"{i}\n{start_str} --> {end_str}\n{text}\n\n")
+            lines = []
+            for i, (start, end, text) in enumerate(subtitles, 1):
+                start_str = cls.ms_to_srt_time(start)
+                end_str = cls.ms_to_srt_time(end)
+                lines.append(f"{i}\n{start_str} --> {end_str}\n{text}\n\n")
+            atomic_save_text(output_path, "".join(lines))
             return True
         except Exception as e:
             raise RuntimeError(f"Lỗi khi xuất file SRT: {str(e)}")
 
     @classmethod
     def export_vtt(cls, subtitles, output_path):
-        """ Xuất danh sách Subtitle ra định dạng WebVTT (.vtt) """
+        """ Xuất danh sách Subtitle ra định dạng WebVTT (.vtt) bằng atomic_save_text """
         cls.validate_output_path(output_path)
         try:
-            with open(output_path, 'w', encoding='utf-8') as f:
-                f.write("WEBVTT\n\n")
-                for i, (start, end, text) in enumerate(subtitles, 1):
-                    start_str = cls.ms_to_vtt_time(start)
-                    end_str = cls.ms_to_vtt_time(end)
-                    f.write(f"{i}\n{start_str} --> {end_str}\n{text}\n\n")
+            lines = ["WEBVTT\n\n"]
+            for i, (start, end, text) in enumerate(subtitles, 1):
+                start_str = cls.ms_to_vtt_time(start)
+                end_str = cls.ms_to_vtt_time(end)
+                lines.append(f"{i}\n{start_str} --> {end_str}\n{text}\n\n")
+            atomic_save_text(output_path, "".join(lines))
             return True
         except Exception as e:
             raise RuntimeError(f"Lỗi khi xuất file VTT: {str(e)}")
 
     @classmethod
     def export_txt(cls, subtitles, output_path):
-        """ Xuất Transcript (.txt) (Chỉ lấy nội dung, bỏ qua Timecode và câu rỗng) """
+        """ Xuất Transcript (.txt) bằng atomic_save_text """
         cls.validate_output_path(output_path)
         try:
-            with open(output_path, 'w', encoding='utf-8') as f:
-                for _, _, text in subtitles:
-                    # Bỏ qua các câu rỗng (thuộc chế độ Timing Draft) để transcript không bị thủng lỗ
-                    if text.strip():
-                        f.write(f"{text}\n")
+            lines = []
+            for _, _, text in subtitles:
+                if text.strip():
+                    lines.append(f"{text}\n")
+            atomic_save_text(output_path, "".join(lines))
             return True
         except Exception as e:
             raise RuntimeError(f"Lỗi khi xuất file TXT: {str(e)}")
+
+
+# Bí danh tương thích ngược
+SubtitleExporter = SubtitleExportService

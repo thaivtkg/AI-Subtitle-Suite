@@ -139,12 +139,15 @@ class SubtitleController(QObject):
 
     def time_str_to_ms(self, time_str):
         try:
+            if not time_str or not isinstance(time_str, str):
+                return 0
             time_str = time_str.strip()
-            parts = time_str.replace(',', ':').split(':')
+            parts = time_str.replace(',', ':').replace('.', ':').split(':')
             if len(parts) == 4:
                 h, m, s, ms = int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3])
                 return (h * 3600 + m * 60 + s) * 1000 + ms
-        except:
+            return 0
+        except Exception:
             return 0
 
     def update_live_data(self, parsed_data):

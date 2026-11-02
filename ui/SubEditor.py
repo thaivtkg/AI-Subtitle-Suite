@@ -896,8 +896,14 @@ class SubtitleEditorWidget(QWidget):
     def sync_to_controller(self):
         data = []
         for seg in self.all_segments:
-            start_ms = self.time_str_to_ms(seg['start'])
-            end_ms = self.time_str_to_ms(seg['end'])
+            try:
+                start_ms = self.time_str_to_ms(seg['start'])
+            except Exception:
+                start_ms = seg.get('start_ms', 0)
+            try:
+                end_ms = self.time_str_to_ms(seg['end'])
+            except Exception:
+                end_ms = seg.get('end_ms', 0)
             raw_text = seg['text']
             if not raw_text.strip() or raw_text == "[ Chưa có nội dung ]": raw_text = "[ Chưa có nội dung ]"
             try: stt = int(seg['stt'])

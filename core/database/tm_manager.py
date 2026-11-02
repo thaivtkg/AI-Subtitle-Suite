@@ -1,6 +1,7 @@
 import sqlite3
 import re
 import difflib
+import threading
 from pathlib import Path
 from typing import List, Optional
 from enum import Enum
@@ -23,15 +24,19 @@ class TMMatch:
 
 class TranslationMemoryManager:
     def __init__(self, db_path: Optional[str] = None):
-        if db_path == ":memory:":
-            self.db_path = ":memory:"
+        self._lock = threading.Lock()
+        if db_path is not None:
+            self.db_path = str(db_path)
         else:
             self.db_path = str(RuntimePaths.get_tm_db_file())
+            
+        if self.db_path != ":memory:":
             Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
             
-        self.conn = sqlite3.connect(self.db_path)
+        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
-        self._init_db()
+        with self._lock:
+            self._init_db()
         
     def _init_db(self):
         c = self.conn.cursor()
@@ -110,15 +115,16 @@ class TranslationMemoryManager:
         lang_pair = lang_pair.strip() if lang_pair else ""
         domain = domain.strip() if domain else ""
         
-        c = self.conn.cursor()
-        c.execute("""
-            INSERT INTO tm_segments (source_text, target_text, prev_source_text, next_source_text, lang_pair, domain, project_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(source_text, target_text, prev_source_text, next_source_text, lang_pair, domain) DO UPDATE SET
-                usage_count = usage_count + 1,
-                last_used_at = CURRENT_TIMESTAMP
-        """, (source_text, target_text, prev_source_text, next_source_text, lang_pair, domain, project_id))
-        self.conn.commit()
+        with self._lock:
+            c = self.conn.cursor()
+            c.execute("""
+                INSERT INTO tm_segments (source_text, target_text, prev_source_text, next_source_text, lang_pair, domain, project_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source_text, target_text, prev_source_text, next_source_text, lang_pair, domain) DO UPDATE SET
+                    usage_count = usage_count + 1,
+                    last_used_at = CURRENT_TIMESTAMP
+            """, (source_text, target_text, prev_source_text, next_source_text, lang_pair, domain, project_id))
+            self.conn.commit()
 
     def _sanitize_for_fts(self, text: str) -> str:
         # Extract alphanumeric sequences and join with OR
@@ -140,22 +146,23 @@ class TranslationMemoryManager:
         if not source_text:
             return []
             
-        c = self.conn.cursor()
-        results = []
-        
-        # 1. Exact and Context Matches
-        query_params = [source_text]
-        filters = ["source_text = ?"]
-        
-        if lang_pair:
-            filters.append("lang_pair = ?")
-            query_params.append(lang_pair)
-        if domain:
-            filters.append("domain = ?")
-            query_params.append(domain)
+        with self._lock:
+            c = self.conn.cursor()
+            results = []
             
-        c.execute(f"SELECT * FROM tm_segments WHERE {' AND '.join(filters)}", query_params)
-        exact_rows = c.fetchall()
+            # 1. Exact and Context Matches
+            query_params = [source_text]
+            filters = ["source_text = ?"]
+            
+            if lang_pair:
+                filters.append("lang_pair = ?")
+                query_params.append(lang_pair)
+            if domain:
+                filters.append("domain = ?")
+                query_params.append(domain)
+                
+            c.execute(f"SELECT * FROM tm_segments WHERE {' AND '.join(filters)}", query_params)
+            exact_rows = c.fetchall()
         
         for row in exact_rows:
             is_context_match = False
@@ -183,15 +190,16 @@ class TranslationMemoryManager:
             return []
             
         # Retrieve candidates based on FTS MATCH, limit to 50 for performance
-        c.execute("""
-            SELECT tm_segments.* 
-            FROM tm_search 
-            JOIN tm_segments ON tm_search.rowid = tm_segments.id
-            WHERE tm_search MATCH ?
-            LIMIT 50
-        """, (sanitized_query,))
-        
-        candidate_rows = c.fetchall()
+        with self._lock:
+            c = self.conn.cursor()
+            c.execute("""
+                SELECT tm_segments.* 
+                FROM tm_search 
+                JOIN tm_segments ON tm_search.rowid = tm_segments.id
+                WHERE tm_search MATCH ?
+                LIMIT 50
+            """, (sanitized_query,))
+            candidate_rows = c.fetchall()
         
         for row in candidate_rows:
             candidate_source = row['source_text']
@@ -214,4 +222,5 @@ class TranslationMemoryManager:
         return results[:max_results]
 
     def close(self):
-        self.conn.close()
+        with self._lock:
+            self.conn.close()
