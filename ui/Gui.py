@@ -2621,6 +2621,20 @@ class MainWindow(QMainWindow):
         # Tự động cấy kính lỏng cho các danh sách trên trang mới
         self._apply_liquid_to_all_listboxes()
 
+        # Tự động cập nhật trạng thái tab hiện hành vào workspace và lưu tức thì
+        if hasattr(self, 'workspace_service') and getattr(getattr(self, 'project_service', None), 'current_project', None):
+            self.workspace_service.capture_workspace()
+            try:
+                from dataclasses import asdict
+                from core.utils.file_utils import atomic_save_json
+                proj_dir = getattr(self.project_service, 'project_dir', None)
+                if proj_dir and os.path.exists(proj_dir):
+                    ws_file = os.path.join(proj_dir, "workspace.json")
+                    ws_data = asdict(self.project_service.current_project.state.workspace)
+                    atomic_save_json(ws_file, ws_data)
+            except Exception:
+                pass
+
     def _on_apply_recommended_hardware_config(self, model: str, compute: str):
         if hasattr(self, "generation_panel"):
             self.generation_panel.apply_recommended_settings(model, compute)
