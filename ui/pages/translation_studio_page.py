@@ -143,8 +143,11 @@ class TranslationStudioPage(QWidget):
 
         for idx in target_indices:
             s = studio_segments[idx]
-            # Bỏ qua các câu đã duyệt khi nạp toàn bộ từ Timeline (chỉ nạp câu cần dịch)
-            if selected_indices is None and s.get("translation_status") == "ACCEPTED":
+            raw_status = s.get("translation_status") or s.get("status")
+            status = raw_status if raw_status else ("PENDING" if not s.get("translation") else "TRANSLATED")
+            # CAT Queue Invariant: Khi nap chu dong tu Timeline (selected_indices is None),
+            # chi nap cac cau chua duyet. Bo qua cac cau da duyet (ACCEPTED).
+            if selected_indices is None and str(status).upper() == "ACCEPTED":
                 continue
             cat_data.append({
                 "segment_id": str(s.get("id", idx)),
@@ -154,7 +157,7 @@ class TranslationStudioPage(QWidget):
                 "end_time": _fmt_time(s.get("end")),
                 "original": s.get("original_text") or s.get("text", ""),
                 "translation": s.get("translation", ""),
-                "status": s.get("translation_status", "PENDING" if not s.get("translation") else "TRANSLATED"),
+                "status": status,
             })
         self.subtitle_model.load_data(cat_data)
         from core.translation.core.context_analyzer import ContextAnalyzer
@@ -241,7 +244,3 @@ class TranslationStudioPage(QWidget):
         """Nạp tệp .aisrt bảo toàn 100% Glossary, TM và tiến độ dịch."""
         if os.path.exists(file_path):
             self.project_controller.loadProject(file_path)
-            if self.subtitle_model.rowCount() > 0:
-                self.translation_controller.loadSubtitle(0)
-            else:
-                self.translation_controller.loadSubtitle(-1)

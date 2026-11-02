@@ -436,6 +436,10 @@ class ProjectController(QObject):
     def bind_translation_controller(self, translation_controller):
         self._translation_controller = translation_controller
 
+    @property
+    def translation_controller(self):
+        return self._translation_controller
+
     @Slot(result=bool)
     def closeProject(self):
         """Đóng dự án hiện tại, giải phóng dữ liệu phụ đề và quay về màn hình khởi động (StudioLaunchpad)."""
@@ -810,8 +814,8 @@ class ProjectController(QObject):
             
         clean_subtitles = [
             {k: v for k, v in sub.items() if not k.startswith("_")}
-            for sub in self._subtitle_model.get_all_data()
-            if sub.get("status") != "ACCEPTED"
+            for sub in (self._subtitle_model.get_all_data() if self._subtitle_model else [])
+            if str(sub.get("status", "")).upper() != "ACCEPTED"
         ]
 
         intelligence = {
@@ -929,13 +933,16 @@ class ProjectController(QObject):
                         sub["status"] = "ACCEPTED"
                 is_healed_vi = True
 
-            # AUD-FILTER-001: Hàng đợi CAT Studio chỉ nạp các câu chưa duyệt.
-            # Các câu đã DUYỆT (ACCEPTED) đã hoàn tất trên Timeline và lưu trong TM, không nạp vào hàng đợi.
-            clean_pending_subs = [
+            # CAT Queue Invariant: Chỉ nạp các câu chưa duyệt (PENDING, TRANSLATING, TRANSLATED, ERROR)
+            pending_subtitles = [
                 sub for sub in subtitles
-                if isinstance(sub, dict) and sub.get("status") != "ACCEPTED"
+                if isinstance(sub, dict) and str(sub.get("status", "")).upper() != "ACCEPTED"
             ]
-            self._subtitle_model.load_data(clean_pending_subs)
+            self._subtitle_model.load_data(pending_subtitles)
+            if len(pending_subtitles) == 0:
+                tc = getattr(self, "_translation_controller", None) or getattr(self, "translation_controller", None)
+                if tc and hasattr(tc, "loadSubtitle"):
+                    tc.loadSubtitle(-1)
             self.glossary = loaded_glossary
             self.entity_dictionary = loaded_entities
             self.translation_memory = loaded_tm
@@ -946,7 +953,7 @@ class ProjectController(QObject):
             self._is_ja_origin = loaded_is_ja
             self.archetypeChanged.emit()
             self.glossaryChanged.emit()
-            print(f"[PROJECT_LOAD] Loaded {len(clean_pending_subs)} pending subtitles from {os.path.basename(file_path)} (excluded {len(subtitles) - len(clean_pending_subs)} accepted)")
+            print(f"[PROJECT_LOAD] Loaded {len(subtitles)} subtitles from {os.path.basename(file_path)}")
             self.projectLoaded.emit(story_summary)
             
             # --- ĐOẠN ĐÃ SỬA: DỌN DẸP DUPLICATE EMIT ---
