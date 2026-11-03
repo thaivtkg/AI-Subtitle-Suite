@@ -51,8 +51,6 @@ class TimelineController(QObject):
 
         if self.selection_controller:
             self.selection_controller.selection_changed.connect(self.sync_selection)
-            if hasattr(self.selection_controller, "multi_selection_changed"):
-                self.selection_controller.multi_selection_changed.connect(self.sync_multi_selection)
             activation_signal = getattr(
                 self.selection_controller, "editor_activation_requested", None
             )
@@ -103,23 +101,6 @@ class TimelineController(QObject):
         self.ui.container.waveform.set_selected_range(segment.start_ms, segment.end_ms)
         if hasattr(self.ui, "center_on_time"):
             self.ui.center_on_time((segment.start_ms + segment.end_ms) // 2)
-
-    def sync_multi_selection(self, indices, segment_ids, source=None):
-        if getattr(self, "_syncing_track_selection", False):
-            return
-        if source == SelectionSource.TIMELINE:
-            return
-        if hasattr(self.ui, "clear_gap_selection"):
-            self.ui.clear_gap_selection()
-
-        track = self.ui.container.track
-        if not segment_ids:
-            return
-
-        track.set_selection(set(segment_ids))
-        track.update()
-        if hasattr(self.ui, "refresh_segment_focus"):
-            self.ui.refresh_segment_focus()
 
     def sync_selection(self, index, segment_id, source=None):
         if getattr(self, "_syncing_track_selection", False):
@@ -177,16 +158,6 @@ class TimelineController(QObject):
                 segment_id = next(iter(selected_ids))
                 index = next((i for i, s in enumerate(track.segments) if s.segment_id == segment_id), -1)
                 self.selection_controller.select(index, segment_id, SelectionSource.TIMELINE)
-            elif len(selected_ids) > 1:
-                indices = [i for i, s in enumerate(track.segments) if s.segment_id in selected_ids]
-                self._syncing_track_selection = True
-                try:
-                    if hasattr(self.selection_controller, "select_multiple"):
-                        self.selection_controller.select_multiple(indices, selected_ids, SelectionSource.TIMELINE)
-                    else:
-                        self.selection_controller.clear_selection(SelectionSource.TIMELINE)
-                finally:
-                    self._syncing_track_selection = False
             else:
                 self._syncing_track_selection = True
                 try:
