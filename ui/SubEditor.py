@@ -1526,7 +1526,7 @@ class SubtitleEditorWidget(QWidget):
                 self.current_index = new_idx
                 new_seg = self.all_segments[new_idx]
                 if getattr(self, "selection_controller", None) and new_seg.get("id"):
-                    self.selection_controller.set_selected_id(new_seg.get("id"))
+                    self.selection_controller.select(new_idx, new_seg.get("id"), SelectionSource.EDITOR)
                 if hasattr(self, "render_page"):
                     self.render_page()
 

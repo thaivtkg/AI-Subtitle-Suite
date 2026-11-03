@@ -314,7 +314,7 @@ class SubtitleTrack(QWidget):
         font = QFont("Segoe UI", 9)
         painter.setFont(font)
 
-        for seg in self.segments:
+        for seg_idx, seg in enumerate(self.segments):
             if seg.end_ms < start_ms: continue
             if seg.start_ms > end_ms: break
 
@@ -361,30 +361,70 @@ class SubtitleTrack(QWidget):
 
             x1 = self._ms_to_x(render_start_ms)
             x2 = self._ms_to_x(render_end_ms)
-            seg_rect = QRect(x1, 5, max(1, x2 - x1), self.height() - 10)
+            pad = 1 if (x2 - x1) > 4 else 0
+            seg_rect = QRect(x1 + pad, 5, max(1, x2 - x1 - pad * 2), self.height() - 10)
 
             is_selected = seg.segment_id in self.selected_ids
             is_hovered = seg.segment_id == self.hovered_id
 
-            bg_color = QColor(Theme.PRIMARY_PURPLE) if is_selected else QColor(Theme.SURFACE_ELEVATED)
-            border_color = QColor(Theme.CYAN) if is_selected else (QColor(Theme.TEXT_SECONDARY) if is_hovered else QColor(Theme.BORDER))
+            if is_selected:
+                bg_color = QColor(Theme.PRIMARY_PURPLE)
+                border_color = QColor(Theme.CYAN)
+                pen_w = 2
+            elif is_hovered:
+                bg_color = QColor(Theme.SURFACE_SOFT)
+                border_color = QColor(Theme.TEXT_SECONDARY)
+                pen_w = 1
+            else:
+                bg_color = QColor(Theme.SURFACE_ELEVATED)
+                border_color = QColor("#3B4863")
+                pen_w = 1
             
             if is_dragging:
                 bg_color.setAlpha(150)
                 border_color = QColor(Theme.WARNING)
-            elif is_hovered and not is_selected:
-                bg_color = QColor(Theme.SURFACE_SOFT)
 
             painter.setBrush(QBrush(bg_color))
-            painter.setPen(QPen(border_color, 1))
+            painter.setPen(QPen(border_color, pen_w))
             painter.drawRoundedRect(seg_rect, 4, 4)
 
+            # STT Badge (#1, #2, ...) & text
+            cur_x = seg_rect.x() + 5
+            raw_data = seg.get_raw_dict() if hasattr(seg, "get_raw_dict") else (seg if isinstance(seg, dict) else {})
+            stt_str = str(raw_data.get("stt") or raw_data.get("index") or (seg_idx + 1))
+            badge_text = f"#{stt_str}"
+
+            if seg_rect.width() >= 36:
+                badge_font = QFont("Segoe UI", 8)
+                badge_font.setBold(True)
+                painter.setFont(badge_font)
+                fm_b = painter.fontMetrics()
+                badge_w = fm_b.horizontalAdvance(badge_text) + 8
+                badge_h = min(18, seg_rect.height() - 8)
+                badge_y = seg_rect.y() + (seg_rect.height() - badge_h) // 2
+
+                if seg_rect.width() >= badge_w + 16:
+                    badge_rect = QRect(cur_x, badge_y, badge_w, badge_h)
+                    badge_bg = QColor(0, 0, 0, 90) if is_selected else QColor(255, 255, 255, 18)
+                    badge_border = QColor(255, 255, 255, 50) if is_selected else QColor(255, 255, 255, 30)
+
+                    painter.setBrush(QBrush(badge_bg))
+                    painter.setPen(QPen(badge_border, 1))
+                    painter.drawRoundedRect(badge_rect, 3, 3)
+
+                    painter.setPen(QColor(Theme.CYAN if is_selected else Theme.TEXT_SECONDARY))
+                    painter.drawText(badge_rect, Qt.AlignCenter, badge_text)
+                    cur_x += badge_w + 5
+
+            painter.setFont(font)
             painter.setPen(QColor(Theme.TEXT_PRIMARY))
-            text_rect = seg_rect.adjusted(5, 0, -5, 0)
-            painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, painter.fontMetrics().elidedText(seg.text, Qt.ElideRight, text_rect.width()))
+            avail_text_w = seg_rect.right() - cur_x - 5
+            if avail_text_w > 8:
+                text_rect = QRect(cur_x, seg_rect.y(), avail_text_w, seg_rect.height())
+                painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, painter.fontMetrics().elidedText(seg.text, Qt.ElideRight, text_rect.width()))
 
             # Draw OVERLAP warning if overlapping with NEXT segment
-            idx = self.segments.index(seg)
+            idx = seg_idx
             if idx < len(self.segments) - 1:
                 next_seg = self.segments[idx + 1]
                 if render_end_ms > next_seg.start_ms:
