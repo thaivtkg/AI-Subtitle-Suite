@@ -123,27 +123,27 @@ class SubtitleTrack(QWidget):
                 self.gap_clicked.emit(gap)
                 super().mousePressEvent(event)
                 return
-            is_ctrl = event.modifiers() == Qt.ControlModifier
+            is_multi = bool(event.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier))
             
             if seg:
-                if is_ctrl:
+                if is_multi:
                     if seg.segment_id in self.selected_ids:
                         self.selected_ids.remove(seg.segment_id)
                     else:
                         self.selected_ids.add(seg.segment_id)
+                    self.edit_mode = EditMode.NONE
                 else:
                     if seg.segment_id not in self.selected_ids:
                         self.selected_ids = {seg.segment_id}
+                    self.edit_mode = mode
+                    self.drag_segment_id = seg.segment_id
+                    self.drag_start_x = event.pos().x()
+                    self.current_delta_ms = 0
+                    if mode == EditMode.MOVE:
+                        self.setCursor(Qt.ClosedHandCursor)
                         
                 self.update()
-                
-                self.edit_mode = mode
-                self.drag_segment_id = seg.segment_id
-                self.drag_start_x = event.pos().x()
-                self.current_delta_ms = 0
-                self.segment_clicked.emit(seg.segment_id, is_ctrl)
-                if mode == EditMode.MOVE:
-                    self.setCursor(Qt.ClosedHandCursor)
+                self.segment_clicked.emit(seg.segment_id, is_multi)
             else:
                 self.selected_ids.clear()
                 self.update()
