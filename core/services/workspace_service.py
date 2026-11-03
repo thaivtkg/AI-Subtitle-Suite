@@ -150,6 +150,17 @@ class WorkspaceService:
                 QTimer.singleShot(500, lambda: self._apply_video_position(workspace.playback_position_ms))
             else:
                 print(f"Không tìm thấy file video gốc: {video_path}")
+                active_art_id = project.state.active_artifact_id
+                if active_art_id:
+                    artifact = self.project_service.artifact_store.get(active_art_id)
+                    if artifact and os.path.exists(artifact.path):
+                        target_artifact_path = os.path.normpath(artifact.path)
+                        if target_artifact_path.endswith(".sub.json"):
+                            shadow_path = target_artifact_path.replace(".sub.json", "_shadow.srt")
+                            if os.path.exists(shadow_path):
+                                target_artifact_path = shadow_path
+                        self.ui._load_context_subtitles(target_artifact_path)
+                        print(f"[DEBUG] Đã nạp Artifact khi không có video: {target_artifact_path}")
         except Exception as e:
             print(f"Lỗi khi khôi phục Video: {e}")
 

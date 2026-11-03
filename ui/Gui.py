@@ -472,6 +472,7 @@ class MainWindow(QMainWindow):
         project_menu.addAction("📂  Mở Dự Án...", self.action_open_project)
         self.menu_recent = project_menu.addMenu("🕒  Mở Dự Án Gần Đây")
         project_menu.addAction("💾  Lưu Dự Án", self.action_save_project)
+        self.action_relink_video = project_menu.addAction("🔗  Định Vị Lại Video Gốc...", self._action_relink_video)
         project_menu.addSeparator()
         project_menu.addAction("🌐  Nhập từ URL (New)...", self._on_new_from_url)
         project_menu.addAction("➕  Thêm URL vào Queue...", self._on_add_url_to_queue)
@@ -5319,6 +5320,73 @@ class MainWindow(QMainWindow):
             return
         self._open_project_by_path(project_dir)
 
+    def _action_relink_video(self):
+        """Cho phép người dùng định vị lại hoặc thay đổi video nguồn cho dự án hiện tại."""
+        cur = getattr(self.project_service, 'current_project', None)
+        if not cur or not self.project_service.project_dir:
+            Toast.show_warning(self, "Chưa có dự án nào đang mở để định vị lại video.")
+            return
+
+        proj_dir = self.project_service.project_dir
+        old_path = cur.source.path if hasattr(cur, 'source') else ""
+        initial_dir = os.path.dirname(old_path) if old_path and os.path.exists(os.path.dirname(old_path)) else ""
+
+        filter_str = "Video Files (*.mp4 *.mkv *.avi *.mov *.flv *.webm *.ts *.wmv);;All Files (*.*)"
+        new_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Định vị lại Video nguồn cho Dự án",
+            initial_dir,
+            filter_str,
+        )
+        if not new_path or not os.path.exists(new_path):
+            return
+
+        new_path = os.path.normpath(new_path)
+        from core.project.source_fingerprint import generate_source_info
+        new_source = generate_source_info(new_path)
+        is_same_hash = (new_source.fingerprint == cur.source.fingerprint)
+
+        if not is_same_hash:
+            reply = QMessageBox.question(
+                self,
+                "Xác nhận thay đổi Video",
+                "Tệp video mới được chọn có mã băm (Hash) khác với video ban đầu.\n\n"
+                "Thời lượng hoặc nhịp câu phụ đề có thể không hoàn toàn khớp.\n"
+                "Bạn có chắc chắn muốn liên kết dự án với video này không?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
+
+        self.project_service.relink_project_video(proj_dir, new_path, force=True)
+        if hasattr(self, 'video_player') and hasattr(self.video_player, 'load_video'):
+            self.video_player.load_video(new_path)
+
+        self._queue_project_dirs[new_path] = proj_dir
+
+        dur_ms = 0
+        if hasattr(self, 'video_player') and hasattr(self.video_player, 'player'):
+            dur_ms = self.video_player.player.duration()
+        if dur_ms <= 0:
+            from workers.TaskQueue import get_video_duration
+            try:
+                dur_sec = get_video_duration(new_path)
+                if dur_sec > 0:
+                    dur_ms = int(dur_sec * 1000)
+            except Exception:
+                pass
+
+        if dur_ms > 0:
+            self.timeline_data_provider.load_runtime_data(self.sub_editor.all_segments, dur_ms)
+            self.timeline_widget.load_project_data(
+                dur_ms,
+                self.timeline_data_provider.get_all_segments(),
+            )
+            self.generation_panel.set_video_duration(dur_ms)
+
+        Toast.show_success(self, f"Đã liên kết video thành công:\n{os.path.basename(new_path)}")
+
     def _open_project_by_path(self, project_dir: str) -> bool:
         """Mở một dự án từ đường dẫn thư mục bundle (.ai-subtitle)."""
         if not project_dir or not os.path.exists(project_dir):
@@ -5329,6 +5397,71 @@ class MainWindow(QMainWindow):
                 self.page_dashboard.refresh_recent_projects()
             Toast.show_error(self, f"Thư mục dự án không còn tồn tại:\n{project_dir}")
             return False
+
+        # Kiểm tra tính sẵn sàng của video nguồn (Source Verification & Relink)
+        allow_missing = False
+        relink_path = None
+        try:
+            source_info, current_vid, is_valid, suggested_cand = self.project_service.probe_project_source(project_dir)
+        except Exception:
+            is_valid = True
+            suggested_cand = None
+
+        if not is_valid:
+            auto_relocated = False
+            # Tầng 1: Tự động kiểm tra file lân cận khớp mã Hash 100% (Zero-Click Auto Relocate)
+            if suggested_cand and os.path.exists(suggested_cand):
+                try:
+                    from core.project.source_fingerprint import generate_source_info
+                    cand_info = generate_source_info(suggested_cand)
+                    if cand_info.fingerprint == source_info.fingerprint:
+                        self.project_service.relink_project_video(project_dir, suggested_cand)
+                        relink_path = suggested_cand
+                        auto_relocated = True
+                        Toast.show_success(
+                            self,
+                            f"Đã tự động định vị lại video tại:\n{os.path.basename(suggested_cand)}"
+                        )
+                except Exception:
+                    pass
+
+            # Tầng 2: Hộp thoại Khôi phục (MissingMediaDialog)
+            if not auto_relocated:
+                from ui.dialogs.missing_media_dialog import MissingMediaDialog
+                proj_name = os.path.basename(project_dir).replace(".ai-subtitle", "")
+                dialog = MissingMediaDialog(
+                    project_name=proj_name,
+                    missing_path=current_vid,
+                    suggested_path=suggested_cand,
+                    parent=self,
+                )
+                dialog.exec()
+                if dialog.result_action == "RELINK" and dialog.selected_video_path:
+                    selected_path = dialog.selected_video_path
+                    from core.project.source_fingerprint import generate_source_info
+                    try:
+                        sel_info = generate_source_info(selected_path)
+                        if sel_info.fingerprint != source_info.fingerprint:
+                            reply = QMessageBox.question(
+                                self,
+                                "Xác nhận thay đổi Video",
+                                "Tệp video mới được chọn có mã băm (Hash) khác với video ban đầu.\n\n"
+                                "Thời lượng hoặc nhịp câu phụ đề có thể không hoàn toàn khớp.\n"
+                                "Bạn có chắc chắn muốn liên kết dự án với video này không?",
+                                QMessageBox.Yes | QMessageBox.No,
+                                QMessageBox.No,
+                            )
+                            if reply != QMessageBox.Yes:
+                                return False
+                        self.project_service.relink_project_video(project_dir, selected_path, force=True)
+                        relink_path = selected_path
+                    except Exception as exc:
+                        Toast.show_error(self, f"Không thể liên kết video:\n{exc}")
+                        return False
+                elif dialog.result_action == "OPEN_WITHOUT_VIDEO":
+                    allow_missing = True
+                else:  # CANCEL
+                    return False
 
         try:
             if not self._prepare_recovery_session_switch():
@@ -5341,7 +5474,11 @@ class MainWindow(QMainWindow):
             # 2. KHÓA RENDER: Chặn UI tự động co giãn khi nhồi dữ liệu lớn vào Table/Timeline
             self.page_workspace.setUpdatesEnabled(False)
 
-            self.project_service.open_project(project_dir)
+            self.project_service.open_project(
+                project_dir,
+                allow_missing_video=allow_missing,
+                relink_video_path=relink_path
+            )
             self._complete_recovery_session_switch()
             self._sync_subtitle_placement_from_project()
             self.generation_panel.sync_timing_settings_from_project()
@@ -5420,7 +5557,14 @@ class MainWindow(QMainWindow):
             # 3. MỞ KHÓA RENDER: Vẽ đồng loạt tất cả mọi thứ ra màn hình trong 1 frame duy nhất
             self.page_workspace.setUpdatesEnabled(True)
             if getattr(self.project_service, 'current_project', None):
-                Toast.show_success(self, f"Đã mở dự án: {self.project_service.current_project.name}")
+                cur_proj = self.project_service.current_project
+                if getattr(cur_proj.state, 'is_video_missing', False):
+                    Toast.show_warning(
+                        self,
+                        f"Đã mở dự án '{cur_proj.name}' ở chế độ Không có Video.\nBạn có thể liên kết lại video bất kỳ lúc nào qua menu Dự Án."
+                    )
+                else:
+                    Toast.show_success(self, f"Đã mở dự án: {cur_proj.name}")
 
 
     def handle_ipc_request(self, request: IpcRequest) -> None:
