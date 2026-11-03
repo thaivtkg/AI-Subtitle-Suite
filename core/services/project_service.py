@@ -13,6 +13,27 @@ from core.artifacts.artifact_store import ArtifactStore
 from core.utils.file_utils import atomic_save_json
 from core.timing.timing_checkpoint import TimingCheckpoint
 
+
+class MissingVideoError(FileNotFoundError):
+    """Ngoại lệ khi mở dự án mà không tìm thấy file video gốc."""
+
+    def __init__(
+        self,
+        video_path: str,
+        project_dir: str,
+        source_info: ProjectSourceInfo,
+        suggested_path: str | None = None,
+    ):
+        self.video_path = video_path
+        self.project_dir = project_dir
+        self.source_info = source_info
+        self.suggested_path = suggested_path
+        msg = f"Không tìm thấy file video gốc tại:\n{video_path}\nVui lòng kiểm tra lại thư mục."
+        if suggested_path:
+            msg += f"\nĐã tìm thấy tệp khả dụng cùng tên tại:\n{suggested_path}"
+        super().__init__(msg)
+
+
 class ProjectService:
     """Service điều phối toàn bộ Vòng đời của Dự án (Tạo, Lưu, Mở, Đóng)"""
     
@@ -160,8 +181,78 @@ class ProjectService:
         self.current_project.state.dirty = False
         return True
 
-    def open_project(self, project_dir: str) -> Project:
+    def probe_project_source(self, project_dir: str) -> tuple[ProjectSourceInfo, str, bool, str | None]:
+        """Kiểm tra nguồn video của dự án trước khi mở.
+        
+        Trả về tuple (source_info, current_path, is_valid, suggested_path).
+        """
+        proj_file = os.path.join(project_dir, "project.json")
+        if not os.path.exists(proj_file):
+            raise FileNotFoundError("Thư mục này không phải là một Project AI Subtitle Studio hợp lệ.")
+            
+        with open(proj_file, 'r', encoding='utf-8') as f:
+            p_data = json.load(f)
+        source_info = ProjectSourceInfo(**p_data["source"])
+        video_path = source_info.path
+        
+        if os.path.exists(video_path):
+            return source_info, video_path, True, None
+            
+        # Dò tìm ứng viên lân cận (cùng thư mục cha với project_dir hoặc trong project_dir)
+        suggested_path = None
+        candidates = [
+            os.path.join(os.path.dirname(project_dir), source_info.filename),
+            os.path.join(project_dir, source_info.filename),
+        ]
+        for cand in candidates:
+            if os.path.exists(cand):
+                suggested_path = os.path.normpath(cand)
+                break
+                
+        return source_info, video_path, False, suggested_path
+
+    def relink_project_video(self, project_dir: str, new_video_path: str, force: bool = False) -> ProjectSourceInfo:
+        """Định vị lại video gốc cho dự án và cập nhật project.json"""
+        if not os.path.exists(new_video_path):
+            raise FileNotFoundError(f"Không tìm thấy file video mới tại:\n{new_video_path}")
+            
+        proj_file = os.path.join(project_dir, "project.json")
+        if not os.path.exists(proj_file):
+            raise FileNotFoundError("Không tìm thấy tệp project.json trong thư mục dự án.")
+            
+        with open(proj_file, 'r', encoding='utf-8') as f:
+            p_data = json.load(f)
+            
+        original_source = ProjectSourceInfo(**p_data["source"])
+        new_source_info = self._generate_fingerprint(new_video_path)
+        
+        if not force and original_source.fingerprint != new_source_info.fingerprint:
+            raise ValueError(
+                f"File video mới có mã băm (Hash) khác với video ban đầu!\n"
+                f"Gốc: {original_source.fingerprint[:12]}... - Mới: {new_source_info.fingerprint[:12]}..."
+            )
+            
+        p_data["source"] = asdict(new_source_info) if hasattr(new_source_info, '__dataclass_fields__') else new_source_info.__dict__
+        p_data["updated_at"] = datetime.now().isoformat()
+        atomic_save_json(proj_file, p_data)
+        
+        updated_source = ProjectSourceInfo(**p_data["source"])
+        if self.current_project and self.project_dir == project_dir:
+            self.current_project.source = updated_source
+            self.current_project.state.is_video_missing = False
+            
+        return updated_source
+
+    def open_project(
+        self,
+        project_dir: str,
+        allow_missing_video: bool = False,
+        relink_video_path: str | None = None,
+    ) -> Project:
         """Đọc và khôi phục Project từ thư mục"""
+        if relink_video_path:
+            self.relink_project_video(project_dir, relink_video_path, force=True)
+
         proj_file = os.path.join(project_dir, "project.json")
         state_file = os.path.join(project_dir, "state.json")
         workspace_file = os.path.join(project_dir, "workspace.json")
@@ -175,15 +266,19 @@ class ProjectService:
         
         # Source Validation
         video_path = source_info.path
+        is_missing = False
         if not os.path.exists(video_path):
-            raise FileNotFoundError(f"Không tìm thấy file video gốc tại:\n{video_path}\nVui lòng kiểm tra lại thư mục.")
-            
-        current_source_info = self._generate_fingerprint(video_path)
-        if current_source_info.fingerprint != source_info.fingerprint:
-            raise ValueError(
-                f"File video gốc đã bị thay đổi hoặc ghi đè (Sai lệch mã Hash)!\n"
-                f"Không thể mở dự án để bảo vệ an toàn cho dữ liệu Timing."
-            )
+            if not allow_missing_video:
+                _, _, _, suggested = self.probe_project_source(project_dir)
+                raise MissingVideoError(video_path, project_dir, source_info, suggested)
+            is_missing = True
+        else:
+            current_source_info = self._generate_fingerprint(video_path)
+            if current_source_info.fingerprint != source_info.fingerprint:
+                raise ValueError(
+                    f"File video gốc đã bị thay đổi hoặc ghi đè (Sai lệch mã Hash)!\n"
+                    f"Không thể mở dự án để bảo vệ an toàn cho dữ liệu Timing."
+                )
         
         project_state = ProjectState()
         if os.path.exists(state_file):
@@ -218,6 +313,7 @@ class ProjectService:
                 else:
                     project_state.timing = TimingState()
                 # ---------------------------------------------------------------
+        project_state.is_video_missing = is_missing
         
         if os.path.exists(workspace_file):
             with open(workspace_file, 'r', encoding='utf-8') as f:

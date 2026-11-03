@@ -53,6 +53,7 @@ class ProjectState:
     subtitle_artifact_id: Optional[str] = None
     selected_segment_id: Optional[str] = None
     dirty: bool = False
+    is_video_missing: bool = False
     
     active_subtitle_source_id: str = "default"
     subtitle_sources: List[dict] = field(default_factory=list)
