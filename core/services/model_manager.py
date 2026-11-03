@@ -15,8 +15,8 @@ class ModelStorageError(RuntimeError):
 class ModelManager:
     SUPPORTED_MODELS = {
         "tiny": "150 MB", "base": "290 MB", "small": "960 MB",
-        "medium": "3.0 GB", "large-v1": "5.8 GB", "large-v2": "5.8 GB",
-        "large-v3": "5.8 GB", "large-v3-turbo": "1.6 GB"
+        "large-v3-turbo": "1.6 GB", "medium": "3.0 GB",
+        "large-v1": "5.8 GB", "large-v2": "5.8 GB", "large-v3": "5.8 GB"
     }
 
     @staticmethod

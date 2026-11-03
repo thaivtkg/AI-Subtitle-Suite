@@ -321,3 +321,115 @@ def test_subtitle_generation_panel_delete_model_button(qapp):
          patch("core.services.model_manager.ModelManager.delete_model", return_value=True) as mock_delete:
         panel._on_delete_model_clicked()
         assert mock_delete.called
+
+
+def test_model_size_ordering_and_auto_select_installed_model(qapp):
+    from ui.subtitle_generation_panel import SubtitleGenerationPanel
+    from core.services.model_manager import ModelManager
+    from core.project.project_state import TimingState
+
+    # 1. Thứ tự model theo dung lượng tăng dần: large-v3-turbo (1.6 GB) đứng trước medium/large-v2/large-v3 (5.8 GB)
+    expected_order = ["tiny", "base", "small", "large-v3-turbo", "medium", "large-v2", "large-v3"]
+    assert SubtitleGenerationPanel._ALL_MODELS == expected_order
+    supported_keys = list(ModelManager.SUPPORTED_MODELS.keys())
+    assert supported_keys.index("large-v3-turbo") < supported_keys.index("large-v3")
+
+    # 2. Khi chỉ có large-v3 đã tải (large-v3-turbo chưa tải), panel và sync_timing_settings_from_project tự chọn large-v3
+    with patch("core.services.model_manager.ModelManager.is_installed", side_effect=lambda m: m == "large-v3"), \
+         patch("core.translation.core.hardware_detector.HardwareDetector.get_vram_usage", return_value=(1.0, 4.0)):
+        panel = SubtitleGenerationPanel(MagicMock())
+        assert panel.cmb_model.currentData() == "large-v3"
+
+        # Project mới với TimingState mặc định (model_size='large-v3-turbo' nhưng chưa tải) -> giữ/chọn large-v3
+        mock_project = MagicMock()
+        mock_project.state.timing = TimingState()
+        mock_project.state.task_mode = "asr"
+        mock_project.state.dirty = False
+        panel.generation_service.project_service.current_project = mock_project
+        panel.sync_timing_settings_from_project()
+        assert panel.cmb_model.currentData() == "large-v3"
+
+    # 3. Khi tất cả các model đều đã tải trên máy có GPU >= 3.5 GB VRAM -> chọn model tốt nhất là large-v3
+    with patch("core.services.model_manager.ModelManager.is_installed", return_value=True), \
+         patch("core.translation.core.hardware_detector.HardwareDetector.get_vram_usage", return_value=(1.0, 4.0)):
+        all_installed = {m: True for m in expected_order}
+        assert SubtitleGenerationPanel._select_best_model(all_installed) == "large-v3"
+
+
+def test_cfg9_preset_tunable_and_apply_to_rescan_and_batch(qapp, tmp_path):
+    from ui.subtitle_generation_panel import SubtitleGenerationPanel
+    from ui.Gui import MainWindow
+    from workers.SegmentScanWorker import SegmentScanWorker, BatchSegmentScanWorker
+
+    gen_service = MagicMock()
+    mock_project = MagicMock()
+    mock_project.project_id = "proj_cfg9"
+    mock_project.source.path = str(tmp_path / "video.mp4")
+    mock_project.source.fingerprint = "fp_cfg9"
+    gen_service.project_service.current_project = mock_project
+    gen_service.compile_prompt_context.return_value = MagicMock(text="JA context")
+
+    panel = SubtitleGenerationPanel(gen_service)
+    # Chọn Preset CFG-9
+    idx_cfg9 = panel.cmb_vad_preset.findData("cfg9")
+    assert idx_cfg9 >= 0
+    panel.cmb_vad_preset.setCurrentIndex(idx_cfg9)
+
+    assert panel.chk_vad.isChecked() is True
+    assert panel.chk_word_timestamps.isChecked() is True
+    assert panel.spin_min_silence.value() == 300
+    assert abs(panel.spin_vad_threshold.value() - 0.35) < 1e-3
+    assert panel.spin_speech_pad.value() == 300
+    assert abs(panel.spin_max_speech.value() - 6.0) < 1e-3
+
+    # Chỉnh nhẹ thông số -> tự chuyển sang Custom nhưng vẫn giữ giá trị mới
+    panel.spin_min_silence.setValue(350)
+    assert panel.cmb_vad_preset.currentData() == "custom"
+    req_full = panel._build_asr_request()
+    assert req_full.min_silence_ms == 350
+    assert abs(req_full.vad_threshold - 0.35) < 1e-3
+    assert req_full.vad_speech_pad_ms == 300
+    assert abs(req_full.vad_max_speech_duration_s - 6.0) < 1e-3
+    assert req_full.word_timestamps is True
+
+    # Quay lại CFG-9 và bật "Áp dụng Preset cho Gen Sub các câu đang chọn và Quét lại"
+    panel.cmb_vad_preset.setCurrentIndex(idx_cfg9)
+    panel.chk_apply_preset_rescan.setChecked(True)
+
+    win = MainWindow.__new__(MainWindow)
+    win.sub_editor = MagicMock()
+    win.sub_editor.all_segments = [
+        {"id": "s1", "start": "00:00:15,000", "end": "00:00:17,000", "start_ms": 15000, "end_ms": 17000, "text": "妖魔王"},
+    ]
+    win.sub_editor.current_editor = MagicMock()
+    win.sub_editor.current_editor.chk_boost_audio.isChecked.return_value = False
+    win.project_service = MagicMock()
+    win.project_service.current_project = MagicMock(project_id="p1", video_path=str(tmp_path / "video.mp4"))
+    win.current_vid = str(tmp_path / "video.mp4")
+    (tmp_path / "video.mp4").write_bytes(b"dummy")
+    win.get_current_video_path = lambda: str(tmp_path / "video.mp4")
+    win.generation_panel = panel
+    win.subtitle_whisper_service = MagicMock(device="cuda")
+
+    with patch("core.services.model_manager.ModelManager.is_installed", return_value=True), \
+         patch("core.translation.core.hardware_detector.HardwareDetector.get_vram_usage", return_value=(1.0, 4.0)), \
+         patch.object(SegmentScanWorker, "start"), \
+         patch.object(BatchSegmentScanWorker, "start"):
+
+        win._on_segment_scan_requested("s1", 15000, 17000)
+        assert win.scan_worker.request.use_vad is True
+        assert win.scan_worker.request.min_silence_ms == 300
+        assert abs(win.scan_worker.request.vad_threshold - 0.35) < 1e-3
+        assert win.scan_worker.request.vad_speech_pad_ms == 300
+        assert abs(win.scan_worker.request.vad_max_speech_duration_s - 6.0) < 1e-3
+        assert win.scan_worker.request.word_timestamps is True
+
+        win._on_batch_segment_scan_requested([0])
+        assert win._batch_scan_worker.request.use_vad is True
+        assert win._batch_scan_worker.request.min_silence_ms == 300
+        assert abs(win._batch_scan_worker.request.vad_threshold - 0.35) < 1e-3
+        assert win._batch_scan_worker.request.vad_speech_pad_ms == 300
+        assert abs(win._batch_scan_worker.request.vad_max_speech_duration_s - 6.0) < 1e-3
+        assert win._batch_scan_worker.request.word_timestamps is True
+
+

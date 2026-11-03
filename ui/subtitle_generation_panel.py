@@ -5,6 +5,7 @@ from PySide6.QtWidgets import ( QLineEdit, QListWidget, QListWidgetItem,
 
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QFrame,
     QGroupBox,
     QHBoxLayout,
@@ -267,6 +268,57 @@ class SubtitleGenerationPanel(QWidget):
         self.chk_word_timestamps = QCheckBox("Word-level Timestamps")
         advanced_layout.addWidget(self.chk_word_timestamps)
 
+        self.cmb_vad_preset = QComboBox()
+        self.cmb_vad_preset.setObjectName("cmb_vad_preset")
+        self.cmb_vad_preset.addItem("Standard (Mặc định)", "standard")
+        self.cmb_vad_preset.addItem("★ CFG-9 Anime JA (Tối ưu tách câu)", "cfg9")
+        self.cmb_vad_preset.addItem("Custom (Tùy chỉnh thông số)", "custom")
+        self.cmb_vad_preset.setMinimumWidth(210)
+        advanced_layout.addLayout(_kv_row("ASR / VAD Preset:", self.cmb_vad_preset, min_width=210))
+
+        self.spin_min_silence = QSpinBox()
+        self.spin_min_silence.setObjectName("spin_min_silence")
+        self.spin_min_silence.setRange(50, 5000)
+        self.spin_min_silence.setSingleStep(50)
+        self.spin_min_silence.setValue(500)
+        self.spin_min_silence.setSuffix(" ms")
+        advanced_layout.addLayout(_kv_row("Min Silence:", self.spin_min_silence))
+
+        self.spin_vad_threshold = QDoubleSpinBox()
+        self.spin_vad_threshold.setObjectName("spin_vad_threshold")
+        self.spin_vad_threshold.setRange(0.05, 0.95)
+        self.spin_vad_threshold.setSingleStep(0.05)
+        self.spin_vad_threshold.setDecimals(2)
+        self.spin_vad_threshold.setValue(0.50)
+        advanced_layout.addLayout(_kv_row("VAD Threshold:", self.spin_vad_threshold))
+
+        self.spin_speech_pad = QSpinBox()
+        self.spin_speech_pad.setObjectName("spin_speech_pad")
+        self.spin_speech_pad.setRange(0, 2000)
+        self.spin_speech_pad.setSingleStep(50)
+        self.spin_speech_pad.setValue(400)
+        self.spin_speech_pad.setSuffix(" ms")
+        advanced_layout.addLayout(_kv_row("Speech Pad:", self.spin_speech_pad))
+
+        self.spin_max_speech = QDoubleSpinBox()
+        self.spin_max_speech.setObjectName("spin_max_speech")
+        self.spin_max_speech.setRange(1.0, 60.0)
+        self.spin_max_speech.setSingleStep(0.5)
+        self.spin_max_speech.setDecimals(1)
+        self.spin_max_speech.setValue(30.0)
+        self.spin_max_speech.setSuffix(" s")
+        advanced_layout.addLayout(_kv_row("Max Speech:", self.spin_max_speech))
+
+        self.chk_apply_preset_rescan = QCheckBox(
+            "Áp dụng Preset cho 'Gen Sub các câu đang chọn' và 'Quét lại'"
+        )
+        self.chk_apply_preset_rescan.setObjectName("chk_apply_preset_rescan")
+        self.chk_apply_preset_rescan.setToolTip(
+            "Khi bật, thao tác '🔍 Quét lại' và 'Gen Sub các câu đã chọn' sẽ dùng bộ thông số VAD/ASR của Preset đang chọn."
+        )
+        self.chk_apply_preset_rescan.setChecked(False)
+        advanced_layout.addWidget(self.chk_apply_preset_rescan)
+
         self.cmb_batch_mode = QComboBox()
         self.cmb_batch_mode.addItem("Time-based (Minutes)", "time")
         self.cmb_batch_mode.addItem("Segment-based (Count)", "segments")
@@ -283,6 +335,12 @@ class SubtitleGenerationPanel(QWidget):
         self.cmb_batch_mode.currentIndexChanged.connect(
             lambda _index: self._on_batch_mode_changed()
         )
+        self.cmb_vad_preset.currentIndexChanged.connect(self._on_vad_preset_changed)
+        self.spin_min_silence.valueChanged.connect(self._on_vad_param_edited)
+        self.spin_vad_threshold.valueChanged.connect(self._on_vad_param_edited)
+        self.spin_speech_pad.valueChanged.connect(self._on_vad_param_edited)
+        self.spin_max_speech.valueChanged.connect(self._on_vad_param_edited)
+        self.chk_apply_preset_rescan.toggled.connect(self._on_timing_setting_changed)
         self.chk_fix_overlap.toggled.connect(self._on_timing_setting_changed)
         self.spin_overlap_gap.valueChanged.connect(self._on_timing_setting_changed)
         self.cmb_model.currentTextChanged.connect(self._on_timing_setting_changed)
@@ -446,10 +504,39 @@ class SubtitleGenerationPanel(QWidget):
                 return val
         return combo.currentText() if hasattr(combo, "currentText") else ""
 
-    _ALL_MODELS = ["tiny", "base", "small", "medium", "large-v2", "large-v3", "large-v3-turbo"]
+    _ALL_MODELS = ["tiny", "base", "small", "large-v3-turbo", "medium", "large-v2", "large-v3"]
 
-    def _populate_model_combo(self, preferred: str = "large-v3-turbo") -> None:
-        """Fill cmb_model with install-status icons; keep previous selection if valid."""
+    @classmethod
+    def _select_best_model(cls, info: dict, preferred: str | None = None) -> str:
+        """Chọn model đã tải trên máy; nếu tải nhiều/tất cả size thì chọn size phù hợp nhất với cấu hình."""
+        installed = [m for m in cls._ALL_MODELS if info.get(m, False)]
+        if preferred and info.get(preferred, False):
+            return preferred
+        if installed:
+            try:
+                import torch
+                has_cuda = torch.cuda.is_available()
+                vram_gb = (
+                    torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+                    if has_cuda else 0.0
+                )
+            except Exception:
+                has_cuda = False
+                vram_gb = 0.0
+
+            if has_cuda and vram_gb >= 3.5:
+                priority = ["large-v3", "large-v3-turbo", "large-v2", "medium", "small", "base", "tiny"]
+            else:
+                priority = ["small", "base", "tiny", "large-v3-turbo", "medium", "large-v2", "large-v3"]
+
+            for m in priority:
+                if m in installed:
+                    return m
+            return installed[-1]
+        return preferred or "large-v3-turbo"
+
+    def _populate_model_combo(self, preferred: str | None = None) -> None:
+        """Fill cmb_model with install-status icons; auto-select installed or best-fit model."""
         from core.services.model_manager import ModelManager
         prev = self.cmb_model.currentData() or preferred
         self.cmb_model.blockSignals(True)
@@ -465,17 +552,11 @@ class SubtitleGenerationPanel(QWidget):
             label = f"{icon} {size}  ({weight})"
             self.cmb_model.addItem(label, size)  # userData = bare model size
         self.cmb_model.blockSignals(False)
-        # Restore previous or preferred
+        target = self._select_best_model(info, prev)
         for i in range(self.cmb_model.count()):
-            if self.cmb_model.itemData(i) == prev:
+            if self.cmb_model.itemData(i) == target:
                 self.cmb_model.setCurrentIndex(i)
                 break
-        else:
-            # fall back to preferred
-            for i in range(self.cmb_model.count()):
-                if self.cmb_model.itemData(i) == preferred:
-                    self.cmb_model.setCurrentIndex(i)
-                    break
         self._on_model_selection_changed()
 
     def _on_model_selection_changed(self) -> None:
@@ -599,6 +680,13 @@ class SubtitleGenerationPanel(QWidget):
 
     def apply_recommended_settings(self, model: str, compute: str) -> None:
         """Apply recommended model and compute type to panel combos."""
+        try:
+            from core.services.model_manager import ModelManager
+            info = {m["size"]: m["installed"] for m in ModelManager.get_discovery_list()}
+            if not info.get(model, False) and any(info.values()):
+                model = self._select_best_model(info, model)
+        except Exception:
+            pass
         for i in range(self.cmb_model.count()):
             if self.cmb_model.itemData(i) == model:
                 self.cmb_model.setCurrentIndex(i)
@@ -896,6 +984,12 @@ class SubtitleGenerationPanel(QWidget):
             proj_ctrl = getattr(getattr(win, "page_translation", None), "project_controller", None)
             if proj_ctrl and getattr(proj_ctrl, "_is_ja_origin", False):
                 final_lang = "ja"
+        preset_data = self.cmb_vad_preset.currentData() if hasattr(self, "cmb_vad_preset") else "standard"
+        is_custom_or_cfg9 = preset_data in ("cfg9", "custom")
+        min_sil = self.spin_min_silence.value() if hasattr(self, "spin_min_silence") else 500
+        vad_thresh = self.spin_vad_threshold.value() if (is_custom_or_cfg9 and hasattr(self, "spin_vad_threshold")) else None
+        vad_pad = self.spin_speech_pad.value() if (is_custom_or_cfg9 and hasattr(self, "spin_speech_pad")) else None
+        vad_max_sp = self.spin_max_speech.value() if (is_custom_or_cfg9 and hasattr(self, "spin_max_speech")) else None
         return SubtitleGenerationRequest(
             request_id=str(uuid.uuid4()),
             project_id=project.project_id,
@@ -905,7 +999,7 @@ class SubtitleGenerationPanel(QWidget):
             compute_type=self._combo_value(self.cmb_compute),
             language=final_lang,
             use_vad=self.chk_vad.isChecked(),
-            min_silence_ms=500,
+            min_silence_ms=min_sil,
             word_timestamps=self.chk_word_timestamps.isChecked(),
             batch_mode=self.cmb_batch_mode.currentData(),
             batch_size_value=self.spin_batch_val.value(),
@@ -914,6 +1008,9 @@ class SubtitleGenerationPanel(QWidget):
             range_start_ms=range_start_ms,
             range_end_ms=range_end_ms,
             condition_on_previous_text=True,
+            vad_threshold=vad_thresh,
+            vad_speech_pad_ms=vad_pad,
+            vad_max_speech_duration_s=vad_max_sp,
         )
 
     def start_range_generation(self, start_ms, end_ms, existing_segments):
@@ -1007,6 +1104,55 @@ class SubtitleGenerationPanel(QWidget):
             from PySide6.QtCore import QTimer
             QTimer.singleShot(800, lambda: self.progress_bar.setValue(0))
 
+    def _on_vad_preset_changed(self, *_args):
+        if getattr(self, "_restoring_timing_settings", False) or getattr(self, "_updating_vad_preset", False):
+            return
+        preset = self.cmb_vad_preset.currentData() if hasattr(self, "cmb_vad_preset") else "standard"
+        self._updating_vad_preset = True
+        try:
+            if preset == "cfg9":
+                self.chk_vad.setChecked(True)
+                self.chk_word_timestamps.setChecked(True)
+                self.spin_min_silence.setValue(300)
+                self.spin_vad_threshold.setValue(0.35)
+                self.spin_speech_pad.setValue(300)
+                self.spin_max_speech.setValue(6.0)
+            elif preset == "standard":
+                self.spin_min_silence.setValue(500)
+                self.spin_vad_threshold.setValue(0.50)
+                self.spin_speech_pad.setValue(400)
+                self.spin_max_speech.setValue(30.0)
+        finally:
+            self._updating_vad_preset = False
+        self._on_timing_setting_changed()
+
+    def _on_vad_param_edited(self, *_args):
+        if getattr(self, "_restoring_timing_settings", False) or getattr(self, "_updating_vad_preset", False):
+            return
+        if hasattr(self, "cmb_vad_preset"):
+            is_cfg9 = (
+                self.spin_min_silence.value() == 300
+                and abs(self.spin_vad_threshold.value() - 0.35) < 1e-3
+                and self.spin_speech_pad.value() == 300
+                and abs(self.spin_max_speech.value() - 6.0) < 1e-3
+            )
+            is_std = (
+                self.spin_min_silence.value() == 500
+                and abs(self.spin_vad_threshold.value() - 0.50) < 1e-3
+                and self.spin_speech_pad.value() == 400
+                and abs(self.spin_max_speech.value() - 30.0) < 1e-3
+            )
+            target_preset = "cfg9" if is_cfg9 else ("standard" if is_std else "custom")
+            if self.cmb_vad_preset.currentData() != target_preset:
+                self._updating_vad_preset = True
+                try:
+                    idx = self.cmb_vad_preset.findData(target_preset)
+                    if idx >= 0:
+                        self.cmb_vad_preset.setCurrentIndex(idx)
+                finally:
+                    self._updating_vad_preset = False
+        self._on_timing_setting_changed()
+
     def _timing_settings(self) -> dict:
         project_service = getattr(self.generation_service, "project_service", None)
         timing = getattr(
@@ -1019,7 +1165,14 @@ class SubtitleGenerationPanel(QWidget):
         )
         lang_text = self.cmb_language.currentText() if hasattr(self, "cmb_language") else ""
         lang_val = None if (not lang_text or lang_text == "Auto Detect") else lang_text
+        preset_val = self.cmb_vad_preset.currentData() if hasattr(self, "cmb_vad_preset") else "standard"
+        min_sil_ui = self.spin_min_silence.value() if hasattr(self, "spin_min_silence") else 500
+        thresh_ui = self.spin_vad_threshold.value() if hasattr(self, "spin_vad_threshold") else 0.50
+        pad_ui = self.spin_speech_pad.value() if hasattr(self, "spin_speech_pad") else 400
+        max_sp_ui = self.spin_max_speech.value() if hasattr(self, "spin_max_speech") else 30.0
+        apply_rescan_ui = self.chk_apply_preset_rescan.isChecked() if hasattr(self, "chk_apply_preset_rescan") else False
 
+        is_non_default_preset = (preset_val in ("cfg9", "custom")) or apply_rescan_ui
         if timing is not None and hasattr(timing, "model_size"):
             values = {
                 name: getattr(timing, name, getattr(TimingState(), name))
@@ -1036,13 +1189,21 @@ class SubtitleGenerationPanel(QWidget):
                 values["language"] = lang_val
             elif hasattr(timing, "language") and timing.language:
                 values["language"] = timing.language
+            if is_non_default_preset:
+                values["vad_preset"] = preset_val
+                values["min_silence_ms"] = min_sil_ui if preset_val in ("cfg9", "custom") else values["min_silence_ms"]
+                values["vad_threshold"] = thresh_ui
+                values["vad_speech_pad_ms"] = pad_ui
+                values["vad_max_speech_duration_s"] = max_sp_ui
+                values["apply_preset_to_rescan"] = apply_rescan_ui
+                values["word_timestamps"] = self.chk_word_timestamps.isChecked() if hasattr(self, "chk_word_timestamps") else False
             return values
 
         values = {
             "model_size": self._combo_value(self.cmb_model),
             "compute_type": self._combo_value(self.cmb_compute),
             "use_vad": True,
-            "min_silence_ms": 500,
+            "min_silence_ms": min_sil_ui,
             "fix_overlap": getattr(self, "chk_fix_overlap", None).isChecked()
             if hasattr(self, "chk_fix_overlap") else True,
             "overlap_gap_ms": getattr(self, "spin_overlap_gap", None).value()
@@ -1050,6 +1211,15 @@ class SubtitleGenerationPanel(QWidget):
             "overlap_ms": 800,
             "max_window_ms": 120000,
         }
+        if is_non_default_preset:
+            values.update({
+                "vad_preset": preset_val,
+                "vad_threshold": thresh_ui,
+                "vad_speech_pad_ms": pad_ui,
+                "vad_max_speech_duration_s": max_sp_ui,
+                "apply_preset_to_rescan": apply_rescan_ui,
+                "word_timestamps": self.chk_word_timestamps.isChecked() if hasattr(self, "chk_word_timestamps") else False,
+            })
         if getattr(self, "chk_music_mode", None) and self.chk_music_mode.isChecked():
             values["music_mode"] = True
         if lang_val:
@@ -1057,12 +1227,22 @@ class SubtitleGenerationPanel(QWidget):
         return values
 
     def _on_timing_setting_changed(self, *_args):
-        if getattr(self, "_restoring_timing_settings", False) or not self._is_timing_mode():
+        if getattr(self, "_restoring_timing_settings", False):
             return
         project_service = getattr(self.generation_service, "project_service", None)
         project = getattr(project_service, "current_project", None)
         timing = getattr(getattr(project, "state", None), "timing", None)
         if timing is None:
+            return
+        if not self._is_timing_mode():
+            # Vẫn lưu cấu hình preset & rescan vào timing state của project ngay cả ở chế độ Full Subtitle
+            if hasattr(self, "cmb_vad_preset"):
+                timing.vad_preset = self.cmb_vad_preset.currentData()
+                timing.min_silence_ms = self.spin_min_silence.value()
+                timing.vad_threshold = self.spin_vad_threshold.value()
+                timing.vad_speech_pad_ms = self.spin_speech_pad.value()
+                timing.vad_max_speech_duration_s = self.spin_max_speech.value()
+                timing.apply_preset_to_rescan = self.chk_apply_preset_rescan.isChecked()
             return
         values = self._timing_settings()
         lang_text = self.cmb_language.currentText() if hasattr(self, "cmb_language") else ""
@@ -1072,14 +1252,21 @@ class SubtitleGenerationPanel(QWidget):
                 "model_size": self._combo_value(self.cmb_model),
                 "compute_type": self._combo_value(self.cmb_compute),
                 "use_vad": True,
+                "min_silence_ms": self.spin_min_silence.value() if hasattr(self, "spin_min_silence") else 500,
                 "fix_overlap": self.chk_fix_overlap.isChecked(),
                 "overlap_gap_ms": self.spin_overlap_gap.value(),
                 "music_mode": self.chk_music_mode.isChecked() if hasattr(self, "chk_music_mode") else False,
                 "language": lang_val,
+                "vad_preset": self.cmb_vad_preset.currentData() if hasattr(self, "cmb_vad_preset") else "standard",
+                "vad_threshold": self.spin_vad_threshold.value() if hasattr(self, "spin_vad_threshold") else 0.50,
+                "vad_speech_pad_ms": self.spin_speech_pad.value() if hasattr(self, "spin_speech_pad") else 400,
+                "vad_max_speech_duration_s": self.spin_max_speech.value() if hasattr(self, "spin_max_speech") else 30.0,
+                "apply_preset_to_rescan": self.chk_apply_preset_rescan.isChecked() if hasattr(self, "chk_apply_preset_rescan") else False,
             }
         )
         for name, value in values.items():
-            setattr(timing, name, value)
+            if hasattr(timing, name):
+                setattr(timing, name, value)
         project_service.mark_dirty()
         if hasattr(self, "spin_overlap_gap"):
             self.spin_overlap_gap.setEnabled(self.chk_fix_overlap.isChecked())
@@ -1099,8 +1286,22 @@ class SubtitleGenerationPanel(QWidget):
             mode_index = self.cmb_mode.findData(task_mode)
             if mode_index >= 0:
                 self.cmb_mode.setCurrentIndex(mode_index)
+            target_model = timing.model_size
+            try:
+                from core.services.model_manager import ModelManager
+                info = {m["size"]: m["installed"] for m in ModelManager.get_discovery_list()}
+                is_default_unconfigured = (
+                    timing == TimingState()
+                    and task_mode == "asr"
+                    and not getattr(project_service.current_project.state, "dirty", False)
+                )
+                if is_default_unconfigured and not info.get(target_model, False) and any(info.values()):
+                    target_model = self._select_best_model(info, target_model)
+                    timing.model_size = target_model
+            except Exception:
+                pass
             for i in range(self.cmb_model.count()):
-                if self.cmb_model.itemData(i) == timing.model_size:
+                if self.cmb_model.itemData(i) == target_model:
                     self.cmb_model.setCurrentIndex(i)
                     break
             for i in range(self.cmb_compute.count()):
@@ -1117,6 +1318,20 @@ class SubtitleGenerationPanel(QWidget):
                 lang_idx = self.cmb_language.findText(lang_target)
                 if lang_idx >= 0:
                     self.cmb_language.setCurrentIndex(lang_idx)
+            if hasattr(self, "cmb_vad_preset"):
+                preset_idx = self.cmb_vad_preset.findData(getattr(timing, "vad_preset", "standard"))
+                if preset_idx >= 0:
+                    self.cmb_vad_preset.setCurrentIndex(preset_idx)
+            if hasattr(self, "spin_min_silence"):
+                self.spin_min_silence.setValue(int(getattr(timing, "min_silence_ms", 500)))
+            if hasattr(self, "spin_vad_threshold"):
+                self.spin_vad_threshold.setValue(float(getattr(timing, "vad_threshold", 0.50)))
+            if hasattr(self, "spin_speech_pad"):
+                self.spin_speech_pad.setValue(int(getattr(timing, "vad_speech_pad_ms", 400)))
+            if hasattr(self, "spin_max_speech"):
+                self.spin_max_speech.setValue(float(getattr(timing, "vad_max_speech_duration_s", 30.0)))
+            if hasattr(self, "chk_apply_preset_rescan"):
+                self.chk_apply_preset_rescan.setChecked(bool(getattr(timing, "apply_preset_to_rescan", False)))
             self._on_mode_changed()
         finally:
             self._restoring_timing_settings = False

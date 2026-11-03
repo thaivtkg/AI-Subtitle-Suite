@@ -27,6 +27,11 @@ class TimingState:
     max_window_ms: int = 120000
     music_mode: bool = False
     language: Optional[str] = None
+    vad_preset: str = "standard"
+    vad_threshold: float = 0.50
+    vad_speech_pad_ms: int = 400
+    vad_max_speech_duration_s: float = 30.0
+    apply_preset_to_rescan: bool = False
 
     status: str = "IDLE"  # IDLE, RUNNING, COMPLETED, FAILED
     batch_size: int = 10

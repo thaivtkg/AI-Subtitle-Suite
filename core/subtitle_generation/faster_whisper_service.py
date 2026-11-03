@@ -149,8 +149,13 @@ class FasterWhisperService:
         temp_dir = None
         try:
             is_japanese = (request.language or "").strip().lower() in ("ja", "japanese")
+            has_custom_vad = (
+                getattr(request, "vad_threshold", None) is not None
+                or getattr(request, "vad_speech_pad_ms", None) is not None
+                or getattr(request, "vad_max_speech_duration_s", None) is not None
+            )
             effective_min_silence = request.min_silence_ms
-            if is_japanese and effective_min_silence <= 500:
+            if is_japanese and effective_min_silence == 500 and not has_custom_vad:
                 effective_min_silence = 2000
 
             transcribe_options = {
@@ -174,9 +179,16 @@ class FasterWhisperService:
             timestamp_offset_ms = batch.start_ms
             if request.use_vad:
                 transcribe_options["vad_filter"] = True
-                transcribe_options["vad_parameters"] = {
+                vad_params = {
                     "min_silence_duration_ms": effective_min_silence
                 }
+                if getattr(request, "vad_threshold", None) is not None:
+                    vad_params["threshold"] = float(request.vad_threshold)
+                if getattr(request, "vad_speech_pad_ms", None) is not None:
+                    vad_params["speech_pad_ms"] = int(request.vad_speech_pad_ms)
+                if getattr(request, "vad_max_speech_duration_s", None) is not None:
+                    vad_params["max_speech_duration_s"] = float(request.vad_max_speech_duration_s)
+                transcribe_options["vad_parameters"] = vad_params
             else:
                 transcribe_options["vad_filter"] = False
 

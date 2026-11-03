@@ -327,3 +327,71 @@ def test_validation_gates_empty_sub_and_language_conflict():
     assert any("không được trùng nhau" in msg for _, msg in notifications)
 
 
+
+
+def test_update_segment_source_multi_tier_matching_resets_translation_and_status():
+    """
+    BUG-RESCAN-SYNC-001 (Root Cause: 0-indexed vs 1-indexed STT mismatch):
+    When segment #006 without explicit 'id' is rescanned from SubEditor, Gui calls
+    page_translation.update_segment_source('6', new_text).
+    Verify multi-tier matching finds the segment, resets translation to '', status to PENDING,
+    updates original text, refreshes translation_controller workspace, and emits OriginalRole.
+    """
+    page = TranslationStudioPage()
+    studio_segments = [
+        {"stt": i + 1, "start": f"00:00:0{i},000", "end": f"00:00:0{i+1},000", "text": f"Câu cũ #{i+1}", "translation": f"Bản dịch #{i+1}", "translation_status": "TRANSLATED"}
+        for i in range(10)
+    ]
+    # Segment #6 (index 5) has translation 'Đến tớ đây thì làm cái gì'
+    studio_segments[5]["translation"] = "Đến tớ đây thì làm cái gì"
+    studio_segments[5]["translation_status"] = "ACCEPTED"
+
+    # Load with selected_indices to bypass ACCEPTED filter
+    page.load_subtitles_from_studio(studio_segments, selected_indices=list(range(10)))
+    data = page.subtitle_model.get_all_data()
+    assert len(data) == 10
+    # Verify segment_id is normalized to '6'
+    assert data[5]["segment_id"] == "6"
+    assert data[5]["translation"] == "Đến tớ đây thì làm cái gì"
+
+    # Track dataChanged signal and emitted roles
+    emitted_roles = []
+    page.subtitle_model.dataChanged.connect(lambda top_left, bottom_right, roles: emitted_roles.extend(roles))
+
+    # User is currently viewing segment #6 in CAT Studio workspace
+    page.translation_controller.loadSubtitle(5)
+    assert page.translation_controller.currentOriginal == "Câu cũ #6"
+    assert page.translation_controller.currentTranslation == "Đến tớ đây thì làm cái gì"
+
+    # Rescan triggers update_segment_source with '6'
+    new_scanned_text = "新しくスキャンした音声"
+    page.update_segment_source("6", new_scanned_text)
+
+    # 1. SubtitleModel in-memory data verification
+    assert data[5]["original"] == new_scanned_text
+    assert data[5]["translation"] == ""
+    assert data[5]["status"] == "PENDING"
+
+    # 2. QML Role notification verification (must include OriginalRole and TranslationRole)
+    assert page.subtitle_model.OriginalRole in emitted_roles
+    assert page.subtitle_model.TranslationRole in emitted_roles
+    assert page.subtitle_model.StatusRole in emitted_roles
+
+    # 3. TranslationWorkspace controller verification
+    assert page.translation_controller.currentOriginal == new_scanned_text
+    assert page.translation_controller.currentTranslation == ""
+    assert page.translation_controller.status == "PENDING"
+
+    # 4. Fallback matching test: when segment_id is a custom UUID, matching by STT '6' still succeeds via Tier 2
+    data[5]["segment_id"] = "custom_uuid_sub_006"
+    page.update_segment_source("6", "Lần quét theo STT")
+    assert data[5]["original"] == "Lần quét theo STT"
+    assert data[5]["translation"] == ""
+    assert data[5]["status"] == "PENDING"
+
+    # 5. Fallback matching test: when both segment_id and stt don't match, matching by studio_index + 1 still succeeds via Tier 3
+    data[5]["index"] = 999  # change stt
+    page.update_segment_source("6", "Lần quét theo studio_index+1")
+    assert data[5]["original"] == "Lần quét theo studio_index+1"
+    assert data[5]["translation"] == ""
+    assert data[5]["status"] == "PENDING"

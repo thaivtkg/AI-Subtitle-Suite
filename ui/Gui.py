@@ -1699,6 +1699,20 @@ class MainWindow(QMainWindow):
         iso_lang = normalize_to_iso_code(scan_lang)
         prompt_ctx = get_initial_prompt_for_language(iso_lang) if iso_lang == "ja" else ""
         
+        apply_preset = bool(settings.get("apply_preset_to_rescan", False))
+        preset_mode = settings.get("vad_preset", "standard")
+        is_custom_or_cfg9 = apply_preset and preset_mode in ("cfg9", "custom")
+        rescan_use_vad = (
+            True
+            if scan_mode == "timing"
+            else (bool(settings.get("use_vad", True)) if apply_preset else bool(settings.get("rescan_use_vad", False)))
+        )
+        rescan_min_silence = (
+            int(settings.get("min_silence_ms", 300))
+            if apply_preset
+            else (2000 if (iso_lang == "ja" and settings.get("min_silence_ms", 500) == 500) else settings.get("min_silence_ms", 500))
+        )
+        rescan_word_ts = bool(settings.get("word_timestamps", True)) if apply_preset else False
         from core.subtitle_generation.subtitle_generation_request import SubtitleGenerationRequest
         request = SubtitleGenerationRequest(
             request_id="scan_" + str(segment_id),
@@ -1713,11 +1727,14 @@ class MainWindow(QMainWindow):
             model_size=self._resolve_rescan_model_and_compute(settings)[0],
             compute_type=self._resolve_rescan_model_and_compute(settings)[1],
             language=iso_lang,
-            use_vad=True if scan_mode == "timing" else settings.get("rescan_use_vad", False),
-            min_silence_ms=2000 if (iso_lang == "ja" and settings.get("min_silence_ms", 500) == 500) else settings.get("min_silence_ms", 500),
-            word_timestamps=False,
+            use_vad=rescan_use_vad,
+            min_silence_ms=rescan_min_silence,
+            word_timestamps=rescan_word_ts,
             condition_on_previous_text=True,
             prompt_context=prompt_ctx,
+            vad_threshold=float(settings.get("vad_threshold", 0.35)) if is_custom_or_cfg9 else None,
+            vad_speech_pad_ms=int(settings.get("vad_speech_pad_ms", 300)) if is_custom_or_cfg9 else None,
+            vad_max_speech_duration_s=float(settings.get("vad_max_speech_duration_s", 6.0)) if is_custom_or_cfg9 else None,
         )
         
         from workers.SegmentScanWorker import SegmentScanWorker
@@ -1972,8 +1989,10 @@ class MainWindow(QMainWindow):
                 end_ms = s.get("end_ms")
                 if end_ms is None:
                     end_ms = time_str_to_ms(s.get("end", "00:00:00,000"))
+                seg_id = str(s.get("id") or s.get("stt") or (idx + 1))
+                s["id"] = seg_id
                 segments_data.append({
-                    "id": str(s.get("id", idx)),
+                    "id": seg_id,
                     "start_ms": int(start_ms),
                     "end_ms": int(end_ms),
                     "index": idx,
@@ -1999,6 +2018,17 @@ class MainWindow(QMainWindow):
         iso_batch_lang = normalize_to_iso_code(batch_lang)
         batch_prompt_ctx = get_initial_prompt_for_language(iso_batch_lang) if iso_batch_lang == "ja" else ""
 
+        apply_batch_preset = bool(settings.get("apply_preset_to_rescan", False))
+        batch_preset_mode = settings.get("vad_preset", "standard")
+        is_batch_custom_or_cfg9 = apply_batch_preset and batch_preset_mode in ("cfg9", "custom")
+        batch_use_vad = bool(settings.get("use_vad", True)) if apply_batch_preset else bool(settings.get("batch_rescan_use_vad", False))
+        batch_min_silence = (
+            int(settings.get("min_silence_ms", 300))
+            if apply_batch_preset
+            else (2000 if (iso_batch_lang == "ja" and settings.get("min_silence_ms", 500) == 500) else settings.get("min_silence_ms", 500))
+        )
+        batch_word_ts = bool(settings.get("word_timestamps", True)) if apply_batch_preset else False
+
         request = SubtitleGenerationRequest(
             request_id=f"batch_scan_{len(segments_data)}",
             audio_boost=bool(
@@ -2012,11 +2042,14 @@ class MainWindow(QMainWindow):
             model_size=self._resolve_rescan_model_and_compute(settings)[0],
             compute_type=self._resolve_rescan_model_and_compute(settings)[1],
             language=iso_batch_lang,
-            use_vad=settings.get("batch_rescan_use_vad", False),
-            min_silence_ms=2000 if (iso_batch_lang == "ja" and settings.get("min_silence_ms", 500) == 500) else settings.get("min_silence_ms", 500),
-            word_timestamps=False,
+            use_vad=batch_use_vad,
+            min_silence_ms=batch_min_silence,
+            word_timestamps=batch_word_ts,
             prompt_context=batch_prompt_ctx,
             condition_on_previous_text=True,
+            vad_threshold=float(settings.get("vad_threshold", 0.35)) if is_batch_custom_or_cfg9 else None,
+            vad_speech_pad_ms=int(settings.get("vad_speech_pad_ms", 300)) if is_batch_custom_or_cfg9 else None,
+            vad_max_speech_duration_s=float(settings.get("vad_max_speech_duration_s", 6.0)) if is_batch_custom_or_cfg9 else None,
         )
 
         progress = self._create_batch_scan_progress_dialog(len(segments_data))
@@ -2031,8 +2064,10 @@ class MainWindow(QMainWindow):
 
         def on_segment_completed(seg_id, text):
             updated = False
-            for seg in self.sub_editor.all_segments:
-                if str(seg.get("id")) == str(seg_id):
+            for i, seg in enumerate(self.sub_editor.all_segments):
+                sid = str(seg.get("id") or seg.get("stt") or (i + 1))
+                if sid == str(seg_id):
+                    seg["id"] = sid
                     seg["text"] = text
                     seg["original_text"] = text
                     seg["translation"] = ""

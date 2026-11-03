@@ -203,21 +203,24 @@ class SubtitleModel(QAbstractListModel):
             sub["translation"] = "Lỗi: Bản dịch rỗng."
             sub["status"] = "ERROR"
 
-    def update_translation(self, row_index, translation_text, status):
+    def update_translation(self, row_index, translation_text, status, original_text=None):
         """Cập nhật bản dịch và trạng thái, sau đó báo cho QML vẽ lại"""
         if 0 <= row_index < len(self._subtitles):
             # 1. Cập nhật dữ liệu trong bộ nhớ Python
+            if original_text is not None:
+                self._subtitles[row_index]["original"] = original_text
             self._subtitles[row_index]["translation"] = translation_text
             self._subtitles[row_index]["status"] = status
             self._normalize_translation_state(self._subtitles[row_index])
             self._update_item_qa(self._subtitles[row_index])
             
-            # 2. Tạo index và ÉP QML CẬP NHẬT CHÍNH XÁC CÁC BIẾN NÀY
+            # 2. Tạo index và ÉP QML CẬP NHẬT CHÍNH XÁC CÁC BIẾN NÀY (bao gồm cả OriginalRole)
             q_index = self.createIndex(row_index, 0)
             self.dataChanged.emit(
                 q_index,
                 q_index,
                 [
+                    self.OriginalRole,
                     self.TranslationRole,
                     self.StatusRole,
                     self.QaSeverityRole,

@@ -153,8 +153,10 @@ class TranslationStudioPage(QWidget):
             # chi nap cac cau chua duyet. Bo qua cac cau da duyet (ACCEPTED).
             if selected_indices is None and str(status).upper() == "ACCEPTED":
                 continue
+            seg_id = str(s.get("id") or s.get("stt") or (idx + 1))
+            s["id"] = seg_id
             cat_data.append({
-                "segment_id": str(s.get("id", idx)),
+                "segment_id": seg_id,
                 "studio_index": idx,
                 "index": int(s.get("stt", idx + 1)),
                 "start_time": _fmt_time(s.get("start")),
@@ -180,26 +182,67 @@ class TranslationStudioPage(QWidget):
     def update_segment_source(self, segment_id: str, new_source_text: str):
         """When a segment's audio is rescanned in Studio, update its source text and invalidate stale translation."""
         data = self.subtitle_model.get_all_data()
+        target_id = str(segment_id).strip()
+        matched_idx = -1
+
+        # Tier 1: Ưu tiên khớp chính xác theo segment_id
         for idx, item in enumerate(data):
-            if str(item.get("segment_id")) == str(segment_id):
-                item["original"] = new_source_text
-                item["translation"] = ""
-                item["status"] = "PENDING"
-                self.subtitle_model.update_translation(idx, "", "PENDING")
-                if idx == self.translation_controller._current_index:
-                    self.translation_controller.loadSubtitle(idx)
+            sid = str(item.get("segment_id") or "")
+            if sid and sid == target_id:
+                matched_idx = idx
                 break
+
+        # Tier 2: Khớp theo STT hiển thị (1-based index)
+        if matched_idx == -1:
+            for idx, item in enumerate(data):
+                stt = str(item.get("index") or "")
+                if stt and stt == target_id:
+                    matched_idx = idx
+                    break
+
+        # Tier 3: Khớp theo studio_index + 1 (1-based fallback)
+        if matched_idx == -1:
+            for idx, item in enumerate(data):
+                studio_idx = str(item.get("studio_index") if item.get("studio_index") is not None else "")
+                if studio_idx.isdigit() and str(int(studio_idx) + 1) == target_id:
+                    matched_idx = idx
+                    break
+
+        # Tier 4: Khớp theo studio_index trực tiếp (0-based fallback)
+        if matched_idx == -1:
+            for idx, item in enumerate(data):
+                studio_idx = str(item.get("studio_index") if item.get("studio_index") is not None else "")
+                if studio_idx and studio_idx == target_id:
+                    matched_idx = idx
+                    break
+
+        if matched_idx >= 0:
+            item = data[matched_idx]
+            item["original"] = new_source_text
+            item["translation"] = ""
+            item["status"] = "PENDING"
+            self.subtitle_model.update_translation(matched_idx, "", "PENDING", original_text=new_source_text)
+            if hasattr(self.translation_controller, "is_busy") and self.translation_controller.is_busy():
+                if getattr(self.translation_controller, "_active_translation_index", -1) == matched_idx:
+                    self.translation_controller.cancelTranslation()
+            if matched_idx == getattr(self.translation_controller, "_current_index", -1):
+                self.translation_controller.loadSubtitle(matched_idx)
 
     def export_subtitles_to_studio(self, studio_segments: list):
         """Cập nhật bản dịch từ SubtitleModel ngược lại danh sách phụ đề của Studio."""
         cat_data = self.subtitle_model.get_all_data()
-        id_map = {str(seg.get("id")): idx for idx, seg in enumerate(studio_segments) if seg.get("id") is not None}
+        id_map = {}
+        for idx, seg in enumerate(studio_segments):
+            sid = str(seg.get("id") or seg.get("stt") or (idx + 1))
+            id_map[sid] = idx
         
         for i, item in enumerate(cat_data):
-            seg_id = item.get("segment_id")
-            if seg_id and str(seg_id) in id_map:
-                studio_idx = id_map[str(seg_id)]
-            else:
+            seg_id = str(item.get("segment_id") or "")
+            stt = str(item.get("index") or "")
+            studio_idx = id_map.get(seg_id)
+            if studio_idx is None:
+                studio_idx = id_map.get(stt)
+            if studio_idx is None:
                 studio_idx = int(item.get("studio_index", i))
                 
             if 0 <= studio_idx < len(studio_segments):
