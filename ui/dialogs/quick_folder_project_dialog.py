@@ -317,3 +317,8 @@ class QuickFolderProjectDialog(QDialog):
                 if row < len(self._scanned_items):
                     selected.append(self._scanned_items[row])
         return selected
+
+    @property
+    def selected_video_paths(self) -> list[str]:
+        """Trả về danh sách đường dẫn tuyệt đối của các video được chọn."""
+        return [item["video_path"] for item in self.get_selected_videos()]

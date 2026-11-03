@@ -469,6 +469,7 @@ class MainWindow(QMainWindow):
         project_menu = QMenu(self.btn_project_menu)
         project_menu.setObjectName("ProjectMenu")
         project_menu.addAction("✨  Tạo Dự Án Mới", self.action_new_project)
+        self.action_quick_folder_project = project_menu.addAction("📁  Tạo Dự Án Từ Thư Mục...", self._action_quick_folder_project)
         project_menu.addAction("📂  Mở Dự Án...", self.action_open_project)
         self.menu_recent = project_menu.addMenu("🕒  Mở Dự Án Gần Đây")
         project_menu.addAction("💾  Lưu Dự Án", self.action_save_project)
@@ -2788,6 +2789,16 @@ class MainWindow(QMainWindow):
     def dropEvent(self, event):
         event.accept()
         urls = event.mimeData().urls()
+
+        # Kiểm tra nếu người dùng kéo thả thư mục chứa video
+        for u in urls:
+            local_path = u.toLocalFile()
+            if local_path:
+                norm_dir = os.path.normpath(local_path)
+                if os.path.isdir(norm_dir):
+                    self._action_quick_folder_project(folder_path=norm_dir)
+                    return
+
         valid_exts = ('.mp4', '.mkv', '.avi', '.mov', '.flv', '.wmv')
         valid_files = [u.toLocalFile() for u in urls if u.toLocalFile().lower().endswith(valid_exts)]
 
@@ -5313,6 +5324,55 @@ class MainWindow(QMainWindow):
         if hasattr(self, "page_dashboard") and hasattr(self.page_dashboard, "refresh_recent_projects"):
             self.page_dashboard.refresh_recent_projects()
 
+    def _action_quick_folder_project(self, folder_path: str = None):
+        """Khởi tạo dự án nhanh từ một thư mục video và mở thẳng vào Workspace."""
+        if not folder_path:
+            folder_path = QFileDialog.getExistingDirectory(self, "Chọn Thư Mục Chứa Video", "")
+            if not folder_path:
+                return
+
+        folder_path = os.path.normpath(folder_path)
+        if not os.path.isdir(folder_path):
+            return
+
+        from ui.dialogs.quick_folder_project_dialog import QuickFolderProjectDialog
+        dialog = QuickFolderProjectDialog(folder_path, project_service=self.project_service, parent=self)
+        if not dialog.exec():
+            return
+
+        selected_paths = dialog.selected_video_paths
+        if not selected_paths:
+            return
+
+        first_video = selected_paths[0]
+        other_videos = selected_paths[1:]
+
+        # Tạo / xác định dự án cho tất cả video được chọn và đăng ký vào queue
+        bundle_first = self.project_service.get_canonical_bundle_dir(first_video)
+        proj_first, _ = self.project_service.create_or_get_folder_project(first_video)
+
+        self.queue_mgr.add_video(first_video)
+        self._queue_project_dirs[first_video] = bundle_first
+        if hasattr(self.queue_mgr, "bind_project"):
+            self.queue_mgr.bind_project(first_video, proj_first.project_id, bundle_first)
+
+        for vid in other_videos:
+            bundle_other = self.project_service.get_canonical_bundle_dir(vid)
+            proj_other, _ = self.project_service.create_or_get_folder_project(vid)
+            self.queue_mgr.add_video(vid)
+            self._queue_project_dirs[vid] = bundle_other
+            if hasattr(self.queue_mgr, "bind_project"):
+                self.queue_mgr.bind_project(vid, proj_other.project_id, bundle_other)
+
+        if hasattr(self, "_start_metadata_worker"):
+            self._start_metadata_worker(selected_paths)
+
+        # Mở video đầu tiên vào Workspace
+        self._open_project_by_path(bundle_first)
+        self.queue_mgr.set_active(first_video)
+        if hasattr(self, "video_player") and hasattr(self.video_player, "load_video") and os.path.exists(first_video):
+            self.video_player.load_video(first_video)
+
     def action_open_project(self):
         """Mở một dự án đã có (Tối ưu UX chống giật/co giãn Layout)"""
         project_dir = QFileDialog.getExistingDirectory(self, "Chọn Thư mục Dự án (.ai-subtitle)")
@@ -5486,6 +5546,8 @@ class MainWindow(QMainWindow):
                 self.generation_panel.sync_subtitle_sources_from_project()
             source_path = self.project_service.current_project.source.path
             self._queue_project_dirs[source_path] = project_dir
+            if hasattr(self, "video_player") and hasattr(self.video_player, "load_video") and source_path and os.path.exists(source_path):
+                self.video_player.load_video(source_path)
             self.workspace_service.restore_workspace()
             
             self._sync_subtitle_placement_from_project()
