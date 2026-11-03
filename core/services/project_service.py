@@ -144,6 +144,93 @@ class ProjectService:
         )
         return self.create_project(project_dir, name, video_path)
 
+    SUPPORTED_VIDEO_EXTENSIONS = {
+        ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".ts"
+    }
+
+    @staticmethod
+    def get_canonical_bundle_dir(video_path: str) -> str:
+        """Trả về đường dẫn bundle dự án chuẩn mực kề bên file video."""
+        folder = os.path.dirname(os.path.abspath(video_path))
+        filename = os.path.basename(video_path)
+        stem = os.path.splitext(filename)[0]
+        safe_name = "".join(
+            char if char.isalnum() or char in ("-", "_") else "_"
+            for char in stem
+        ).strip("_") or "video"
+
+        stem_bundle = os.path.join(folder, f"{stem}.ai-subtitle")
+        safe_bundle = os.path.join(folder, f"{safe_name}.ai-subtitle")
+        if os.path.isdir(stem_bundle):
+            return stem_bundle
+        if os.path.isdir(safe_bundle):
+            return safe_bundle
+        return safe_bundle
+
+    def scan_video_folder(self, folder_path: str) -> list[dict]:
+        """Quét thư mục chứa các file video và phát hiện bundle dự án tương ứng."""
+        if not folder_path or not os.path.isdir(folder_path):
+            return []
+
+        results = []
+        try:
+            entries = os.listdir(folder_path)
+        except OSError:
+            return []
+
+        for entry in entries:
+            if entry.startswith("."):
+                continue
+            full_path = os.path.join(folder_path, entry)
+            if not os.path.isfile(full_path):
+                continue
+            ext = os.path.splitext(entry)[1].lower()
+            if ext not in self.SUPPORTED_VIDEO_EXTENSIONS:
+                continue
+
+            try:
+                size_bytes = os.path.getsize(full_path)
+            except OSError:
+                size_bytes = 0
+            size_mb = round(size_bytes / (1024 * 1024), 2)
+            if size_mb >= 1024:
+                size_str = f"{round(size_mb / 1024, 2)} GB"
+            else:
+                size_str = f"{size_mb} MB"
+
+            expected_dir = self.get_canonical_bundle_dir(full_path)
+            has_project = os.path.isdir(expected_dir) and os.path.exists(
+                os.path.join(expected_dir, "project.json")
+            )
+
+            results.append({
+                "video_path": os.path.abspath(full_path),
+                "filename": entry,
+                "size_mb": size_mb,
+                "size_str": size_str,
+                "has_project": has_project,
+                "expected_project_dir": expected_dir,
+            })
+
+        results.sort(key=lambda item: item["filename"].lower())
+        return results
+
+    def create_or_get_folder_project(self, video_path: str) -> tuple[Project, bool]:
+        """Tạo dự án mới kề bên video nếu chưa có; mở lại dự án cũ nếu đã tồn tại."""
+        if not os.path.exists(video_path):
+            raise FileNotFoundError(f"Không tìm thấy file video tại: {video_path}")
+
+        bundle_dir = self.get_canonical_bundle_dir(video_path)
+        proj_json = os.path.join(bundle_dir, "project.json")
+
+        if os.path.isdir(bundle_dir) and os.path.exists(proj_json):
+            project = self.open_project(bundle_dir)
+            return project, False
+
+        name = os.path.splitext(os.path.basename(video_path))[0]
+        project = self.create_project(bundle_dir, name, video_path)
+        return project, True
+
     def save_project(self) -> None:
         """Lưu Project hiện tại xuống đĩa cứng, chia thành các file riêng biệt"""
         if not self.current_project or not self.project_dir:
