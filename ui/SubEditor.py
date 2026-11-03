@@ -422,6 +422,7 @@ class SubtitleEditorWidget(QWidget):
         self.table.cellChanged.connect(self.on_table_edit)
         self.table.cellClicked.connect(self._on_row_selected)
         self.table.currentCellChanged.connect(self._on_table_current_cell_changed)
+        self.table.itemSelectionChanged.connect(self._on_table_selection_changed)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_table_context_menu)
         left_layout.addWidget(self.table, stretch=1)
@@ -1144,6 +1145,27 @@ class SubtitleEditorWidget(QWidget):
         except Exception as e:
             Toast.show_error(win, f"Lỗi phân tích âm thanh: {e}")
 
+    def _on_table_selection_changed(self):
+        if getattr(self, "_is_syncing_ui", False) or getattr(self, "is_rendering", False):
+            return
+        selected = self._get_selected_source_indices()
+        if len(selected) > 1:
+            selected_ids = set()
+            for idx in selected:
+                if 0 <= idx < len(self.all_segments):
+                    seg = self.all_segments[idx]
+                    sid = str(seg.get("id") or seg.get("stt") or (idx + 1))
+                    seg["id"] = sid
+                    selected_ids.add(sid)
+            self.current_index = selected[0]
+            self._load_current_editor()
+            if hasattr(self.current_editor, "lbl_title"):
+                self.current_editor.lbl_title.setText(f"#{selected[0] + 1} ({len(selected)} câu)")
+            if hasattr(self.current_editor, "btn_scan"):
+                self.current_editor.btn_scan.setText(f"Quét lại ({len(selected)})")
+            if self.selection_controller and hasattr(self.selection_controller, "select_multiple"):
+                self.selection_controller.select_multiple(selected, selected_ids, SelectionSource.EDITOR)
+
     def _on_row_selected(self, row, _column):
         abs_idx = self._source_index_for_row(row)
         if not (0 <= abs_idx < len(self.all_segments)):
@@ -1161,6 +1183,9 @@ class SubtitleEditorWidget(QWidget):
                 self.current_editor.lbl_title.setText(f"#{abs_idx + 1} ({len(selected)} câu)")
             if hasattr(self.current_editor, "btn_scan"):
                 self.current_editor.btn_scan.setText(f"Quét lại ({len(selected)})")
+            selected_ids = {str(self.all_segments[i].get("id") or self.all_segments[i].get("stt") or (i + 1)) for i in selected if 0 <= i < len(self.all_segments)}
+            if self.selection_controller and hasattr(self.selection_controller, "select_multiple"):
+                self.selection_controller.select_multiple(selected, selected_ids, SelectionSource.EDITOR)
             return
         if hasattr(self.current_editor, "btn_scan"):
             self.current_editor.btn_scan.setText("Quét lại")
@@ -1196,6 +1221,30 @@ class SubtitleEditorWidget(QWidget):
             )
             return
         self._select_segment_ui(index)
+
+    def sync_multi_selection(self, indices: list[int], segment_ids: set[str], source=None):
+        if source == SelectionSource.EDITOR:
+            return
+        if not indices or len(indices) <= 1:
+            return
+        self._is_syncing_ui = True
+        self.table.blockSignals(True)
+        self.table.clearSelection()
+        from PySide6.QtCore import QItemSelectionModel
+        for idx in indices:
+            row = self._get_row_by_source_index(idx)
+            if row >= 0:
+                model_idx = self.table.model().index(row, 0)
+                self.table.selectionModel().select(model_idx, QItemSelectionModel.Select | QItemSelectionModel.Rows)
+        self.table.blockSignals(False)
+        self._is_syncing_ui = False
+
+        self.current_index = indices[0]
+        self._load_current_editor()
+        if hasattr(self.current_editor, "lbl_title"):
+            self.current_editor.lbl_title.setText(f"#{self.current_index + 1} ({len(indices)} câu)")
+        if hasattr(self.current_editor, "btn_scan"):
+            self.current_editor.btn_scan.setText(f"Quét lại ({len(indices)})")
 
     def sync_selection(self, index, segment_id, source=None):
         target_idx = -1

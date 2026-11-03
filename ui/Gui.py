@@ -624,6 +624,9 @@ class MainWindow(QMainWindow):
         self.sub_editor.selection_controller = self.selection_controller
         self.selection_controller.selection_changed.connect(self.sub_editor.sync_selection)
         self.selection_controller.selection_changed.connect(self._on_global_selection_changed)
+        if hasattr(self.selection_controller, "multi_selection_changed"):
+            self.selection_controller.multi_selection_changed.connect(self.sub_editor.sync_multi_selection)
+            self.selection_controller.multi_selection_changed.connect(self._on_global_multi_selection_changed)
         self.undo_manager.state_changed.connect(self.sub_editor.render_page)
         self.undo_manager.state_changed.connect(self.sub_editor.update_draft_progress)
         if hasattr(self.sub_editor, "manual_add_requested"):
@@ -1599,8 +1602,18 @@ class MainWindow(QMainWindow):
             self.video_player._segment_bounds = (start_ms, end_ms)
             self.video_player.set_position(target_ms)
             
+    def _on_global_multi_selection_changed(self, indices: list, segment_ids: set, source):
+        if hasattr(self, "timeline_widget") and self.timeline_widget:
+            track = getattr(getattr(self.timeline_widget, "container", None), "track", None)
+            if track and track.selected_ids != segment_ids:
+                track.set_selection(set(segment_ids))
+                track.update()
+        self._update_timeline_batch_scan_button()
+
     def _on_global_selection_changed(self, index, segment_id, source):
         if index < 0 or index >= len(self.sub_editor.all_segments):
+            if hasattr(self, "selection_controller") and len(getattr(self.selection_controller, "selected_ids", set())) > 1:
+                return
             if hasattr(self, 'video_player') and self.video_player:
                 self.video_player.clear_segment_focus()
             if hasattr(self, 'timeline_widget') and self.timeline_widget:
@@ -1638,9 +1651,17 @@ class MainWindow(QMainWindow):
             self.timeline_widget.container.waveform.set_selected_range(start_ms, end_ms)
             track = getattr(getattr(self.timeline_widget, "container", None), "track", None)
             if track and hasattr(track, "segments"):
-                seg = next((s for s in track.segments if abs(s.start_ms - start_ms) <= 200 and abs(s.end_ms - end_ms) <= 200), None)
-                if seg:
-                    track.set_selection({seg.segment_id})
+                tbl_selected = self.sub_editor._get_selected_source_indices() if hasattr(self, "sub_editor") else []
+                if len(tbl_selected) > 1:
+                    target_ids = {
+                        str(self.sub_editor.all_segments[i].get("id") or self.sub_editor.all_segments[i].get("stt") or (i + 1))
+                        for i in tbl_selected if 0 <= i < len(self.sub_editor.all_segments)
+                    }
+                    track.set_selection(target_ids)
+                else:
+                    seg = next((s for s in track.segments if abs(s.start_ms - start_ms) <= 200 and abs(s.end_ms - end_ms) <= 200), None)
+                    if seg:
+                        track.set_selection({seg.segment_id})
             
     def _resolve_rescan_model_and_compute(self, settings: dict) -> tuple[str, str]:
         configured_model = (settings or {}).get("model_size", "large-v3") or "large-v3"
