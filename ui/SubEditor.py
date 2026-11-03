@@ -282,6 +282,10 @@ class SubtitleEditorWidget(QWidget):
     save_requested = Signal(str)
     timing_committed = Signal()
     manual_add_requested = Signal(int)
+    segment_split_applied = Signal(str, dict, dict)
+    segment_split_undone = Signal(str, str, dict)
+    segments_merge_applied = Signal(str, str, dict)
+    segments_merge_undone = Signal(str, dict, dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1530,6 +1534,18 @@ class SubtitleEditorWidget(QWidget):
             return
         self.undo_manager.push(DeleteCommand(self.current_index, self.all_segments))
 
+    def _on_split_applied(self, original_id: str, seg1: dict, seg2: dict):
+        self.segment_split_applied.emit(original_id, seg1, seg2)
+
+    def _on_split_undone(self, original_id: str, new_id: str, original_seg: dict):
+        self.segment_split_undone.emit(original_id, new_id, original_seg)
+
+    def _on_merge_applied(self, id1: str, id2: str, merged_seg: dict):
+        self.segments_merge_applied.emit(id1, id2, merged_seg)
+
+    def _on_merge_undone(self, id1: str, seg1: dict, seg2: dict):
+        self.segments_merge_undone.emit(id1, seg1, seg2)
+
     def trigger_merge(self):
         if (
             self.current_index < 0
@@ -1537,7 +1553,14 @@ class SubtitleEditorWidget(QWidget):
             or self.undo_manager is None
         ):
             return
-        self.undo_manager.push(MergeCommand(self.current_index, self.all_segments))
+        self.undo_manager.push(
+            MergeCommand(
+                self.current_index,
+                self.all_segments,
+                on_applied=self._on_merge_applied,
+                on_undone=self._on_merge_undone,
+            )
+        )
 
     def trigger_split(self, playhead_ms: int):
         if not self.all_segments or self.undo_manager is None:
@@ -1568,7 +1591,13 @@ class SubtitleEditorWidget(QWidget):
         # shortcut: 200ms boundary guard prevents sub-frame slivers, upgrade to dynamic threshold if fps changes
         if (playhead_ms - start_ms >= 200) and (end_ms - playhead_ms >= 200):
             self.undo_manager.push(
-                SplitCommand(target_idx, playhead_ms, self.all_segments)
+                SplitCommand(
+                    target_idx,
+                    playhead_ms,
+                    self.all_segments,
+                    on_applied=self._on_split_applied,
+                    on_undone=self._on_split_undone,
+                )
             )
             new_idx = target_idx + 1
             if 0 <= new_idx < len(self.all_segments):

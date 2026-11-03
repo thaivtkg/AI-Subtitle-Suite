@@ -1258,8 +1258,12 @@ class MainWindow(QMainWindow):
         self.page_translation = TranslationStudioPage(self)
         self.page_translation.translation_committed.connect(self._on_translation_committed)
         self.page_translation.batch_translations_updated.connect(self._on_batch_translations_updated)
-        self.stack.addWidget(self.page_translation
-        )
+        if hasattr(self, "sub_editor") and self.sub_editor:
+            self.sub_editor.segment_split_applied.connect(self.page_translation.handle_segment_split)
+            self.sub_editor.segment_split_undone.connect(self.page_translation.handle_segment_split_undo)
+            self.sub_editor.segments_merge_applied.connect(self.page_translation.handle_segments_merged)
+            self.sub_editor.segments_merge_undone.connect(self.page_translation.handle_segments_merge_undo)
+        self.stack.addWidget(self.page_translation)
 
         right_layout.addWidget(self.stack, stretch=1)
 

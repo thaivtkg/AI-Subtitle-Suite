@@ -230,6 +230,149 @@ class SubtitleModel(QAbstractListModel):
             self.progressStatsChanged.emit()
 
 
+
+    @Slot(int, "QVariantMap", "QVariantMap", result=bool)
+    def split_subtitle(self, row_idx: int, seg1_data: dict, seg2_data: dict) -> bool:
+        """Tách 1 dòng phụ đề thành 2 dòng nguyên tử bằng beginInsertRows."""
+        if not (0 <= row_idx < len(self._subtitles)):
+            return False
+        self._subtitles[row_idx].update(seg1_data)
+        self._normalize_translation_state(self._subtitles[row_idx])
+        self._update_item_qa(self._subtitles[row_idx])
+
+        new_item = dict(seg2_data)
+        self._normalize_translation_state(new_item)
+        self._update_item_qa(new_item)
+        self.beginInsertRows(QModelIndex(), row_idx + 1, row_idx + 1)
+        self._subtitles.insert(row_idx + 1, new_item)
+        self.endInsertRows()
+
+        for i in range(row_idx, len(self._subtitles)):
+            self._subtitles[i]["index"] = i + 1
+            if "studio_index" in self._subtitles[i]:
+                self._subtitles[i]["studio_index"] = i
+
+        q_start = self.createIndex(row_idx, 0)
+        q_end = self.createIndex(len(self._subtitles) - 1, 0)
+        self.dataChanged.emit(q_start, q_end, [
+            self.IndexRole,
+            self.StartTimeRole,
+            self.EndTimeRole,
+            self.OriginalRole,
+            self.TranslationRole,
+            self.StatusRole,
+            self.QaSeverityRole,
+            self.QaTooltipRole,
+        ])
+        self.progressStatsChanged.emit()
+        return True
+
+    @Slot(int, "QVariantMap", result=bool)
+    def undo_split_subtitle(self, row_idx: int, original_seg_data: dict) -> bool:
+        """Hoàn tác việc tách: xóa câu 2 và phục hồi câu 1 bằng beginRemoveRows."""
+        if not (0 <= row_idx < len(self._subtitles) - 1):
+            return False
+        self.beginRemoveRows(QModelIndex(), row_idx + 1, row_idx + 1)
+        self._subtitles.pop(row_idx + 1)
+        self.endRemoveRows()
+
+        self._subtitles[row_idx].clear()
+        self._subtitles[row_idx].update(original_seg_data)
+        self._normalize_translation_state(self._subtitles[row_idx])
+        self._update_item_qa(self._subtitles[row_idx])
+
+        for i in range(row_idx, len(self._subtitles)):
+            self._subtitles[i]["index"] = i + 1
+            if "studio_index" in self._subtitles[i]:
+                self._subtitles[i]["studio_index"] = i
+
+        q_start = self.createIndex(row_idx, 0)
+        q_end = self.createIndex(len(self._subtitles) - 1, 0)
+        self.dataChanged.emit(q_start, q_end, [
+            self.IndexRole,
+            self.StartTimeRole,
+            self.EndTimeRole,
+            self.OriginalRole,
+            self.TranslationRole,
+            self.StatusRole,
+            self.QaSeverityRole,
+            self.QaTooltipRole,
+        ])
+        self.progressStatsChanged.emit()
+        return True
+
+    @Slot(int, "QVariantMap", result=bool)
+    def merge_subtitles(self, row_idx: int, merged_data: dict) -> bool:
+        """Gộp 2 dòng phụ đề thành 1 bằng beginRemoveRows."""
+        if not (0 <= row_idx < len(self._subtitles) - 1):
+            return False
+        self.beginRemoveRows(QModelIndex(), row_idx + 1, row_idx + 1)
+        self._subtitles.pop(row_idx + 1)
+        self.endRemoveRows()
+
+        self._subtitles[row_idx].clear()
+        self._subtitles[row_idx].update(merged_data)
+        self._normalize_translation_state(self._subtitles[row_idx])
+        self._update_item_qa(self._subtitles[row_idx])
+
+        for i in range(row_idx, len(self._subtitles)):
+            self._subtitles[i]["index"] = i + 1
+            if "studio_index" in self._subtitles[i]:
+                self._subtitles[i]["studio_index"] = i
+
+        q_start = self.createIndex(row_idx, 0)
+        q_end = self.createIndex(len(self._subtitles) - 1, 0)
+        self.dataChanged.emit(q_start, q_end, [
+            self.IndexRole,
+            self.StartTimeRole,
+            self.EndTimeRole,
+            self.OriginalRole,
+            self.TranslationRole,
+            self.StatusRole,
+            self.QaSeverityRole,
+            self.QaTooltipRole,
+        ])
+        self.progressStatsChanged.emit()
+        return True
+
+    @Slot(int, "QVariantMap", "QVariantMap", result=bool)
+    def undo_merge_subtitles(self, row_idx: int, seg1_data: dict, seg2_data: dict) -> bool:
+        """Hoàn tác việc gộp: phục hồi câu 1 và chèn lại câu 2 bằng beginInsertRows."""
+        if not (0 <= row_idx < len(self._subtitles)):
+            return False
+        self._subtitles[row_idx].clear()
+        self._subtitles[row_idx].update(seg1_data)
+        self._normalize_translation_state(self._subtitles[row_idx])
+        self._update_item_qa(self._subtitles[row_idx])
+
+        new_item = dict(seg2_data)
+        self._normalize_translation_state(new_item)
+        self._update_item_qa(new_item)
+        self.beginInsertRows(QModelIndex(), row_idx + 1, row_idx + 1)
+        self._subtitles.insert(row_idx + 1, new_item)
+        self.endInsertRows()
+
+        for i in range(row_idx, len(self._subtitles)):
+            self._subtitles[i]["index"] = i + 1
+            if "studio_index" in self._subtitles[i]:
+                self._subtitles[i]["studio_index"] = i
+
+        q_start = self.createIndex(row_idx, 0)
+        q_end = self.createIndex(len(self._subtitles) - 1, 0)
+        self.dataChanged.emit(q_start, q_end, [
+            self.IndexRole,
+            self.StartTimeRole,
+            self.EndTimeRole,
+            self.OriginalRole,
+            self.TranslationRole,
+            self.StatusRole,
+            self.QaSeverityRole,
+            self.QaTooltipRole,
+        ])
+        self.progressStatsChanged.emit()
+        return True
+
+
 class FilteredSubtitleModel(QAbstractListModel):
     RawIndexRole = Qt.UserRole + 9
 

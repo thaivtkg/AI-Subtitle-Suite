@@ -179,44 +179,52 @@ class TranslationStudioPage(QWidget):
         else:
             self.translation_controller.loadSubtitle(-1)
 
-    def update_segment_source(self, segment_id: str, new_source_text: str):
-        """When a segment's audio is rescanned in Studio, update its source text and invalidate stale translation."""
-        data = self.subtitle_model.get_all_data()
-        target_id = str(segment_id).strip()
-        matched_idx = -1
+    @staticmethod
+    def _format_time(val):
+        if isinstance(val, (int, float)):
+            s, ms = divmod(max(0, int(val)), 1000)
+            m, s = divmod(s, 60)
+            h, m = divmod(m, 60)
+            return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+        return str(val) if val else "00:00:00,000"
 
-        # Tier 1: Ưu tiên khớp chính xác theo segment_id
+    def _find_cat_index(self, target_id: str) -> int:
+        data = self.subtitle_model.get_all_data()
+        target = str(target_id).strip()
+        if not target:
+            return -1
+
+        # Tier 1: segment_id
         for idx, item in enumerate(data):
             sid = str(item.get("segment_id") or "")
-            if sid and sid == target_id:
-                matched_idx = idx
-                break
+            if sid and sid == target:
+                return idx
 
-        # Tier 2: Khớp theo STT hiển thị (1-based index)
-        if matched_idx == -1:
-            for idx, item in enumerate(data):
-                stt = str(item.get("index") or "")
-                if stt and stt == target_id:
-                    matched_idx = idx
-                    break
+        # Tier 2: STT (index)
+        for idx, item in enumerate(data):
+            stt = str(item.get("index") or "")
+            if stt and stt == target:
+                return idx
 
-        # Tier 3: Khớp theo studio_index + 1 (1-based fallback)
-        if matched_idx == -1:
-            for idx, item in enumerate(data):
-                studio_idx = str(item.get("studio_index") if item.get("studio_index") is not None else "")
-                if studio_idx.isdigit() and str(int(studio_idx) + 1) == target_id:
-                    matched_idx = idx
-                    break
+        # Tier 3: studio_index + 1
+        for idx, item in enumerate(data):
+            studio_idx = str(item.get("studio_index") if item.get("studio_index") is not None else "")
+            if studio_idx.isdigit() and str(int(studio_idx) + 1) == target:
+                return idx
 
-        # Tier 4: Khớp theo studio_index trực tiếp (0-based fallback)
-        if matched_idx == -1:
-            for idx, item in enumerate(data):
-                studio_idx = str(item.get("studio_index") if item.get("studio_index") is not None else "")
-                if studio_idx and studio_idx == target_id:
-                    matched_idx = idx
-                    break
+        # Tier 4: studio_index
+        for idx, item in enumerate(data):
+            studio_idx = str(item.get("studio_index") if item.get("studio_index") is not None else "")
+            if studio_idx and studio_idx == target:
+                return idx
 
+        return -1
+
+    def update_segment_source(self, segment_id: str, new_source_text: str):
+        """When a segment's audio is rescanned in Studio, update its source text and invalidate stale translation."""
+        matched_idx = self._find_cat_index(segment_id)
         if matched_idx >= 0:
+            data = self.subtitle_model.get_all_data()
             item = data[matched_idx]
             item["original"] = new_source_text
             item["translation"] = ""
@@ -227,6 +235,129 @@ class TranslationStudioPage(QWidget):
                     self.translation_controller.cancelTranslation()
             if matched_idx == getattr(self.translation_controller, "_current_index", -1):
                 self.translation_controller.loadSubtitle(matched_idx)
+
+    def handle_segment_split(self, original_id: str, seg1: dict, seg2: dict):
+        """Đồng bộ thời gian thực khi 1 câu trên Video Workspace bị cắt làm đôi."""
+        matched_idx = self._find_cat_index(original_id)
+        if matched_idx < 0:
+            return
+
+        if hasattr(self.translation_controller, "is_busy") and self.translation_controller.is_busy():
+            if getattr(self.translation_controller, "_active_translation_index", -1) == matched_idx:
+                self.translation_controller.cancelTranslation()
+
+        seg1_data = {
+            "segment_id": str(seg1.get("id") or original_id),
+            "studio_index": matched_idx,
+            "index": int(seg1.get("stt", matched_idx + 1)),
+            "start_time": self._format_time(seg1.get("start")),
+            "end_time": self._format_time(seg1.get("end")),
+            "original": seg1.get("original_text") or seg1.get("text", ""),
+            "translation": "",
+            "status": "PENDING",
+        }
+        seg2_data = {
+            "segment_id": str(seg2.get("id") or (matched_idx + 2)),
+            "studio_index": matched_idx + 1,
+            "index": int(seg2.get("stt", matched_idx + 2)),
+            "start_time": self._format_time(seg2.get("start")),
+            "end_time": self._format_time(seg2.get("end")),
+            "original": seg2.get("original_text") or seg2.get("text", ""),
+            "translation": "",
+            "status": "PENDING",
+        }
+        self.subtitle_model.split_subtitle(matched_idx, seg1_data, seg2_data)
+
+        if getattr(self.translation_controller, "_current_index", -1) == matched_idx:
+            self.translation_controller.loadSubtitle(matched_idx)
+
+    def handle_segment_split_undo(self, original_id: str, new_seg_id: str, original_seg: dict):
+        """Hoàn tác cắt câu: xóa câu con thứ 2 và phục hồi câu mẹ nguyên bản."""
+        matched_idx = self._find_cat_index(original_id)
+        if matched_idx < 0:
+            return
+
+        if hasattr(self.translation_controller, "is_busy") and self.translation_controller.is_busy():
+            if getattr(self.translation_controller, "_active_translation_index", -1) in (matched_idx, matched_idx + 1):
+                self.translation_controller.cancelTranslation()
+
+        orig_data = {
+            "segment_id": str(original_seg.get("id") or original_id),
+            "studio_index": matched_idx,
+            "index": int(original_seg.get("stt", matched_idx + 1)),
+            "start_time": self._format_time(original_seg.get("start")),
+            "end_time": self._format_time(original_seg.get("end")),
+            "original": original_seg.get("original_text") or original_seg.get("text", ""),
+            "translation": original_seg.get("translation", ""),
+            "status": original_seg.get("translation_status", "TRANSLATED" if original_seg.get("translation") else "PENDING"),
+        }
+        self.subtitle_model.undo_split_subtitle(matched_idx, orig_data)
+
+        if getattr(self.translation_controller, "_current_index", -1) in (matched_idx, matched_idx + 1):
+            self.translation_controller.loadSubtitle(matched_idx)
+
+    def handle_segments_merged(self, id1: str, id2: str, merged_seg: dict):
+        """Đồng bộ thời gian thực khi 2 câu trên Video Workspace được gộp thành 1."""
+        matched_idx = self._find_cat_index(id1)
+        if matched_idx < 0 or matched_idx >= self.subtitle_model.rowCount() - 1:
+            return
+
+        if hasattr(self.translation_controller, "is_busy") and self.translation_controller.is_busy():
+            if getattr(self.translation_controller, "_active_translation_index", -1) in (matched_idx, matched_idx + 1):
+                self.translation_controller.cancelTranslation()
+
+        trans = merged_seg.get("translation", "")
+        merged_data = {
+            "segment_id": str(merged_seg.get("id") or id1),
+            "studio_index": matched_idx,
+            "index": int(merged_seg.get("stt", matched_idx + 1)),
+            "start_time": self._format_time(merged_seg.get("start")),
+            "end_time": self._format_time(merged_seg.get("end")),
+            "original": merged_seg.get("original_text") or merged_seg.get("text", ""),
+            "translation": trans,
+            "status": merged_seg.get("translation_status", "EDITED" if trans else "PENDING"),
+        }
+        self.subtitle_model.merge_subtitles(matched_idx, merged_data)
+
+        if getattr(self.translation_controller, "_current_index", -1) in (matched_idx, matched_idx + 1):
+            self.translation_controller.loadSubtitle(matched_idx)
+
+    def handle_segments_merge_undo(self, id1: str, seg1: dict, seg2: dict):
+        """Hoàn tác gộp câu: tái lập lại 2 câu riêng rẽ ban đầu."""
+        matched_idx = self._find_cat_index(id1)
+        if matched_idx < 0:
+            return
+
+        if hasattr(self.translation_controller, "is_busy") and self.translation_controller.is_busy():
+            if getattr(self.translation_controller, "_active_translation_index", -1) == matched_idx:
+                self.translation_controller.cancelTranslation()
+
+        t1 = seg1.get("translation", "")
+        t2 = seg2.get("translation", "")
+        seg1_data = {
+            "segment_id": str(seg1.get("id") or id1),
+            "studio_index": matched_idx,
+            "index": int(seg1.get("stt", matched_idx + 1)),
+            "start_time": self._format_time(seg1.get("start")),
+            "end_time": self._format_time(seg1.get("end")),
+            "original": seg1.get("original_text") or seg1.get("text", ""),
+            "translation": t1,
+            "status": seg1.get("translation_status", "TRANSLATED" if t1 else "PENDING"),
+        }
+        seg2_data = {
+            "segment_id": str(seg2.get("id") or (matched_idx + 2)),
+            "studio_index": matched_idx + 1,
+            "index": int(seg2.get("stt", matched_idx + 2)),
+            "start_time": self._format_time(seg2.get("start")),
+            "end_time": self._format_time(seg2.get("end")),
+            "original": seg2.get("original_text") or seg2.get("text", ""),
+            "translation": t2,
+            "status": seg2.get("translation_status", "TRANSLATED" if t2 else "PENDING"),
+        }
+        self.subtitle_model.undo_merge_subtitles(matched_idx, seg1_data, seg2_data)
+
+        if getattr(self.translation_controller, "_current_index", -1) == matched_idx:
+            self.translation_controller.loadSubtitle(matched_idx)
 
     def export_subtitles_to_studio(self, studio_segments: list):
         """Cập nhật bản dịch từ SubtitleModel ngược lại danh sách phụ đề của Studio."""
