@@ -388,6 +388,8 @@ class VideoPlayerWidget(QWidget):
         self.set_position(start_ms)
         self._segment_bounds = (start_ms, end_ms)
         self._segment_playback_active = False
+        if hasattr(self, "sub_controller"):
+            self.sub_controller.sync_position(start_ms)
         self.update_time_label(start_ms)
 
     def cancel_segment_playback(self, *, pause=False):

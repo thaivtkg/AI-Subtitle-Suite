@@ -1653,6 +1653,8 @@ class MainWindow(QMainWindow):
                 self.video_player.focus_segment(start_ms, end_ms)
         if hasattr(self, 'timeline_widget') and self.timeline_widget:
             self.timeline_widget.container.waveform.set_selected_range(start_ms, end_ms)
+            if hasattr(self.timeline_widget, "update_playhead"):
+                self.timeline_widget.update_playhead(start_ms)
             track = getattr(getattr(self.timeline_widget, "container", None), "track", None)
             if track and hasattr(track, "segments"):
                 tbl_selected = self.sub_editor._get_selected_source_indices() if hasattr(self, "sub_editor") else []

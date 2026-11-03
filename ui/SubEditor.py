@@ -465,6 +465,18 @@ class SubtitleEditorWidget(QWidget):
         self.shortcut_next.setProperty("help_context", "Timeline")
         self.shortcut_next.activated.connect(self.select_next)
 
+        self.shortcut_prev_alt_up = QShortcut(QKeySequence("Alt+Up"), self)
+        self.shortcut_prev_alt_up.setObjectName("previous_subtitle_alt_up")
+        self.shortcut_prev_alt_up.setProperty("help_label", "Previous Subtitle")
+        self.shortcut_prev_alt_up.setProperty("help_context", "Timeline")
+        self.shortcut_prev_alt_up.activated.connect(self.select_previous)
+
+        self.shortcut_next_alt_down = QShortcut(QKeySequence("Alt+Down"), self)
+        self.shortcut_next_alt_down.setObjectName("next_subtitle_alt_down")
+        self.shortcut_next_alt_down.setProperty("help_label", "Next Subtitle")
+        self.shortcut_next_alt_down.setProperty("help_context", "Timeline")
+        self.shortcut_next_alt_down.activated.connect(self.select_next)
+
         # --- CÁC NÚT HÀNH ĐỘNG (Sẽ được Gui.py gắn vào Timeline Toolbar) ---
         from PySide6.QtWidgets import QMenu
         self.fix_overlap_btn = QPushButton("⚡ Chồng lấn ▾")
@@ -1204,10 +1216,14 @@ class SubtitleEditorWidget(QWidget):
                     self.select_segment(abs_idx)
 
     def select_previous(self):
+        if hasattr(self, "current_editor"):
+            self.current_editor.commit_pending_edit()
         if self.current_index > 0:
             self.select_segment(self.current_index - 1)
 
     def select_next(self):
+        if hasattr(self, "current_editor"):
+            self.current_editor.commit_pending_edit()
         if self.current_index < len(self.all_segments) - 1:
             self.select_segment(self.current_index + 1)
 
@@ -1277,7 +1293,12 @@ class SubtitleEditorWidget(QWidget):
         if hasattr(self.current_editor, "btn_scan"):
             self.current_editor.btn_scan.setText("Quét lại")
         self.current_editor.set_values(seg["start"], seg["end"], seg["text"])
-        if hasattr(self.current_editor, "text_edit"):
+        table_has_focus = False
+        if hasattr(self, "table") and self.table:
+            table_has_focus = self.table.hasFocus() or (
+                hasattr(self.table, "viewport") and self.table.viewport().hasFocus()
+            )
+        if hasattr(self.current_editor, "text_edit") and not table_has_focus:
             self.current_editor.text_edit.setFocus()
 
         # If the selected ID is included by the active range but is on another
@@ -1775,6 +1796,20 @@ class SubtitleEditorWidget(QWidget):
         if event.type() == QEvent.KeyPress and self.current_index >= 0:
             modifiers = event.modifiers()
             key = event.key()
+            if modifiers & Qt.AltModifier:
+                if key in (Qt.Key_Up, Qt.Key_Left):
+                    self.select_previous()
+                    if hasattr(self.current_editor, "text_edit"):
+                        self.current_editor.text_edit.setFocus()
+                        self.current_editor.text_edit.selectAll()
+                    return True
+                elif key in (Qt.Key_Down, Qt.Key_Right):
+                    self.select_next()
+                    if hasattr(self.current_editor, "text_edit"):
+                        self.current_editor.text_edit.setFocus()
+                        self.current_editor.text_edit.selectAll()
+                    return True
+
             if key in (Qt.Key_Return, Qt.Key_Enter) and modifiers & Qt.ControlModifier:
                 self.setFocus()
                 return True
