@@ -16,8 +16,8 @@ class SubtitleSelectionController(QObject):
 
     # Sử dụng object để cho phép truyền đồng thời str (segment_id) hoặc None
     selection_changed = Signal(int, object, SelectionSource)
-    multi_selection_changed = Signal(list, set, SelectionSource)
     editor_activation_requested = Signal(int, object)
+    multi_selection_changed = Signal(list, set, SelectionSource)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -49,13 +49,20 @@ class SubtitleSelectionController(QObject):
         source: SelectionSource = SelectionSource.PROGRAMMATIC,
     ):
         """Cập nhật trạng thái và phát tín hiệu đồng bộ xuống các View."""
-        if self._selected_index == index and self._selected_segment_id == segment_id and len(self._selected_ids) <= 1:
+        new_indices = [index] if index >= 0 else []
+        new_ids = {segment_id} if segment_id else set()
+        if (
+            self._selected_index == index
+            and self._selected_segment_id == segment_id
+            and self._selected_indices == new_indices
+            and self._selected_ids == new_ids
+        ):
             return
 
         self._selected_index = index
         self._selected_segment_id = segment_id
-        self._selected_indices = [index] if index >= 0 else []
-        self._selected_ids = {segment_id} if segment_id else set()
+        self._selected_indices = new_indices
+        self._selected_ids = new_ids
         self.selection_changed.emit(index, segment_id, source)
         self.multi_selection_changed.emit(self._selected_indices, self._selected_ids, source)
 
@@ -65,14 +72,14 @@ class SubtitleSelectionController(QObject):
         segment_ids: set[str],
         source: SelectionSource = SelectionSource.PROGRAMMATIC,
     ):
-        """Cập nhật trạng thái chọn nhiều phân đoạn đồng thời."""
+        """Cập nhật trạng thái đa chọn và phát tín hiệu xuống các View."""
         sorted_indices = sorted(indices)
         set_ids = set(segment_ids)
         if self._selected_indices == sorted_indices and self._selected_ids == set_ids:
             return
-
         self._selected_indices = sorted_indices
         self._selected_ids = set_ids
+        # Khi đa chọn, đặt single-focus về -1 / None để vô hiệu hóa chế độ gõ 1 câu
         self._selected_index = sorted_indices[0] if len(sorted_indices) == 1 else -1
         self._selected_segment_id = next(iter(set_ids)) if len(set_ids) == 1 else None
         self.multi_selection_changed.emit(self._selected_indices, self._selected_ids, source)

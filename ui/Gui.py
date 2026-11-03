@@ -2146,8 +2146,8 @@ class MainWindow(QMainWindow):
         )
 
     def _sync_live_subtitle_on_undo_redo(self):
-        if hasattr(self, "sub_editor") and hasattr(self.sub_editor, "live_edit_applied"):
-            self.sub_editor.live_edit_applied.emit(self.sub_editor.all_segments)
+        if hasattr(self, "video_player") and hasattr(self.video_player, "sub_controller"):
+            self.video_player.sub_controller.update_live_data(self.sub_editor.all_segments)
         if hasattr(self, "video_player") and hasattr(self.video_player, "refresh_current_subtitle"):
             self.video_player.refresh_current_subtitle()
 

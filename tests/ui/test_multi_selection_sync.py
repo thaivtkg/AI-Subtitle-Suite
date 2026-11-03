@@ -1,9 +1,9 @@
+# -*- coding: utf-8 -*-
 import os
 import unittest
 from PySide6.QtCore import Qt, QPoint, QItemSelectionModel
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
-
 from core.subtitle_editing.selection_controller import (
     SelectionSource,
     SubtitleSelectionController,
@@ -26,7 +26,6 @@ class TestMultiSelectionSync(unittest.TestCase):
         self.provider = TimelineDataProvider()
         self.timeline = TimelineWidget()
         self.editor = SubtitleEditorWidget()
-
         self.editor.selection_controller = self.selection_controller
         self.controller = TimelineController(
             None,
@@ -34,10 +33,8 @@ class TestMultiSelectionSync(unittest.TestCase):
             self.provider,
             selection_controller=self.selection_controller,
         )
-
         self.selection_controller.selection_changed.connect(self.editor.sync_selection)
         self.selection_controller.multi_selection_changed.connect(self.editor.sync_multi_selection)
-
         self.segments = [
             {"id": "seg-1", "stt": "1", "start": "00:00:01,000", "end": "00:00:03,000", "start_ms": 1000, "end_ms": 3000, "text": "Sub 1"},
             {"id": "seg-2", "stt": "2", "start": "00:00:04,000", "end": "00:00:06,000", "start_ms": 4000, "end_ms": 6000, "text": "Sub 2"},
@@ -48,36 +45,47 @@ class TestMultiSelectionSync(unittest.TestCase):
         self.provider.load_runtime_data(self.segments, 10000)
         self.timeline.load_project_data(10000, self.provider.get_all_segments())
 
+    def tearDown(self):
+        self.timeline.deleteLater()
+        self.editor.deleteLater()
+
     def test_table_multi_selection_syncs_to_timeline_track(self):
-        """When selecting rows 0 and 1 in table, track.selected_ids must contain both seg-1 and seg-2."""
+        """Khi bôi đen 2 dòng trên bảng, Timeline Track phải lưu đúng 2 ID và cùng sáng."""
         sel_model = self.editor.table.selectionModel()
         sel_model.select(self.editor.table.model().index(0, 0), QItemSelectionModel.Select | QItemSelectionModel.Rows)
         sel_model.select(self.editor.table.model().index(1, 0), QItemSelectionModel.Select | QItemSelectionModel.Rows)
-
         self.assertEqual(self.editor._get_selected_source_indices(), [0, 1])
         track = self.timeline.container.track
         self.assertEqual(track.selected_ids, {"seg-1", "seg-2"})
 
     def test_timeline_track_ctrl_click_syncs_to_table(self):
-        """When Ctrl-clicking multiple segments on track, table selection must mirror the multi-selection."""
+        """Khi Ctrl+Click 2 khối trên Track, Bảng phụ đề phải bôi đen chính xác 2 hàng."""
         track = self.timeline.container.track
-        # Click first segment (x=200 is inside 1000ms-3000ms at default zoom 100px/s)
-        QTest.mouseClick(track, Qt.LeftButton, Qt.NoModifier, QPoint(200, 20))
+        # Sub 1 spans 1000ms..3000ms -> at default zoom (e.g. 100px/s), x=200px is inside Sub 1
+        # Sub 2 spans 4000ms..6000ms -> x=500px is inside Sub 2
+        seg1 = track.segments[0]
+        seg2 = track.segments[1]
+        x_seg1 = track._ms_to_x((seg1.start_ms + seg1.end_ms) // 2)
+        x_seg2 = track._ms_to_x((seg2.start_ms + seg2.end_ms) // 2)
+
+        QTest.mouseClick(track, Qt.LeftButton, Qt.NoModifier, QPoint(x_seg1, 20))
         self.assertEqual(track.selected_ids, {"seg-1"})
 
-        # Ctrl-click second segment (x=500 is inside 4000ms-6000ms at 100px/s)
-        QTest.mouseClick(track, Qt.LeftButton, Qt.ControlModifier, QPoint(500, 20))
+        QTest.mouseClick(track, Qt.LeftButton, Qt.ControlModifier, QPoint(x_seg2, 20))
         self.assertEqual(track.selected_ids, {"seg-1", "seg-2"})
-
-        # Verify table has both rows selected
         selected_table_indices = self.editor._get_selected_source_indices()
         self.assertEqual(selected_table_indices, [0, 1])
         self.assertIn("(2 câu)", self.editor.current_editor.lbl_title.text())
 
     def test_timeline_track_shift_click_also_multi_selects(self):
-        """Shift-clicking on timeline track also allows multi-selection."""
+        """Shift+Click trên Track cũng phải cho phép đa chọn và đồng bộ ngược lên Bảng."""
         track = self.timeline.container.track
-        QTest.mouseClick(track, Qt.LeftButton, Qt.NoModifier, QPoint(200, 20))
-        QTest.mouseClick(track, Qt.LeftButton, Qt.ShiftModifier, QPoint(500, 20))
+        seg1 = track.segments[0]
+        seg2 = track.segments[1]
+        x_seg1 = track._ms_to_x((seg1.start_ms + seg1.end_ms) // 2)
+        x_seg2 = track._ms_to_x((seg2.start_ms + seg2.end_ms) // 2)
+
+        QTest.mouseClick(track, Qt.LeftButton, Qt.NoModifier, QPoint(x_seg1, 20))
+        QTest.mouseClick(track, Qt.LeftButton, Qt.ShiftModifier, QPoint(x_seg2, 20))
         self.assertEqual(track.selected_ids, {"seg-1", "seg-2"})
         self.assertEqual(self.editor._get_selected_source_indices(), [0, 1])
