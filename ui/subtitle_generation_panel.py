@@ -206,9 +206,18 @@ class SubtitleGenerationPanel(QWidget):
         self.btn_download_model.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.btn_download_model.setToolTip("Download model from HuggingFace")
         self.btn_download_model.clicked.connect(self._on_download_model_clicked)
+        self.btn_delete_model = QPushButton("🗑️ Xóa")
+        self.btn_delete_model.setObjectName("btn_delete_model")
+        self.btn_delete_model.setProperty("variant", "danger")
+        self.btn_delete_model.setFixedHeight(28)
+        self.btn_delete_model.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.btn_delete_model.setToolTip("Xóa model khỏi máy tính để giải phóng dung lượng ổ đĩa")
+        self.btn_delete_model.clicked.connect(self._on_delete_model_clicked)
+        self.btn_delete_model.setVisible(False)
         model_row.addWidget(model_lbl)
         model_row.addWidget(self.cmb_model)
         model_row.addWidget(self.btn_download_model)
+        model_row.addWidget(self.btn_delete_model)
         model_layout.addLayout(model_row)
 
         # --- Compute Type row with recommendation ---
@@ -470,11 +479,51 @@ class SubtitleGenerationPanel(QWidget):
         self._on_model_selection_changed()
 
     def _on_model_selection_changed(self) -> None:
-        """Show/hide Download button based on whether selected model is installed."""
+        """Show/hide Download and Delete buttons based on whether selected model is installed."""
         from core.services.model_manager import ModelManager
         size = self.cmb_model.currentData()
         installed = ModelManager.is_installed(size) if size else False
         self.btn_download_model.setVisible(not installed)
+        if hasattr(self, "btn_delete_model"):
+            self.btn_delete_model.setVisible(installed)
+
+    def _on_delete_model_clicked(self) -> None:
+        """Confirm and delete the currently selected installed model."""
+        from core.services.model_manager import ModelManager
+        from PySide6.QtWidgets import QMessageBox
+
+        size = self.cmb_model.currentData()
+        if not size or not ModelManager.is_installed(size):
+            return
+
+        weight = ModelManager.SUPPORTED_MODELS.get(size, "")
+        confirm = QMessageBox.question(
+            self,
+            "Xác nhận xóa Model",
+            f"Bạn có chắc muốn xóa mô hình '{size}' ({weight}) khỏi ổ đĩa?\n\n"
+            "Thao tác này sẽ giải phóng dung lượng ổ đĩa. Bạn có thể tải lại bất kỳ lúc nào.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if confirm != QMessageBox.Yes:
+            return
+
+        try:
+            whisper_service = getattr(self.generation_service, "whisper_service", None)
+            if whisper_service and getattr(whisper_service, "current_model_size", None) == size:
+                whisper_service.unload_model()
+            win = self.window()
+            win_whisper = getattr(win, "subtitle_whisper_service", None)
+            if win_whisper and getattr(win_whisper, "current_model_size", None) == size:
+                win_whisper.unload_model()
+
+            deleted = ModelManager.delete_model(size)
+            self._populate_model_combo(preferred=size)
+            if deleted:
+                from ui.toast import Toast
+                Toast.show_success(self, f"Đã xóa thành công model '{size}'")
+        except Exception as exc:
+            QMessageBox.critical(self, "Lỗi khi xóa Model", f"Không thể xóa model '{size}': {exc}")
 
     def _on_download_model_clicked(self) -> None:
         """Trigger background download for the currently selected uninstalled model."""

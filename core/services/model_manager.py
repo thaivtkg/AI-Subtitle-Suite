@@ -165,10 +165,11 @@ class ModelManager:
             shutil.rmtree(offline_path, ignore_errors=True)
             deleted = True
             
-        for d in models_dir.iterdir():
-            if d.is_dir() and f"faster-whisper-{model_size}" in d.name:
-                shutil.rmtree(d, ignore_errors=True)
-                deleted = True
+        if models_dir.exists():
+            for d in models_dir.iterdir():
+                if d.is_dir() and f"faster-whisper-{model_size}" in d.name:
+                    shutil.rmtree(d, ignore_errors=True)
+                    deleted = True
         return deleted
 
     @staticmethod

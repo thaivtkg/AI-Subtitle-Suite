@@ -241,3 +241,83 @@ def test_project_save_suppresses_zero_subtitle_log(capsys, tmp_path):
     out = capsys.readouterr().out
 
     assert "Saving 0 subtitles" not in out
+
+
+def test_rescan_and_batch_rescan_default_vad_to_false(qapp, tmp_path):
+    from ui.Gui import MainWindow
+    from workers.SegmentScanWorker import SegmentScanWorker, BatchSegmentScanWorker
+
+    win = MainWindow.__new__(MainWindow)
+    win.sub_editor = MagicMock()
+    win.sub_editor.all_segments = [
+        {"id": "s1", "start": "00:00:01,000", "end": "00:00:03,000", "start_ms": 1000, "end_ms": 3000, "text": "Câu có chữ"},
+        {"id": "s2", "start": "00:00:03,500", "end": "00:00:05,000", "start_ms": 3500, "end_ms": 5000, "text": ""},
+    ]
+    win.sub_editor.current_editor = MagicMock()
+    win.sub_editor.current_editor.chk_boost_audio.isChecked.return_value = False
+    win.sub_editor.current_editor.text_edit = MagicMock()
+    win.sub_editor.current_editor.btn_scan = MagicMock()
+    win.project_service = MagicMock()
+    win.project_service.current_project = MagicMock(project_id="p1", video_path=str(tmp_path / "v.mp4"))
+    win.current_vid = str(tmp_path / "v.mp4")
+    (tmp_path / "v.mp4").write_bytes(b"dummy")
+    win.get_current_video_path = lambda: str(tmp_path / "v.mp4")
+    win.generation_panel = MagicMock()
+    win.generation_panel._timing_settings.return_value = {
+        "model_size": "large-v3",
+        "compute_type": "int8_float16",
+        "language": "ja",
+        "use_vad": True,  # panel setting has use_vad=True, but rescan/batch scan must default to False
+    }
+    win.subtitle_whisper_service = MagicMock(device="cuda")
+
+    with patch("core.services.model_manager.ModelManager.is_installed", return_value=True), \
+         patch("core.translation.core.hardware_detector.HardwareDetector.get_vram_usage", return_value=(1.0, 4.0)), \
+         patch.object(SegmentScanWorker, "start"), \
+         patch.object(BatchSegmentScanWorker, "start"):
+
+        # 1. Quét lại câu có sẵn chữ (scan_mode == 'asr') -> use_vad phải là False
+        win._on_segment_scan_requested("s1", 1000, 3000)
+        assert win.scan_worker.scan_mode == "asr"
+        assert win.scan_worker.request.use_vad is False
+
+        # 2. Quét mốc timing cho câu trống (scan_mode == 'timing') -> use_vad phải là True
+        win._on_segment_scan_requested("s2", 3500, 5000)
+        assert win.scan_worker.scan_mode == "timing"
+        assert win.scan_worker.request.use_vad is True
+
+        # 3. Gen Sub hàng loạt các câu đang chọn -> use_vad phải là False
+        win._on_batch_segment_scan_requested([0, 1])
+        assert win._batch_scan_worker.request.use_vad is False
+
+
+def test_subtitle_generation_panel_delete_model_button(qapp):
+    from ui.subtitle_generation_panel import SubtitleGenerationPanel
+    from core.services.model_manager import ModelManager
+    from PySide6.QtWidgets import QMessageBox
+
+    panel = SubtitleGenerationPanel(MagicMock())
+    panel.show()
+    assert hasattr(panel, "btn_delete_model")
+
+    # Giả lập model large-v3 đã cài đặt
+    with patch("core.services.model_manager.ModelManager.is_installed", return_value=True):
+        idx = panel.cmb_model.findData("large-v3")
+        if idx >= 0:
+            panel.cmb_model.setCurrentIndex(idx)
+        panel._on_model_selection_changed()
+        assert not panel.btn_delete_model.isHidden()
+        assert panel.btn_download_model.isHidden()
+
+    # Giả lập model chưa cài đặt
+    with patch("core.services.model_manager.ModelManager.is_installed", return_value=False):
+        panel._on_model_selection_changed()
+        assert panel.btn_delete_model.isHidden()
+        assert not panel.btn_download_model.isHidden()
+
+    # Test bấm nút Xóa khi người dùng xác nhận Yes
+    with patch("core.services.model_manager.ModelManager.is_installed", return_value=True), \
+         patch.object(QMessageBox, "question", return_value=QMessageBox.Yes), \
+         patch("core.services.model_manager.ModelManager.delete_model", return_value=True) as mock_delete:
+        panel._on_delete_model_clicked()
+        assert mock_delete.called
