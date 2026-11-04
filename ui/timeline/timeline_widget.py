@@ -73,6 +73,15 @@ class TimelineContainer(QWidget):
         self.range_validation = QLabel()
         self.range_validation.setObjectName("timeline_range_validation")
         self.range_validation.setWordWrap(True)
+        self.btn_snap_overlap = QPushButton("🧲 Snap viền")
+        self.btn_snap_overlap.setObjectName("btn_snap_overlap")
+        self.btn_snap_overlap.setToolTip("Tự động co mốc kết thúc của phụ đề trước lại (cách phụ đề sau 20ms) để triệt tiêu vùng chồng lấn")
+        self.btn_snap_overlap.setStyleSheet(
+            "background-color: #1E293B; color: #F97316; border: 1px solid #F97316; border-radius: 6px; padding: 2px 10px; font-weight: 600;"
+        )
+        self.btn_snap_overlap.setEnabled(False)
+        self.btn_snap_overlap.hide()
+
         self.create_manual_gap_button = QPushButton("➕ Tạo Timing thủ công")
         self.create_manual_gap_button.setObjectName("btn_create_manual_gap")
         self.create_manual_gap_button.setStyleSheet(
@@ -90,6 +99,7 @@ class TimelineContainer(QWidget):
         gap_layout.addWidget(self.end_range_edit)
         gap_layout.addWidget(QLabel("Duration"))
         gap_layout.addWidget(self.range_duration)
+        gap_layout.addWidget(self.btn_snap_overlap)
         gap_layout.addWidget(self.create_manual_gap_button)
         gap_layout.addWidget(self.generate_gap_button)
         gap_layout.addWidget(self.play_segment_button)
@@ -113,6 +123,7 @@ class TimelineWidget(QScrollArea):
     workflow_reset = Signal()
     timing_edit_started = Signal()
     manual_timing_requested = Signal(int, int)
+    snap_overlap_requested = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -175,6 +186,18 @@ class TimelineWidget(QScrollArea):
         self.container.create_manual_gap_button.clicked.connect(self._emit_manual_timing_creation)
         self.container.generate_gap_button.clicked.connect(self._emit_range_generation)
         self.container.play_segment_button.clicked.connect(self.play_segment_requested.emit)
+        self.btn_snap_overlap = self.container.btn_snap_overlap
+        self.btn_snap_overlap.clicked.connect(lambda: self.snap_overlap_requested.emit(""))
+        self.container.track.overlap_status_changed.connect(self._on_overlap_status_changed)
+
+    def snap_overlap(self, segment_id: str = ""):
+        self.snap_overlap_requested.emit(segment_id)
+
+    def _on_overlap_status_changed(self, count: int):
+        if hasattr(self, "btn_snap_overlap"):
+            self.btn_snap_overlap.setEnabled(count > 0)
+            if count > 0:
+                self.btn_snap_overlap.show()
 
     @property
     def focused_segment(self):

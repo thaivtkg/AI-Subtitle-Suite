@@ -1,7 +1,7 @@
 from enum import Enum
 from PySide6.QtWidgets import QWidget
 from PySide6.QtGui import QPainter, QColor, QPen, QFont, QBrush
-from PySide6.QtCore import Qt, QRect, Signal
+from PySide6.QtCore import Qt, QRect, Signal, QTimer
 
 from ui.theme import Theme
 
@@ -23,6 +23,7 @@ class SubtitleTrack(QWidget):
     action_delete_requested = Signal(set)
     action_undo_requested = Signal()
     action_redo_requested = Signal()
+    overlap_status_changed = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -51,13 +52,58 @@ class SubtitleTrack(QWidget):
         self.setAttribute(Qt.WA_OpaquePaintEvent)
         self.setAttribute(Qt.WA_NoSystemBackground)
 
+        # FR-02: Overlap Snap Magnet & Eco-Timer 1Hz (500ms cycle)
+        self._overlap_timer = QTimer(self)
+        self._overlap_timer.setInterval(500)
+        self._overlap_timer.timeout.connect(self._toggle_overlap_blink)
+        self._overlap_blink_on = True
+
     # ==========================================
     # CÁC HÀM CUNG CẤP DỮ LIỆU ĐÃ ĐƯỢC KHÔI PHỤC
     # ==========================================
+
+    # ==========================================
+    # FR-02: OVERLAP ECO-TIMER & DETECTION
+    # ==========================================
+    def count_overlaps(self) -> int:
+        if not self.segments or len(self.segments) < 2:
+            return 0
+        count = 0
+        for i in range(len(self.segments) - 1):
+            if self.segments[i].end_ms > self.segments[i + 1].start_ms:
+                count += 1
+        return count
+
+    def check_overlap_timer(self):
+        count = self.count_overlaps()
+        if count > 0 and not self.isHidden():
+            if not self._overlap_timer.isActive():
+                self._overlap_timer.start()
+        else:
+            if self._overlap_timer.isActive():
+                self._overlap_timer.stop()
+                self._overlap_blink_on = True
+                self.update()
+        self.overlap_status_changed.emit(count)
+
+    def _toggle_overlap_blink(self):
+        self._overlap_blink_on = not self._overlap_blink_on
+        self.update()
+
+    def hideEvent(self, event):
+        if hasattr(self, "_overlap_timer") and self._overlap_timer.isActive():
+            self._overlap_timer.stop()
+        super().hideEvent(event)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.check_overlap_timer()
+
     def set_data(self, segments: list, duration_ms: int):
         self.segments = segments
         self.duration_ms = duration_ms
         self.update_geometry_size()
+        self.check_overlap_timer()
         self.update()
 
     def set_gaps(self, gaps):
@@ -431,8 +477,10 @@ class SubtitleTrack(QWidget):
                     nx = self._ms_to_x(next_seg.start_ms)
                     overlap_width = max(2, x2 - nx)
                     overlap_rect = QRect(nx, 5, overlap_width, self.height() - 10)
-                    painter.setBrush(QBrush(QColor(255, 0, 0, 100), Qt.DiagCrossPattern))
-                    painter.setPen(Qt.NoPen)
+                    # FR-02: Eco-Timer 1Hz dynamic blinking (500ms on / 500ms off)
+                    alpha = 180 if getattr(self, "_overlap_blink_on", True) else 60
+                    painter.setBrush(QBrush(QColor(239, 68, 68, alpha), Qt.DiagCrossPattern))
+                    painter.setPen(QPen(QColor(239, 68, 68, 220), 1) if getattr(self, "_overlap_blink_on", True) else Qt.NoPen)
                     painter.drawRect(overlap_rect)
                     
                     # Draw small overlap text if wide enough

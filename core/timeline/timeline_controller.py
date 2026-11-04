@@ -38,6 +38,8 @@ class TimelineController(QObject):
         self.ui.container.track.edit_committed.connect(self.handle_edit_commit)
         self.ui.container.track.segment_clicked.connect(self._on_track_selection_changed)
         self.ui.container.track.selection_cleared.connect(self._clear_selection)
+        if hasattr(self.ui, "snap_overlap_requested"):
+            self.ui.snap_overlap_requested.connect(self.snap_overlap)
         self.ui.generation_range_selected.connect(self._clear_selection)
         if hasattr(self.ui, "gap_selected"):
             self.ui.gap_selected.connect(self._on_gap_selected)
@@ -376,6 +378,61 @@ class TimelineController(QObject):
                     self.ui.container.track.update()
             else:
                 self.ui.container.track.update()
+        finally:
+            self.state_manager.transition_to(TimelineState.IDLE)
+
+    def snap_overlap(self, segment_id: str = None) -> bool:
+        """FR-02: Co end_ms của segment trước lại cách segment sau 20ms qua ResizeEndCommand (hỗ trợ Undo)."""
+        segs = self.data_provider.get_all_segments()
+        if not segs:
+            return False
+
+        target_idx = -1
+        if segment_id:
+            target_idx = next((i for i, s in enumerate(segs) if s.segment_id == segment_id), -1)
+            if target_idx < len(segs) - 1 and segs[target_idx].end_ms > segs[target_idx + 1].start_ms:
+                pass
+            elif target_idx > 0 and segs[target_idx - 1].end_ms > segs[target_idx].start_ms:
+                target_idx = target_idx - 1
+            else:
+                target_idx = -1
+
+        if target_idx == -1 and self.selection_controller:
+            sel_id = getattr(self.selection_controller, "selected_segment_id", None)
+            if sel_id:
+                s_idx = next((i for i, s in enumerate(segs) if s.segment_id == sel_id), -1)
+                if s_idx < len(segs) - 1 and segs[s_idx].end_ms > segs[s_idx + 1].start_ms:
+                    target_idx = s_idx
+                elif s_idx > 0 and segs[s_idx - 1].end_ms > segs[s_idx].start_ms:
+                    target_idx = s_idx - 1
+
+        if target_idx == -1:
+            for i in range(len(segs) - 1):
+                if segs[i].end_ms > segs[i + 1].start_ms:
+                    target_idx = i
+                    break
+
+        if target_idx == -1:
+            return False
+
+        seg = segs[target_idx]
+        next_seg = segs[target_idx + 1]
+        target_end_ms = max(seg.start_ms + 100, next_seg.start_ms - 20)
+        delta_ms = target_end_ms - seg.end_ms
+        if delta_ms == 0:
+            return False
+
+        self.ui.timing_edit_started.emit()
+        if not self.state_manager.can_transition(TimelineState.COMMITTING):
+            return False
+        self.state_manager.transition_to(TimelineState.COMMITTING)
+        try:
+            command = ResizeEndCommand(self.project, self.data_provider, seg.segment_id, delta_ms)
+            if command.can_execute(None):
+                if self._push_command(command):
+                    self._refresh_ui()
+                    return True
+            return False
         finally:
             self.state_manager.transition_to(TimelineState.IDLE)
 

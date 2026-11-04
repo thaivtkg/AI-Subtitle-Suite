@@ -868,6 +868,7 @@ class MainWindow(QMainWindow):
         self.timeline_widget = TimelineWidget()
         self.timeline_widget.container.track.live_edit_updated.connect(self._on_timeline_live_edit_video_scrub)
         self.timeline_widget.container.track.live_edit_updated.connect(self.sub_editor.on_timeline_live_edit)
+        self.timeline_widget.container.track.overlap_status_changed.connect(self._on_timeline_track_overlap_changed)
         self.timeline_widget.range_generation_requested.connect(
             self._start_range_generation
         )
@@ -1033,6 +1034,37 @@ class MainWindow(QMainWindow):
         tl_tb_layout.addStretch()
 
         # Nút Gen Sub theo câu đã chọn trên Timeline
+        self.btn_snap_overlap = QPushButton("🧲 Snap viền")
+        self.btn_snap_overlap.setObjectName("btn_snap_overlap")
+        self.btn_snap_overlap.setFixedHeight(28)
+        self.btn_snap_overlap.setToolTip(
+            "Tự động co mốc kết thúc của phụ đề trước lại (cách phụ đề sau 20ms) để triệt tiêu vùng chồng lấn"
+        )
+        self.btn_snap_overlap.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Theme.SURFACE_ELEVATED};
+                border: 1px solid #F97316;
+                border-radius: 8px;
+                padding: 0px 10px;
+                font-size: 11px;
+                font-weight: 600;
+                color: #F97316;
+            }}
+            QPushButton:hover {{
+                background-color: #F97316;
+                color: #FFFFFF;
+            }}
+            QPushButton:disabled {{
+                color: {Theme.TEXT_MUTED};
+                border-color: {Theme.BORDER};
+                background-color: transparent;
+            }}
+        """)
+        self.btn_snap_overlap.clicked.connect(self._on_snap_overlap_triggered)
+        self.btn_snap_overlap.setEnabled(False)
+        self.btn_snap_overlap.hide()
+        tl_tb_layout.addWidget(self.btn_snap_overlap, alignment=Qt.AlignVCenter)
+
         self.btn_timeline_batch_scan = QPushButton("🎙️ Gen Sub đã chọn")
         self.btn_add_manual_timing = QPushButton("➕ Thêm Timing")
         self.btn_add_manual_timing.setObjectName("btn_add_manual_timing")
@@ -1919,6 +1951,21 @@ class MainWindow(QMainWindow):
         else:
             self.btn_timeline_batch_scan.setText("🎙️ Gen Sub đã chọn")
             self.btn_timeline_batch_scan.setEnabled(False)
+
+
+    def _on_timeline_track_overlap_changed(self, count: int):
+        if hasattr(self, "btn_snap_overlap"):
+            self.btn_snap_overlap.setEnabled(count > 0)
+            if count > 0:
+                self.btn_snap_overlap.show()
+            else:
+                self.btn_snap_overlap.hide()
+
+    def _on_snap_overlap_triggered(self):
+        if hasattr(self, "timeline_controller") and self.timeline_controller:
+            self.timeline_controller.snap_overlap()
+        elif hasattr(self, "timeline_widget") and self.timeline_widget:
+            self.timeline_widget.snap_overlap()
 
     def _on_timeline_batch_scan_clicked(self):
         """Xử lý sự kiện bấm nút Gen Sub trên thanh Timeline."""
