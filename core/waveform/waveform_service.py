@@ -86,3 +86,23 @@ class WaveformService:
         # Ghi Cache Binary để tái sử dụng tức thì cho lần mở Project sau
         np.save(str(cache_file), peaks_normalized)
         return peaks_normalized
+
+    @staticmethod
+    def build_vad_density_from_intervals(duration_ms: int, speech_intervals: list, chunk_ms: int = 10) -> np.ndarray:
+        """FR-04: Xây dựng mảng xác suất giọng nói VAD 10ms từ danh sách intervals"""
+        num_chunks = max(1, int(duration_ms / float(chunk_ms)))
+        vad_array = np.full(num_chunks, 0.1, dtype=np.float32)
+        for interval in speech_intervals:
+            s_raw = interval.get("start_ms", interval.get("start", 0))
+            e_raw = interval.get("end_ms", interval.get("end", 0))
+            start_ms = int(s_raw * 1000 if isinstance(s_raw, float) and s_raw < 10000 else s_raw)
+            end_ms = int(e_raw * 1000 if isinstance(e_raw, float) and e_raw < 10000 else e_raw)
+            if end_ms <= start_ms:
+                continue
+            trans_start = max(0, int((start_ms - 100) / chunk_ms))
+            trans_end = min(num_chunks, int((end_ms + 100) / chunk_ms))
+            vad_array[trans_start:trans_end] = np.maximum(vad_array[trans_start:trans_end], 0.50)
+            speech_start = max(0, int(start_ms / chunk_ms))
+            speech_end = min(num_chunks, int(end_ms / chunk_ms))
+            vad_array[speech_start:speech_end] = 0.85
+        return vad_array

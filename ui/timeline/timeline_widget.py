@@ -416,7 +416,7 @@ class TimelineWidget(QScrollArea):
         """Gọi hàm này khi người dùng bấm nút Play video để bật lại cuộn tự động"""
         self.auto_scroll_enabled = True
 
-    def load_project_data(self, duration_ms: int, segments: list, peaks_normalized=None):
+    def load_project_data(self, duration_ms: int, segments: list, peaks_normalized=None, vad_data=None):
         self.clear_gap_selection()
         self.container.track.set_selection(set())
         self.duration_ms = duration_ms
@@ -424,7 +424,9 @@ class TimelineWidget(QScrollArea):
         self.container.track.set_data(segments, duration_ms)
         self.container.track.set_gaps(find_timeline_gaps(duration_ms, segments))
         if peaks_normalized is not None:
-            self.container.waveform.set_data(peaks_normalized, duration_ms)
+            self.container.waveform.set_data(peaks_normalized, duration_ms, vad_data=vad_data)
+        elif vad_data is not None:
+            self.container.waveform.set_vad_data(vad_data)
         if duration_ms > 0:
             self._show_range_row()
         else:
@@ -443,6 +445,9 @@ class TimelineWidget(QScrollArea):
             event.accept()
             return
         super().wheelEvent(event)
+
+    def set_vad_data(self, vad_data):
+        self.container.waveform.set_vad_data(vad_data)
 
     def set_zoom(self, pixels_per_second: int):
         self.pixels_per_second = pixels_per_second

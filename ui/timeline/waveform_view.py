@@ -18,6 +18,7 @@ class WaveformView(QWidget):
         self._selected_range_ms = None
         self.heatmap_enabled = True
         self.visual_gain = 1.0
+        self.vad_data = None
 
         # Cờ tối ưu hóa: Báo cho Qt biết ta sẽ tự vẽ toàn bộ nền để tránh vẽ 2 lần (Overdraw)
         self.setAttribute(Qt.WA_OpaquePaintEvent)
@@ -36,9 +37,17 @@ class WaveformView(QWidget):
         except Exception:
             return 1.0
 
-    def get_heatmap_color(self, min_peak: float, max_peak: float) -> QColor:
+    def get_heatmap_color(self, min_peak: float, max_peak: float, speech_prob: float = None) -> QColor:
         if not getattr(self, "heatmap_enabled", True):
             return QColor(Theme.PRIMARY_PURPLE)
+        if speech_prob is not None:
+            # FR-04: 3-tier VAD Speech Density
+            if speech_prob >= 0.65:
+                return QColor("#2DD4BF")  # Sapphire Teal / Cyan (Giọng nói chuẩn rõ nét)
+            elif speech_prob >= 0.35:
+                return QColor("#F59E0B")  # Vàng cam hổ phách (Tạp âm, thì thầm, nói đè)
+            else:
+                return QColor("#334155")  # Xám sẫm Obsidian (Im lặng, nhạc nền)
         amp = (max_peak - min_peak) / 2.0
         # Peak amplitude: > 0.75 (> -14 dB) is loud (Cam Đỏ), < 0.15 (< -26 dB) is whisper (Xanh Ngọc)
         if amp >= 0.75:
@@ -48,10 +57,17 @@ class WaveformView(QWidget):
         else:
             return QColor(16, 185, 129)  # Xanh Lục
 
-    def set_data(self, peaks_normalized: np.ndarray, duration_ms: int):
+    def set_vad_data(self, vad_probs):
+        """FR-04: Nhận mảng xác suất giọng nói VAD tính trước (resolution 10ms)"""
+        self.vad_data = np.asarray(vad_probs, dtype=np.float32) if vad_probs is not None else None
+        self.update()
+
+    def set_data(self, peaks_normalized: np.ndarray, duration_ms: int, vad_data=None):
         """Nhận dữ liệu từ WaveformService và render"""
         self.waveform_data = peaks_normalized
         self.duration_ms = duration_ms
+        if vad_data is not None:
+            self.vad_data = np.asarray(vad_data, dtype=np.float32)
         self.visual_gain = self._calculate_visual_gain(peaks_normalized)
         self.update_geometry_size()
         self.update()
@@ -156,14 +172,18 @@ class WaveformView(QWidget):
             bar_x = (raw_x // 3) * 3
             
             if bar_x not in bar_peaks:
-                bar_peaks[bar_x] = [min_peak, max_peak]
+                bar_peaks[bar_x] = [min_peak, max_peak, chunk_idx]
             else:
                 if min_peak < bar_peaks[bar_x][0]: bar_peaks[bar_x][0] = min_peak
                 if max_peak > bar_peaks[bar_x][1]: bar_peaks[bar_x][1] = max_peak
 
         gain = getattr(self, "visual_gain", 1.0)
-        for bar_x, (min_peak, max_peak) in bar_peaks.items():
-            pen = QPen(self.get_heatmap_color(min_peak, max_peak), 2)
+        has_vad = self.vad_data is not None and len(self.vad_data) > 0
+        for bar_x, bar_data in bar_peaks.items():
+            min_peak, max_peak = bar_data[0], bar_data[1]
+            chunk_idx = bar_data[2]
+            prob = float(self.vad_data[chunk_idx]) if has_vad and chunk_idx < len(self.vad_data) else None
+            pen = QPen(self.get_heatmap_color(min_peak, max_peak, speech_prob=prob), 2)
             pen.setCapStyle(Qt.RoundCap)
             painter.setPen(pen)
 
