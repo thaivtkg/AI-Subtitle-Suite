@@ -45,47 +45,95 @@ class TestQuickFolderProjectDialog(unittest.TestCase):
             f.write(b"0" * size_bytes)
         return p
 
-    def test_dialog_populates_scanned_videos(self):
-        """Hộp thoại nạp đầy đủ danh sách video, hiển thị đúng trạng thái cũ / mới và mặc định tích chọn tất cả."""
+    def test_window_title_and_flags_and_close_button(self):
+        """Tiêu đề không chứa emoji, cờ WindowCloseButtonHint được thiết lập, và có nút đóng ✕ trên header."""
+        self.assertEqual(
+            self.dialog.windowTitle(),
+            "Tạo Dự Án Nhanh Từ Thư Mục Video - AI Subtitle Suite"
+        )
+        flags = self.dialog.windowFlags()
+        self.assertTrue(bool(flags & Qt.WindowCloseButtonHint))
+
+        self.assertTrue(hasattr(self.dialog, "btn_close_header"))
+        self.assertEqual(self.dialog.btn_close_header.text(), "✕")
+
+    def test_dialog_populates_scanned_videos_default_unchecked(self):
+        """Hộp thoại nạp đủ video, trạng thái cũ/mới, mặc định bỏ chọn 100% (Phương án B) và nút Tạo bị mờ."""
         table = self.dialog.table
         self.assertEqual(table.rowCount(), 3)
 
         # Episode 01 đã có dự án
         self.assertEqual(table.item(0, 1).text(), "episode_01.mp4")
         self.assertIn("Đã có dự án", table.item(0, 3).text())
-        self.assertEqual(table.item(0, 0).checkState(), Qt.Checked)
+        # Mặc định chưa tích chọn
+        self.assertEqual(table.item(0, 0).checkState(), Qt.Unchecked)
 
         # Episode 02 là video mới
         self.assertEqual(table.item(1, 1).text(), "episode_02.mkv")
         self.assertIn("Mới", table.item(1, 3).text())
+        self.assertEqual(table.item(1, 0).checkState(), Qt.Unchecked)
 
         # Teaser trailer là video mới
         self.assertEqual(table.item(2, 1).text(), "teaser_trailer.mov")
+        self.assertEqual(table.item(2, 0).checkState(), Qt.Unchecked)
 
-        # Label đếm hiển thị 3 / 3
-        self.assertIn("3 / 3", self.dialog.lbl_summary.text())
-
-    def test_select_all_and_deselect_all_buttons(self):
-        """Bấm 'Bỏ chọn' bỏ tích toàn bộ; bấm 'Chọn tất cả' tích lại toàn bộ và cập nhật nhãn đếm."""
-        self.dialog.btn_deselect_all.click()
+        # Mặc định danh sách chọn rỗng
         self.assertEqual(len(self.dialog.get_selected_videos()), 0)
+
+        # Label đếm hiển thị 0 / 3
         self.assertIn("0 / 3", self.dialog.lbl_summary.text())
 
+        # Nút Tạo Dự Án phải bị vô hiệu hóa (disabled)
+        self.assertFalse(self.dialog.btn_create.isEnabled())
+
+    def test_select_all_and_deselect_all_buttons(self):
+        """Bấm 'Chọn tất cả' tích lại toàn bộ và kích hoạt nút Tạo; bấm 'Bỏ chọn' hủy toàn bộ và vô hiệu hóa nút Tạo."""
+        # Khởi điểm: 0/3 và disabled
+        self.assertEqual(len(self.dialog.get_selected_videos()), 0)
+        self.assertFalse(self.dialog.btn_create.isEnabled())
+
+        # Bấm Chọn tất cả
         self.dialog.btn_select_all.click()
         self.assertEqual(len(self.dialog.get_selected_videos()), 3)
         self.assertIn("3 / 3", self.dialog.lbl_summary.text())
+        self.assertTrue(self.dialog.btn_create.isEnabled())
+
+        # Bấm Bỏ chọn
+        self.dialog.btn_deselect_all.click()
+        self.assertEqual(len(self.dialog.get_selected_videos()), 0)
+        self.assertIn("0 / 3", self.dialog.lbl_summary.text())
+        self.assertFalse(self.dialog.btn_create.isEnabled())
 
     def test_checkbox_toggle_updates_summary_and_selected_list(self):
-        """Bỏ chọn 1 dòng thủ công thì danh sách trả về giảm và nhãn đếm cập nhật đúng."""
-        # Bỏ chọn dòng thứ 3 (teaser_trailer.mov)
-        item = self.dialog.table.item(2, 0)
-        item.setCheckState(Qt.Unchecked)
+        """Tích chọn thủ công từng dòng cập nhật danh sách chọn, nhãn đếm và trạng thái kích hoạt nút Tạo."""
+        self.assertFalse(self.dialog.btn_create.isEnabled())
+
+        # Tích chọn dòng thứ 0 (episode_01.mp4)
+        item0 = self.dialog.table.item(0, 0)
+        item0.setCheckState(Qt.Checked)
+
+        selected = self.dialog.get_selected_videos()
+        self.assertEqual(len(selected), 1)
+        self.assertEqual(selected[0]["filename"], "episode_01.mp4")
+        self.assertIn("1 / 3", self.dialog.lbl_summary.text())
+        self.assertTrue(self.dialog.btn_create.isEnabled())
+
+        # Tích thêm dòng thứ 1 (episode_02.mkv)
+        item1 = self.dialog.table.item(1, 0)
+        item1.setCheckState(Qt.Checked)
 
         selected = self.dialog.get_selected_videos()
         self.assertEqual(len(selected), 2)
-        filenames = [s["filename"] for s in selected]
-        self.assertEqual(filenames, ["episode_01.mp4", "episode_02.mkv"])
         self.assertIn("2 / 3", self.dialog.lbl_summary.text())
+        self.assertTrue(self.dialog.btn_create.isEnabled())
+
+        # Bỏ chọn cả 2 dòng
+        item0.setCheckState(Qt.Unchecked)
+        item1.setCheckState(Qt.Unchecked)
+
+        self.assertEqual(len(self.dialog.get_selected_videos()), 0)
+        self.assertIn("0 / 3", self.dialog.lbl_summary.text())
+        self.assertFalse(self.dialog.btn_create.isEnabled())
 
     def test_realtime_search_filter(self):
         """Gõ từ khóa vào ô tìm kiếm thì chỉ hiển thị các dòng khớp tên file."""
