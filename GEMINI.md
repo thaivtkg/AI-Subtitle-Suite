@@ -408,4 +408,27 @@ Khi hoàn thành, cung cấp:
 **NGUYÊN TẮC CỐT LÕI (FINAL PRINCIPLE):**  
 **IMPLEMENT THE APPROVED SPECIFICATION – PRESERVE THE ORIGINAL INTENT – VERIFY EVERY REQUIREMENT.**
 
+---
+
+## 7. Feature Acceptance Gate (Quality Gate Cho Tính Năng Mới)
+
+Mọi tính năng mới trước khi được phát hành hoặc coi là hoàn tất phải vượt qua **Feature Acceptance Gate (10/10 Checklist)** với sự phối hợp trách nhiệm rõ ràng giữa Developer và QA:
+
+| STT | Tiêu Chí Kiểm Tra (Checklist Item) | Bên Chịu Trách Nhiệm | Tiêu Chuẩn Vượt Gate (Pass Criteria) |
+| :---: | :--- | :---: | :--- |
+| **01** | **Original User Requirement đã được phân tích** | QA | Yêu cầu gốc của người dùng được bóc tách thành các đầu mục nghiệp vụ rõ ràng, không mơ hồ. |
+| **02** | **Functional Specification đã được xác nhận** | QA + User | Đặc tả chức năng (Functional Spec) đã được người dùng và QA Lead thống nhất phê duyệt. |
+| **03** | **Developer đã xác nhận hiểu yêu cầu** | Dev | Developer trả lời và xác nhận 7 câu hỏi nghiệp vụ trước khi triển khai mã nguồn. |
+| **04** | **Implementation Mapping đầy đủ** | Dev | Lập bảng ánh xạ chi tiết: Requirement ID $\rightarrow$ Module / Class / QML / API $\rightarrow$ Test Case. |
+| **05** | **Tất cả Mandatory Requirements đã triển khai** | Dev | 100% các yêu cầu bắt buộc (Mandatory) đã được code hoàn tất, không tự ý cắt bỏ hay đơn giản hóa. |
+| **06** | **Acceptance Criteria đã được kiểm tra** | QA | QA Lead trực tiếp đối soát từng tiêu chí nghiệm thu và ghi nhận kết quả. |
+| **07** | **UI/UX phù hợp mô tả** | QA A / Main | Sub-Agent A và QA Lead kiểm tra thực tế: Theme Liquid Dark, spacing, typography, states (hover/disabled), và WCAG contrast. |
+| **08** | **Integration và Regression đạt yêu cầu** | QA B / Main | Sub-Agent B và QA Lead kiểm tra: Toàn bộ suite hồi quy (Unit, Integration, E2E POM) đạt 100% Green, không gây ảnh hưởng chéo. |
+| **09** | **Không có thay đổi ngoài scope chưa phê duyệt** | QA + Dev | Kiểm tra Git Diff, bảo đảm không có mã rác, không tự ý refactor hoặc thêm tính năng ngoài phạm vi đã thống nhất. |
+| **10** | **Có bằng chứng nghiệm thu** | QA | Bằng chứng rõ ràng minh bạch: Log test thực tế, hình ảnh chụp giao diện thực tế (screenshots) và artifact nghiệm thu. |
+
+> **QUY TẮC PHÁT HÀNH (RELEASE RULE):**  
+> Một tính năng chỉ được phép đóng (Closed) và bàn giao phát hành (Release) khi đạt điểm số **10/10** trên Feature Acceptance Gate. Nếu thiếu bất kỳ tiêu chí nào, trạng thái tối đa là `PARTIALLY READY` hoặc `NEEDS REVISION`.
+
+
 
