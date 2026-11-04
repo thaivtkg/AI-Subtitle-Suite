@@ -78,6 +78,7 @@ class CurrentSubtitleEditor(QWidget):
     scan_requested = Signal()
     previous_requested = Signal()
     next_requested = Signal()
+    smart_split_requested = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -112,6 +113,30 @@ class CurrentSubtitleEditor(QWidget):
         self.lbl_duration.setObjectName("lbl_current_sub_duration")
         self.lbl_duration.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-size: 11px; min-width: 42px;")
         layout.addWidget(self.lbl_duration)
+
+        # FR-01: Live CPS Sentinel HUD & Smart Natural Split Button
+        self.lbl_cps = QLabel("")
+        self.lbl_cps.setObjectName("lbl_current_sub_cps")
+        self.lbl_cps.setStyleSheet(
+            "color: #F97316; font-size: 11px; font-weight: bold; "
+            "border: 1px solid #F97316; border-radius: 4px; padding: 1px 5px; background: rgba(249, 115, 22, 0.12);"
+        )
+        self.lbl_cps.hide()
+        layout.addWidget(self.lbl_cps)
+
+        self.btn_smart_split = QPushButton("⚡ Tách câu")
+        self.btn_smart_split.setObjectName("btn_smart_split")
+        self.btn_smart_split.setToolTip("Tách câu tự động theo điểm ngắt tự nhiên gần giữa câu nhất")
+        self.btn_smart_split.setCursor(Qt.PointingHandCursor)
+        self.btn_smart_split.setFixedHeight(26)
+        self.btn_smart_split.setStyleSheet(
+            "QPushButton { background-color: rgba(249, 115, 22, 0.2); color: #FDBA74; "
+            "border: 1px solid #F97316; border-radius: 5px; padding: 2px 8px; font-size: 11px; font-weight: bold; } "
+            "QPushButton:hover { background-color: #F97316; color: #FFFFFF; }"
+        )
+        self.btn_smart_split.hide()
+        self.btn_smart_split.clicked.connect(self._on_smart_split_clicked)
+        layout.addWidget(self.btn_smart_split)
 
         self.text_edit = QTextEdit()
         self.text_edit.setObjectName("txt_current_sub_content")
@@ -181,7 +206,9 @@ class CurrentSubtitleEditor(QWidget):
         self._debounce.setInterval(250)
         for widget in (self.start_edit, self.end_edit):
             widget.editingFinished.connect(self._emit_changed)
+            widget.textChanged.connect(self.update_cps_display)
         self.text_edit.textChanged.connect(self._schedule_emit)
+        self.text_edit.textChanged.connect(self.update_cps_display)
         self._debounce.timeout.connect(self._emit_changed)
 
     def set_time(self, start_ms, end_ms):
@@ -192,6 +219,7 @@ class CurrentSubtitleEditor(QWidget):
             widget.setText(value)
             widget.blockSignals(False)
         self.lbl_duration.setText(f"{max(0, end_ms - start_ms) / 1000:.3f} s")
+        self.update_cps_display()
 
     def set_values(self, start, end, text, original_text=""):
         start = ms_to_time_str(start) if isinstance(start, (int, float)) else str(start)
@@ -234,6 +262,104 @@ class CurrentSubtitleEditor(QWidget):
             "Nhận diện lại chữ (ASR) đoạn này" if has_sub
             else "Quét lại mốc thời gian (Timing) đoạn này"
         )
+        self.update_cps_display()
+
+
+    @staticmethod
+    def calculate_cps(text: str, start_ms: int, end_ms: int) -> float:
+        cleaned = str(text or "").strip()
+        if not cleaned or cleaned == "[ Chưa có nội dung ]":
+            return 0.0
+        duration_s = max(0.1, (int(end_ms) - int(start_ms)) / 1000.0)
+        return round(len(cleaned) / duration_s, 1)
+
+    @staticmethod
+    def split_text_at_natural_boundary(text: str) -> tuple[int, str, str]:
+        """Tìm vị trí ngắt câu tự nhiên theo 4 cấp ưu tiên (bán kính +-100 ký tự):
+        1. Dấu câu chính: [. ! ? … 。 ！ ？ \n]
+        2. Dấu câu phụ: [, ; : 、 ， ；]
+        3. Khoảng trắng
+        4. Fallback CJK / không dấu: Cắt tại Midpoint len(text) // 2
+        Trả về (split_idx, part1, part2)
+        """
+        if not text:
+            return 0, "", ""
+        text = text.strip()
+        n = len(text)
+        if n <= 1:
+            return n, text, ""
+        midpoint = n // 2
+        r_start = max(0, midpoint - 100)
+        r_end = min(n, midpoint + 100)
+
+        def _best_idx(candidates):
+            if not candidates:
+                return None
+            return min(candidates, key=lambda idx: abs(idx - midpoint))
+
+        # 1. Dấu câu chính
+        primary_puncts = ".!?…\n。！？"
+        primary_cands = [i + 1 for i in range(r_start, min(r_end, n - 1)) if text[i] in primary_puncts]
+        best = _best_idx(primary_cands)
+        if best is not None:
+            return best, text[:best].strip(), text[best:].strip()
+
+        # 2. Dấu câu phụ
+        secondary_puncts = ",;:、，；"
+        sec_cands = [i + 1 for i in range(r_start, min(r_end, n - 1)) if text[i] in secondary_puncts]
+        best = _best_idx(sec_cands)
+        if best is not None:
+            return best, text[:best].strip(), text[best:].strip()
+
+        # 3. Khoảng trắng
+        space_cands = [i for i in range(r_start, r_end) if text[i].isspace()]
+        best = _best_idx(space_cands)
+        if best is not None:
+            return best, text[:best].strip(), text[best:].strip()
+
+        # 4. Fallback CJK / Chuỗi liền mạch
+        return midpoint, text[:midpoint].strip(), text[midpoint:].strip()
+
+    @classmethod
+    def get_smart_split_point(cls, text: str, start_ms: int, end_ms: int) -> tuple[int, int]:
+        split_idx, _, _ = cls.split_text_at_natural_boundary(text)
+        total_len = len(text.strip())
+        ratio = (split_idx / total_len) if total_len > 0 else 0.5
+        duration = max(0, end_ms - start_ms)
+        raw_split_ms = start_ms + int(ratio * duration)
+        if duration >= 400:
+            split_time_ms = max(start_ms + 200, min(end_ms - 200, raw_split_ms))
+        else:
+            split_time_ms = start_ms + duration // 2
+        return split_idx, split_time_ms
+
+    def update_cps_display(self):
+        text = self.text_edit.toPlainText().strip()
+        try:
+            start_ms = time_str_to_ms(self.start_edit.text())
+            end_ms = time_str_to_ms(self.end_edit.text())
+        except Exception:
+            start_ms = 0
+            end_ms = 0
+        cps = self.calculate_cps(text, start_ms, end_ms)
+        if cps > 20.0:
+            self.lbl_cps.setText(f"⚠️ {cps:.1f} CPS")
+            self.lbl_cps.show()
+            self.btn_smart_split.show()
+        else:
+            self.lbl_cps.hide()
+            self.btn_smart_split.hide()
+
+    def _on_smart_split_clicked(self):
+        text = self.text_edit.toPlainText().strip()
+        try:
+            start_ms = time_str_to_ms(self.start_edit.text())
+            end_ms = time_str_to_ms(self.end_edit.text())
+        except Exception:
+            start_ms = 0
+            end_ms = 0
+        split_idx, split_time_ms = self.get_smart_split_point(text, start_ms, end_ms)
+        self.smart_split_requested.emit(split_time_ms)
 
     def setTitle(self, title: str):
         if ":" in title:
@@ -442,6 +568,7 @@ class SubtitleEditorWidget(QWidget):
         self.current_editor.scan_requested.connect(self._on_current_editor_scan_requested)
         self.current_editor.previous_requested.connect(self.select_previous)
         self.current_editor.next_requested.connect(self.select_next)
+        self.current_editor.smart_split_requested.connect(self._on_smart_split_requested)
         left_layout.addWidget(self.current_editor)
         for widget in (
             self.current_editor.text_edit,
@@ -1582,6 +1709,10 @@ class SubtitleEditorWidget(QWidget):
                 on_undone=self._on_merge_undone,
             )
         )
+
+
+    def _on_smart_split_requested(self, split_time_ms: int):
+        self.trigger_split(split_time_ms)
 
     def trigger_split(self, playhead_ms: int):
         if not self.all_segments or self.undo_manager is None:

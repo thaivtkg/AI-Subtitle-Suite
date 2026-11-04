@@ -18,21 +18,30 @@ class SplitCommand(SubtitleCommand):
         if len(text) <= 1:
             return text, ""
         midpoint = len(text) // 2
+        r_start = max(0, midpoint - 100)
+        r_end = min(len(text), midpoint + 100)
 
-        # 1. Ưu tiên dấu cách (space/tab)
-        spaces = [index for index, char in enumerate(text) if char.isspace()]
+        # 1. Ưu tiên dấu ngắt câu chính (. ! ? … 。 ！ ？ \n)
+        primary_puncts = ".!?…\n。！？"
+        primary_cands = [i + 1 for i in range(r_start, min(r_end, len(text) - 1)) if text[i] in primary_puncts]
+        if primary_cands:
+            best = min(primary_cands, key=lambda i: abs(i - midpoint))
+            return text[:best].strip(), text[best:].strip()
+
+        # 2. Ưu tiên dấu ngắt câu phụ (, ; : 、 ， ；)
+        secondary_puncts = ",;:、，；"
+        sec_cands = [i + 1 for i in range(r_start, min(r_end, len(text) - 1)) if text[i] in secondary_puncts]
+        if sec_cands:
+            best = min(sec_cands, key=lambda i: abs(i - midpoint))
+            return text[:best].strip(), text[best:].strip()
+
+        # 3. Ưu tiên dấu cách (space/tab)
+        spaces = [i for i in range(r_start, r_end) if text[i].isspace()]
         if spaces:
-            best_space = min(spaces, key=lambda index: abs(index - midpoint))
-            return text[:best_space].strip(), text[best_space:].strip()
+            best = min(spaces, key=lambda i: abs(i - midpoint))
+            return text[:best].strip(), text[best:].strip()
 
-        # 2. Ưu tiên dấu ngắt câu CJK & quốc tế (tách ngay sau dấu câu)
-        cjk_puncts = "、。，！？!?…;；,"
-        puncts = [index + 1 for index, char in enumerate(text[:-1]) if char in cjk_puncts]
-        if puncts:
-            best_punct = min(puncts, key=lambda index: abs(index - midpoint))
-            return text[:best_punct].strip(), text[best_punct:].strip()
-
-        # 3. Fallback cho chuỗi không dấu cách (tiếng Nhật/Trung): cắt đôi chuỗi
+        # 4. Fallback cho chuỗi không dấu cách (tiếng Nhật/Trung): cắt đôi chuỗi
         return text[:midpoint].strip(), text[midpoint:].strip()
 
     def redo(self):
