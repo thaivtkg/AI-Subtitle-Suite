@@ -246,6 +246,10 @@ class TimelineController(QObject):
                         self._range_drag_start_ms = self._x_to_ms(event.pos().x())
                         self._update_visual_range(event.pos().x())
                         return True
+                    if event.modifiers() & Qt.AltModifier:
+                        target_ms = self._x_to_ms(event.pos().x())
+                        if hasattr(self.ui, "jog_engine") and self.ui.jog_engine:
+                            self.ui.jog_engine.play_slice(target_ms, 40)
                     self._do_seek(event.pos().x(), event.modifiers())
                     return True 
         elif event.type() == QEvent.MouseMove and (event.buttons() & Qt.LeftButton):
@@ -253,13 +257,23 @@ class TimelineController(QObject):
                 if obj is self.ui.container.waveform and self._range_drag_start_ms is not None:
                     self._update_visual_range(event.pos().x())
                     return True
+                if event.modifiers() & Qt.AltModifier:
+                    target_ms = self._x_to_ms(event.pos().x())
+                    if hasattr(self.ui, "jog_engine") and self.ui.jog_engine:
+                        self.ui.jog_engine.play_slice(target_ms, 40)
                 self._do_seek(event.pos().x(), event.modifiers())
                 return True
         elif event.type() == QEvent.MouseButtonRelease:
+            if hasattr(self.ui, "jog_engine") and self.ui.jog_engine:
+                self.ui.jog_engine.stop()
             if obj is self.ui.container.waveform and self._range_drag_start_ms is not None:
                 self._update_visual_range(event.pos().x())
                 self._range_drag_start_ms = None
                 return True
+        elif event.type() == QEvent.KeyRelease:
+            if event.key() == Qt.Key_Alt:
+                if hasattr(self.ui, "jog_engine") and self.ui.jog_engine:
+                    self.ui.jog_engine.stop()
         elif event.type() == QEvent.KeyPress:
             key = event.key()
             modifiers = event.modifiers()

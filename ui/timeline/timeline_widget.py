@@ -13,6 +13,7 @@ from ui.timeline.timeline_ruler import TimeRuler
 from ui.timeline.waveform_view import WaveformView
 
 from ui.theme import Theme
+from core.audio.jog_audio_engine import JogAudioEngine
 
 
 class PlayheadOverlay(QWidget):
@@ -162,6 +163,7 @@ class TimelineWidget(QScrollArea):
         """)
 
         self.setObjectName("timeline_widget")
+        self.jog_engine = JogAudioEngine(self)
         self.container = TimelineContainer()
         self.container.setObjectName("timeline_container")
         self.setWidget(self.container)
@@ -500,6 +502,22 @@ class TimelineWidget(QScrollArea):
         self.seek_requested.emit(target_ms)
         super().mousePressEvent(event)
         
+
+    def set_audio_pcm(self, pcm_data, sample_rate: int = 8000):
+        if hasattr(self, "jog_engine") and self.jog_engine:
+            self.jog_engine.load_pcm_data(pcm_data, sample_rate)
+
+    def mouseReleaseEvent(self, event):
+        if hasattr(self, "jog_engine") and self.jog_engine:
+            self.jog_engine.stop()
+        super().mouseReleaseEvent(event)
+
+    def keyReleaseEvent(self, event):
+        if event.key() == Qt.Key_Alt:
+            if hasattr(self, "jog_engine") and self.jog_engine:
+                self.jog_engine.stop()
+        super().keyReleaseEvent(event)
+
     def clear(self):
         """Xóa trắng Timeline khi không có Video"""
         self.clear_gap_selection()
