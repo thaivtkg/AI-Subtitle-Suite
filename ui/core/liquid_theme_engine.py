@@ -1,3 +1,7 @@
+from PySide6.QtCore import QObject, QEvent, QElapsedTimer, QPoint, QPointF, Qt
+from PySide6.QtWidgets import QWidget
+from PySide6.QtGui import QPainter, QRadialGradient, QColor
+
 """Single QSS compiler for AI Subtitle Studio.
 
 Compiles stylesheet from ui.core.design_tokens. Supports optional wallpaper
@@ -880,3 +884,83 @@ class LiquidThemeEngine:
     def compile_stylesheet(wallpaper: bool = False) -> str:
         v = _vars()
         return _QSS.substitute(v) + (_WALLPAPER.substitute(v) if wallpaper else "")
+
+
+class SpotlightEventFilter(QObject):
+    """Event filter tạo hiệu ứng spotlight bắt sáng theo con trỏ chuột (FR-03).
+    - Throttling 60 FPS: chỉ trigger repaint nếu delta >= 16ms kể từ frame trước.
+    - Xuyên thấu tuyệt đối (Transparency Rule): Luôn return False cho mouse press, release,
+      wheel, context menu, key events để widget con xử lý 100% tự nhiên không bị chặn.
+    - Khi chuột rời widget (QEvent.Leave), xóa hover_pos (None) và update().
+    """
+    def __init__(self, parent: QWidget = None):
+        super().__init__(parent)
+        self.timer = QElapsedTimer()
+        self.timer.start()
+        self.hover_pos: QPoint | None = None
+        self.last_update_ms = 0
+        self.is_hovered = False
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        t = event.type()
+        if t == QEvent.MouseMove:
+            self.is_hovered = True
+            pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+            self.hover_pos = pos
+            elapsed = self.timer.elapsed()
+            if elapsed - self.last_update_ms >= 16:
+                self.last_update_ms = elapsed
+                if isinstance(watched, QWidget):
+                    watched.update()
+            return False
+
+        elif t == QEvent.Enter:
+            self.is_hovered = True
+            if hasattr(event, "position"):
+                self.hover_pos = event.position().toPoint()
+            elif hasattr(event, "pos"):
+                self.hover_pos = event.pos()
+            if isinstance(watched, QWidget):
+                watched.update()
+            return False
+
+        elif t == QEvent.Leave:
+            self.is_hovered = False
+            self.hover_pos = None
+            if isinstance(watched, QWidget):
+                watched.update()
+            return False
+
+        return False
+
+
+def apply_spotlight_effect(widget: QWidget) -> SpotlightEventFilter:
+    """Gắn SpotlightEventFilter vào widget để theo dõi hover bắt sáng với 60 FPS throttling."""
+    filter_obj = SpotlightEventFilter(widget)
+    widget.installEventFilter(filter_obj)
+    widget.setMouseTracking(True)
+    widget._spotlight_filter = filter_obj
+    return filter_obj
+
+
+def draw_spotlight(
+    painter: QPainter,
+    widget: QWidget,
+    filter_obj: SpotlightEventFilter,
+    radius: int = 120,
+    color: QColor = None,
+):
+    """Vẽ radial spotlight gradient mềm mại quanh vị trí con trỏ chuột."""
+    if not filter_obj.is_hovered or filter_obj.hover_pos is None:
+        return
+    pos = filter_obj.hover_pos
+    if color is None:
+        color = QColor(99, 102, 241, 35)
+    gradient = QRadialGradient(QPointF(pos), radius)
+    gradient.setColorAt(0.0, color)
+    gradient.setColorAt(1.0, QColor(0, 0, 0, 0))
+    painter.save()
+    painter.setBrush(gradient)
+    painter.setPen(Qt.NoPen)
+    painter.drawRect(widget.rect())
+    painter.restore()
