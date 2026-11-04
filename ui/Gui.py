@@ -2539,41 +2539,44 @@ class MainWindow(QMainWindow):
             )
 
     def eventFilter(self, obj, event):
-        if event.type() == QEvent.KeyPress and (not hasattr(self, "isActiveWindow") or self.isActiveWindow()):
-            # AUD-UX-002: Chỉ bắt phím tắt điều khiển Playback/SubEditor khi người dùng ĐANG Ở TAB 1 (Video Workspace)
-            if hasattr(self, "stack") and self.stack.currentIndex() == 1:
-                focus_widget = QApplication.focusWidget()
-                is_typing = isinstance(focus_widget, (QTextEdit, QLineEdit, QPlainTextEdit)) or (
-                    focus_widget is not None and "QuickWidget" in focus_widget.metaObject().className()
-                )
-                if not is_typing:
-                    if event.key() == Qt.Key_Space:
-                        self.video_player.toggle_playback()
-                        return True
-                    if event.key() == Qt.Key_Delete:
-                        self.sub_editor.trigger_delete()
-                        return True
-                    if event.key() == Qt.Key_Insert:
-                        self._on_add_manual_timing_triggered()
-                        return True
-                    if event.key() == Qt.Key_BracketLeft:
-                        self._on_manual_mark_in()
-                        return True
-                    if event.key() == Qt.Key_BracketRight:
-                        self._on_manual_mark_out()
-                        return True
-                    if (event.key() == Qt.Key_X and event.modifiers() == Qt.NoModifier) or \
-                       (event.key() == Qt.Key_K and event.modifiers() == Qt.ControlModifier):
-                        self.trigger_split_at_playhead()
-                        return True
-                    if event.key() == Qt.Key_R and event.modifiers() == Qt.NoModifier:
-                        self.replay_focused_segment()
-                        return True
-        if hasattr(self, "centralWidget") and obj == self.centralWidget() and event.type() == QEvent.Resize:
-            self._update_drawer_handle_position()
         try:
+            if event.type() == QEvent.KeyPress and (not hasattr(self, "isActiveWindow") or self.isActiveWindow()):
+                # AUD-UX-002: Chỉ bắt phím tắt điều khiển Playback/SubEditor khi người dùng ĐANG Ở TAB 1 (Video Workspace)
+                if hasattr(self, "stack") and self.stack.currentIndex() == 1:
+                    focus_widget = QApplication.focusWidget()
+                    is_typing = isinstance(focus_widget, (QTextEdit, QLineEdit, QPlainTextEdit)) or (
+                        focus_widget is not None and "QuickWidget" in focus_widget.metaObject().className()
+                    )
+                    if not is_typing:
+                        if event.key() == Qt.Key_Space:
+                            if hasattr(self, "video_player") and self.video_player:
+                                self.video_player.toggle_playback()
+                            return True
+                        if event.key() == Qt.Key_Delete:
+                            if hasattr(self, "sub_editor") and self.sub_editor:
+                                self.sub_editor.trigger_delete()
+                            return True
+                        if event.key() == Qt.Key_Insert:
+                            self._on_add_manual_timing_triggered()
+                            return True
+                        if event.key() == Qt.Key_BracketLeft:
+                            self._on_manual_mark_in()
+                            return True
+                        if event.key() == Qt.Key_BracketRight:
+                            self._on_manual_mark_out()
+                            return True
+                        if (event.key() == Qt.Key_X and event.modifiers() == Qt.NoModifier) or \
+                           (event.key() == Qt.Key_K and event.modifiers() == Qt.ControlModifier):
+                            self.trigger_split_at_playhead()
+                            return True
+                        if event.key() == Qt.Key_R and event.modifiers() == Qt.NoModifier:
+                            self.replay_focused_segment()
+                            return True
+            if hasattr(self, "centralWidget") and obj == self.centralWidget() and event.type() == QEvent.Resize:
+                self._update_drawer_handle_position()
             return super().eventFilter(obj, event)
-        except Exception:
+        except Exception as e:
+            # AC-06: Exception Shielding - tuyệt đối không để exception thoát ra Qt C++ event loop
             return False
 
     def create_nav_button(self, text_or_icon, tooltip_or_index, page_index=None):
