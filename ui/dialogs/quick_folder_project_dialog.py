@@ -162,6 +162,8 @@ class QuickFolderProjectDialog(QDialog):
         self.btn_close_header.setFixedSize(28, 28)
         self.btn_close_header.setCursor(Qt.PointingHandCursor)
         self.btn_close_header.setToolTip("Đóng (Esc)")
+        self.btn_close_header.setAutoDefault(False)
+        self.btn_close_header.setFocusPolicy(Qt.NoFocus)
         self.btn_close_header.clicked.connect(self.reject)
         header_layout.addWidget(self.btn_close_header, alignment=Qt.AlignTop)
 
@@ -178,6 +180,7 @@ class QuickFolderProjectDialog(QDialog):
 
         self.btn_browse = QPushButton("Chọn Thư Mục...")
         self.btn_browse.setCursor(Qt.PointingHandCursor)
+        self.btn_browse.setAutoDefault(False)
         self.btn_browse.clicked.connect(self._on_browse_folder)
 
         folder_layout.addWidget(lbl_folder)
@@ -213,10 +216,12 @@ class QuickFolderProjectDialog(QDialog):
 
         self.btn_select_all = QPushButton("Chọn tất cả")
         self.btn_select_all.setCursor(Qt.PointingHandCursor)
+        self.btn_select_all.setAutoDefault(False)
         self.btn_select_all.clicked.connect(self._on_select_all)
 
         self.btn_deselect_all = QPushButton("Bỏ chọn")
         self.btn_deselect_all.setCursor(Qt.PointingHandCursor)
+        self.btn_deselect_all.setAutoDefault(False)
         self.btn_deselect_all.clicked.connect(self._on_deselect_all)
 
         self.lbl_summary = QLabel("Đã chọn: 0 / 0 video")
@@ -229,11 +234,13 @@ class QuickFolderProjectDialog(QDialog):
 
         self.btn_cancel = QPushButton("Hủy")
         self.btn_cancel.setCursor(Qt.PointingHandCursor)
+        self.btn_cancel.setAutoDefault(False)
         self.btn_cancel.clicked.connect(self.reject)
 
-        self.btn_create = QPushButton("🚀 Khởi Tạo Dự Án & Mở Workspace")
+        self.btn_create = QPushButton("🚀 Khởi Tạo Dự Án && Mở Workspace")
         self.btn_create.setObjectName("btn_primary")
         self.btn_create.setCursor(Qt.PointingHandCursor)
+        self.btn_create.setDefault(True)
         self.btn_create.setEnabled(False)  # Mặc định disabled khi chưa có video nào được chọn
         self.btn_create.clicked.connect(self.accept)
 
@@ -242,9 +249,13 @@ class QuickFolderProjectDialog(QDialog):
         layout.addLayout(bottom_layout)
 
     def keyPressEvent(self, event):
-        """Hỗ trợ phím Esc thoát hộp thoại an toàn."""
+        """Hỗ trợ phím Esc thoát hộp thoại an toàn và Enter kích hoạt Tạo Dự Án khi hợp lệ."""
         if event.key() == Qt.Key_Escape:
             self.reject()
+            return
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            if self.btn_create.isEnabled():
+                self.accept()
             return
         super().keyPressEvent(event)
 
@@ -324,18 +335,20 @@ class QuickFolderProjectDialog(QDialog):
     def _on_select_all(self):
         self.table.blockSignals(True)
         for row in range(self.table.rowCount()):
-            item = self.table.item(row, 0)
-            if item:
-                item.setCheckState(Qt.Checked)
+            if not self.table.isRowHidden(row):
+                item = self.table.item(row, 0)
+                if item:
+                    item.setCheckState(Qt.Checked)
         self.table.blockSignals(False)
         self._update_summary()
 
     def _on_deselect_all(self):
         self.table.blockSignals(True)
         for row in range(self.table.rowCount()):
-            item = self.table.item(row, 0)
-            if item:
-                item.setCheckState(Qt.Unchecked)
+            if not self.table.isRowHidden(row):
+                item = self.table.item(row, 0)
+                if item:
+                    item.setCheckState(Qt.Unchecked)
         self.table.blockSignals(False)
         self._update_summary()
 

@@ -1,7 +1,8 @@
 import tempfile
 import unittest
 from pathlib import Path
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QEvent
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QApplication
 
 from core.services.project_service import ProjectService
@@ -57,6 +58,13 @@ class TestQuickFolderProjectDialog(unittest.TestCase):
         self.assertTrue(hasattr(self.dialog, "btn_close_header"))
         self.assertEqual(self.dialog.btn_close_header.text(), "✕")
 
+    def test_button_defaults_and_escaped_ampersand(self):
+        """FINDING-QFP-001 & FINDING-UI-001: Nút close không autoDefault, nút Create là default và dấu & được escape."""
+        self.assertFalse(self.dialog.btn_close_header.autoDefault())
+        self.assertEqual(self.dialog.btn_close_header.focusPolicy(), Qt.NoFocus)
+        self.assertTrue(self.dialog.btn_create.isDefault())
+        self.assertIn("&&", self.dialog.btn_create.text())
+
     def test_dialog_populates_scanned_videos_default_unchecked(self):
         """Hộp thoại nạp đủ video, trạng thái cũ/mới, mặc định bỏ chọn 100% (Phương án B) và nút Tạo bị mờ."""
         table = self.dialog.table
@@ -104,6 +112,25 @@ class TestQuickFolderProjectDialog(unittest.TestCase):
         self.assertIn("0 / 3", self.dialog.lbl_summary.text())
         self.assertFalse(self.dialog.btn_create.isEnabled())
 
+    def test_select_all_respects_filter(self):
+        """FINDING-EDGE-001: Khi lọc tìm kiếm, 'Chọn tất cả' chỉ chọn các hàng đang hiển thị."""
+        self.dialog.search_input.setText("episode")
+        self.assertEqual(self.dialog.table.rowCount(), 3)
+        self.assertTrue(self.dialog.table.isRowHidden(2))  # teaser hidden
+
+        # Bấm chọn tất cả trong khi đang filter
+        self.dialog.btn_select_all.click()
+        selected = self.dialog.get_selected_videos()
+        self.assertEqual(len(selected), 2)
+        filenames = [s["filename"] for s in selected]
+        self.assertIn("episode_01.mp4", filenames)
+        self.assertIn("episode_02.mkv", filenames)
+        self.assertNotIn("teaser_trailer.mov", filenames)
+
+        # Bấm bỏ chọn trong khi đang filter
+        self.dialog.btn_deselect_all.click()
+        self.assertEqual(len(self.dialog.get_selected_videos()), 0)
+
     def test_checkbox_toggle_updates_summary_and_selected_list(self):
         """Tích chọn thủ công từng dòng cập nhật danh sách chọn, nhãn đếm và trạng thái kích hoạt nút Tạo."""
         self.assertFalse(self.dialog.btn_create.isEnabled())
@@ -134,6 +161,22 @@ class TestQuickFolderProjectDialog(unittest.TestCase):
         self.assertEqual(len(self.dialog.get_selected_videos()), 0)
         self.assertIn("0 / 3", self.dialog.lbl_summary.text())
         self.assertFalse(self.dialog.btn_create.isEnabled())
+
+    def test_enter_key_behavior(self):
+        """FINDING-QFP-001: Nhấn Enter khi chưa chọn video không đóng dialog; khi có chọn thì accept()."""
+        accepted = []
+        self.dialog.accepted.connect(lambda: accepted.append(True))
+
+        # 1. Chưa chọn video (btn_create disabled) -> nhấn Enter không accept
+        key_event = QKeyEvent(QEvent.KeyPress, Qt.Key_Return, Qt.NoModifier)
+        self.dialog.keyPressEvent(key_event)
+        self.assertEqual(len(accepted), 0)
+
+        # 2. Chọn 1 video -> nhấn Enter kích hoạt accept
+        self.dialog.btn_select_all.click()
+        self.assertTrue(self.dialog.btn_create.isEnabled())
+        self.dialog.keyPressEvent(key_event)
+        self.assertEqual(len(accepted), 1)
 
     def test_realtime_search_filter(self):
         """Gõ từ khóa vào ô tìm kiếm thì chỉ hiển thị các dòng khớp tên file."""
