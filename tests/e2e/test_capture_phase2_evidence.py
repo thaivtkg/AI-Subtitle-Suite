@@ -19,8 +19,18 @@ from ui.timeline.timeline_widget import TimelineWidget
 from core.waveform.waveform_service import WaveformService
 from core.audio.jog_audio_engine import JogAudioEngine
 
-ARTIFACT_DIR = r"C:\Users\Kuroberus\.gemini\antigravity\brain\d7d2d74d-59ec-4d54-8751-7d91438bdf1d"
-os.makedirs(ARTIFACT_DIR, exist_ok=True)
+CURRENT_CONV_ARTIFACT = r"C:\Users\Kuroberus\.gemini\antigravity\brain\bc09a4cd-ebe2-4025-ac00-5b4d8c23e82d"
+LEGACY_ARTIFACT = r"C:\Users\Kuroberus\.gemini\antigravity\brain\d7d2d74d-59ec-4d54-8751-7d91438bdf1d"
+
+def _save_both(img_or_widget, filename):
+    for art_dir in [CURRENT_CONV_ARTIFACT, LEGACY_ARTIFACT]:
+        os.makedirs(art_dir, exist_ok=True)
+        out_path = os.path.join(art_dir, filename)
+        if hasattr(img_or_widget, "save"):
+            img_or_widget.save(out_path)
+        else:
+            img_or_widget.grab().save(out_path)
+
 
 app = QApplication.instance()
 if app is None:
@@ -57,7 +67,7 @@ app.processEvents()
 
 pixmap_vad = QPixmap(waveform_view.size())
 waveform_view.render(pixmap_vad)
-pixmap_vad.save(os.path.join(ARTIFACT_DIR, "phase2_01_vad_speech_density_waveform.png"))
+_save_both(pixmap_vad, "phase2_01_vad_speech_density_waveform.png")
 print("Saved phase2_01_vad_speech_density_waveform.png")
 
 # =========================================================================
@@ -82,7 +92,7 @@ app.processEvents()
 
 pixmap_timeline = QPixmap(timeline_widget.size())
 timeline_widget.render(pixmap_timeline)
-pixmap_timeline.save(os.path.join(ARTIFACT_DIR, "phase2_02_jog_audio_scrubbing_timeline.png"))
+_save_both(pixmap_timeline, "phase2_02_jog_audio_scrubbing_timeline.png")
 print("Saved phase2_02_jog_audio_scrubbing_timeline.png")
 
 # Ngắt an toàn
@@ -91,5 +101,5 @@ app.processEvents()
 
 pixmap_cutoff = QPixmap(timeline_widget.size())
 timeline_widget.render(pixmap_cutoff)
-pixmap_cutoff.save(os.path.join(ARTIFACT_DIR, "phase2_03_jog_cutoff_idle.png"))
+_save_both(pixmap_cutoff, "phase2_03_jog_cutoff_idle.png")
 print("Saved phase2_03_jog_cutoff_idle.png")
