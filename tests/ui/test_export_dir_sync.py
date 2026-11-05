@@ -64,8 +64,8 @@ class TestExportDirSync(unittest.TestCase):
         self.assertEqual(win.page_export.out_edit.text(), "")
         self.assertEqual(win.output_dir, "")
 
-        # Case B: Valid existing dir
-        real_dir = os.path.abspath(tempfile.gettempdir())  # this dir actually exists
+        # Case B: Valid existing dir (non-temp)
+        real_dir = os.path.abspath(os.path.dirname(__file__))  # this dir actually exists and is non-temp
         mock_settings_real = {"output_dir": real_dir}
 
         with patch("ui.Gui.load_settings", return_value=mock_settings_real):
