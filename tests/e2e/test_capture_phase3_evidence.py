@@ -22,14 +22,16 @@ from player.pip_player import PiPPlayerWindow
 from core.database.tm_manager import TranslationMemoryManager
 from core.translation.controllers.translation_controller import TranslationController
 
-CURRENT_CONV_ARTIFACT = r"C:\Users\Kuroberus\.gemini\antigravity\brain\d7d2d74d-59ec-4d54-8751-7d91438bdf1d"
+CURRENT_CONV_ARTIFACT = r"C:\Users\Kuroberus\.gemini\antigravity\brain\bc09a4cd-ebe2-4025-ac00-5b4d8c23e82d"
+LEGACY_ARTIFACT = r"C:\Users\Kuroberus\.gemini\antigravity\brain\d7d2d74d-59ec-4d54-8751-7d91438bdf1d"
 
 def _save_evidence(widget, filename):
-    os.makedirs(CURRENT_CONV_ARTIFACT, exist_ok=True)
-    out_path = os.path.join(CURRENT_CONV_ARTIFACT, filename)
-    pix = widget.grab()
-    pix.save(out_path)
-    print(f"[EVIDENCE CAPTURED] {out_path} ({pix.width()}x{pix.height()})")
+    for art_dir in [CURRENT_CONV_ARTIFACT, LEGACY_ARTIFACT]:
+        os.makedirs(art_dir, exist_ok=True)
+        out_path = os.path.join(art_dir, filename)
+        pix = widget.grab()
+        pix.save(out_path)
+        print(f"[EVIDENCE CAPTURED] {out_path} ({pix.width()}x{pix.height()})")
 
 app = QApplication.instance()
 if app is None:
