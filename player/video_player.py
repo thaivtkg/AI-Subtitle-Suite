@@ -138,6 +138,7 @@ class VideoPlayerWidget(QWidget):
     timeline_position_changed = Signal(int)
     subtitle_placement_preview_changed = Signal(object)
     subtitle_placement_committed = Signal(object)
+    pip_requested = Signal()
     def __init__(self, parent=None):
         super().__init__(parent)
         
@@ -263,6 +264,26 @@ class VideoPlayerWidget(QWidget):
         """)
         self.slider_volume.valueChanged.connect(self.set_volume)
         controls_layout.addWidget(self.slider_volume)
+
+        # Nút PiP / Tách Video (FR-07)
+        self.btn_pip = QPushButton("📺 Tách Video")
+        self.btn_pip.setToolTip("Tách cửa sổ video (Ctrl + P) để chia đôi màn hình hoặc kéo sang màn hình phụ")
+        self.btn_pip.setStyleSheet("""
+            QPushButton {
+                background: #1B263B;
+                color: #94A3B8;
+                border: 1px solid #334155;
+                border-radius: 4px;
+                font-size: 11px;
+                font-weight: 500;
+                padding: 3px 8px;
+                margin-left: 6px;
+            }
+            QPushButton:hover { background: #273247; color: #38BDF8; border-color: #38BDF8; }
+            QPushButton:pressed { background: #38BDF8; color: #FFFFFF; }
+        """)
+        self.btn_pip.clicked.connect(self.pip_requested.emit)
+        controls_layout.addWidget(self.btn_pip)
 
         layout.addLayout(controls_layout)
 

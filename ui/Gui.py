@@ -85,6 +85,7 @@ from core.tutorial.progress_store import TourProgressStore
 from core.tutorial.tour_engine import TourEngine
 from core.video_metadata import MetadataWorker
 from player.video_player import VideoPlayerWidget
+from player.pip_player import PiPPlayerWindow
 from ui.animations.animation_types import SubtitleAppearMode, SubtitleDisappearMode
 from ui.animations.subtitle_animation_controller import SubtitleTextEffect
 from ui.components.animated_stack import AnimatedStack
@@ -636,6 +637,24 @@ class MainWindow(QMainWindow):
         self.video_player = VideoPlayerWidget()
         self.video_player.setMinimumHeight(200)
         self.undo_manager.state_changed.connect(self._sync_live_subtitle_on_undo_redo)
+
+        # Khởi tạo PiP Window độc lập & kết nối 2 chiều (FR-07)
+        self.pip_window = PiPPlayerWindow()
+        self._saved_splitter_sizes = None
+        self.video_player.pip_requested.connect(self.toggle_pip_video)
+        self.pip_window.dock_requested.connect(self.dock_pip_video)
+        self.pip_window.play_pause_requested.connect(self.video_player.toggle_playback)
+        self.pip_window.seek_requested.connect(self.video_player.set_position)
+
+        if hasattr(self.video_player, "video_item") and hasattr(self.video_player.video_item, "videoSink"):
+            sink = self.video_player.video_item.videoSink()
+            if sink:
+                sink.videoFrameChanged.connect(self.pip_window.set_video_frame)
+
+        if hasattr(self.video_player, "player"):
+            self.video_player.player.positionChanged.connect(self.pip_window.set_position)
+            self.video_player.player.durationChanged.connect(self.pip_window.set_duration)
+            self.video_player.player.playingChanged.connect(self.pip_window.set_playing)
         
         self.tm_matches_panel = TMMatchesPanel()
         
@@ -2538,9 +2557,51 @@ class MainWindow(QMainWindow):
                 f"✅ [MARK OUT] Đã tạo câu phụ đề thủ công: {self.sub_editor.ms_to_time_str(in_ms)} --> {self.sub_editor.ms_to_time_str(out_ms)}"
             )
 
+    def toggle_pip_video(self):
+        """Bật / Tắt cửa sổ xem trước video tách rời PiP (FR-07)."""
+        if not hasattr(self, "pip_window") or self.pip_window is None:
+            return
+        if self.pip_window.isVisible():
+            self.dock_pip_video()
+        else:
+            self.detach_pip_video()
+
+    def detach_pip_video(self):
+        """Tách video ra cửa sổ PiP độc lập và mở rộng SubEditor 100% (FR-07 Ràng buộc 1)."""
+        if not hasattr(self, "top_horizontal_splitter") or not hasattr(self, "video_player"):
+            return
+        self._saved_splitter_sizes = self.top_horizontal_splitter.sizes()
+        self.video_player.hide()
+        if hasattr(self, "pip_window") and self.pip_window:
+            if hasattr(self.video_player, "player"):
+                self.pip_window.set_position(self.video_player.player.position())
+                self.pip_window.set_duration(self.video_player.player.duration())
+                self.pip_window.set_playing(self.video_player.player.isPlaying())
+            self.pip_window.show()
+            self.pip_window.raise_()
+            self.pip_window.activateWindow()
+
+    def dock_pip_video(self):
+        """Thu video trở lại giao diện chính và phục hồi tỷ lệ thanh chia ban đầu (FR-07 Ràng buộc 1)."""
+        if hasattr(self, "pip_window") and self.pip_window:
+            self.pip_window.hide()
+        if hasattr(self, "video_player") and self.video_player:
+            self.video_player.show()
+        if hasattr(self, "top_horizontal_splitter"):
+            sizes = getattr(self, "_saved_splitter_sizes", None)
+            if sizes and len(sizes) == 2 and sum(sizes) > 0:
+                self.top_horizontal_splitter.setSizes(sizes)
+            else:
+                self.top_horizontal_splitter.setStretchFactor(0, 6)
+                self.top_horizontal_splitter.setStretchFactor(1, 4)
+
     def eventFilter(self, obj, event):
         try:
             if event.type() == QEvent.KeyPress and (not hasattr(self, "isActiveWindow") or self.isActiveWindow()):
+                # Phím tắt toàn cục Ctrl + P bật/tắt PiP Video (FR-07)
+                if event.modifiers() == Qt.ControlModifier and event.key() == Qt.Key_P:
+                    self.toggle_pip_video()
+                    return True
                 # AUD-UX-002: Chỉ bắt phím tắt điều khiển Playback/SubEditor khi người dùng ĐANG Ở TAB 1 (Video Workspace)
                 if hasattr(self, "stack") and self.stack.currentIndex() == 1:
                     focus_widget = QApplication.focusWidget()
@@ -4644,6 +4705,11 @@ class MainWindow(QMainWindow):
             )
 
     def closeEvent(self, event):
+        if hasattr(self, "pip_window") and self.pip_window:
+            try:
+                self.pip_window.close()
+            except Exception:
+                pass
         self._flush_canonical_save_before_close()
         if (
             self.project_service
