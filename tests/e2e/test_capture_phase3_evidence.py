@@ -9,7 +9,7 @@ import sys
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, PROJECT_ROOT)
 
-from PySide6.QtCore import Qt, QPoint, QRect
+from PySide6.QtCore import Qt, QPoint, QRect, QParallelAnimationGroup
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
     QLabel, QFrame, QTextEdit, QSplitter
@@ -22,16 +22,15 @@ from player.pip_player import PiPPlayerWindow
 from core.database.tm_manager import TranslationMemoryManager
 from core.translation.controllers.translation_controller import TranslationController
 
-CURRENT_CONV_ARTIFACT = r"C:\Users\Kuroberus\.gemini\antigravity\brain\bc09a4cd-ebe2-4025-ac00-5b4d8c23e82d"
-LEGACY_ARTIFACT = r"C:\Users\Kuroberus\.gemini\antigravity\brain\d7d2d74d-59ec-4d54-8751-7d91438bdf1d"
+CURRENT_CONV_ARTIFACT = r"C:\Users\Kuroberus\.gemini\antigravity\brain\d7d2d74d-59ec-4d54-8751-7d91438bdf1d"
 
 def _save_evidence(widget, filename):
-    for art_dir in [CURRENT_CONV_ARTIFACT, LEGACY_ARTIFACT]:
-        os.makedirs(art_dir, exist_ok=True)
-        out_path = os.path.join(art_dir, filename)
-        pix = widget.grab()
-        pix.save(out_path)
-        print(f"[EVIDENCE CAPTURED] {out_path} ({pix.width()}x{pix.height()})")
+    os.makedirs(CURRENT_CONV_ARTIFACT, exist_ok=True)
+    out_path = os.path.join(CURRENT_CONV_ARTIFACT, filename)
+    pix = widget.grab()
+    pix.save(out_path)
+    sys.__stdout__.write(f"[EVIDENCE CAPTURED] {out_path} ({pix.width()}x{pix.height()})\n")
+    sys.__stdout__.flush()
 
 app = QApplication.instance()
 if app is None:
@@ -186,75 +185,37 @@ pip_win.show()
 _save_evidence(pip_win, "phase3_02_floating_pip_player_active.png")
 
 # =========================================================================
-# 3. Chụp ảnh FR-07: Dual-Window Split Workflow (SubEditor 100% Width)
+# 3. Chụp ảnh FR-07: Live MainWindow Runtime với PiP Detached & Placeholder (FINDING-PHASE3-002)
 # =========================================================================
-split_demo = QWidget()
-split_demo.setWindowTitle("AI Subtitle Suite — Dual-Window Split 50/50 Workflow")
-split_demo.resize(1100, 520)
-split_demo.setStyleSheet("background-color: #0B1120; font-family: 'Segoe UI', sans-serif;")
+from ui.Gui import MainWindow
 
-split_layout = QHBoxLayout(split_demo)
-split_layout.setContentsMargins(10, 10, 10, 10)
-split_layout.setSpacing(12)
+win = MainWindow()
+win.resize(1280, 780)
+win.show()
+win.switch_page(1) # Chuyển sang Tab Video Workspace
+if hasattr(win, "stack") and hasattr(win.stack, "anim_group") and win.stack.anim_group.state() == QParallelAnimationGroup.Running:
+    win.stack.anim_group.stop()
+    win.stack._force_finish_transition()
+app.processEvents()
 
-# Left Side: SubEditor (100% Width khi Video đã detach)
-left_side = QFrame()
-left_side.setStyleSheet("background-color: #0F172A; border: 1px solid #1E293B; border-radius: 8px;")
-left_layout = QVBoxLayout(left_side)
-left_layout.setContentsMargins(14, 12, 14, 12)
-left_layout.setSpacing(8)
-
-lbl_left_title = QLabel("📝 SUBTITLE STUDIO — PHÓNG TO 100% BỀ NGANG (VIDEO ĐÃ TÁCH)")
-lbl_left_title.setStyleSheet("color: #4ADE80; font-size: 12px; font-weight: bold; border: none;")
-left_layout.addWidget(lbl_left_title)
-
-# Header table mockup
-mock_table_hdr = QLabel(" #    | Start Time    | End Time      | CPS HUD       | Subtitle Text")
-mock_table_hdr.setStyleSheet("background-color: #1E293B; color: #94A3B8; font-family: monospace; font-size: 11px; padding: 6px; border-radius: 4px;")
-left_layout.addWidget(mock_table_hdr)
-
-# Rows
-rows = [
-    "001  | 00:00:01,200  | 00:00:04,500  | 14.2 CPS (OK) | Chào mừng các bạn đến với kênh của chúng tôi.",
-    "002  | 00:00:04,800  | 00:00:06,200  | ⚠️ 23.5 CPS   | Hôm nay chúng ta sẽ cùng khám phá AI Subtitle Suite mới nhất.",
-    "003  | 00:00:06,500  | 00:00:09,800  | 12.8 CPS (OK) | Với nhiều tính năng vượt trội hỗ trợ biên tập đa màn hình.",
-    "004  | 00:00:10,200  | 00:00:13,500  | 15.0 CPS (OK) | Tối ưu hóa hoàn hảo cho quy trình làm việc chuyên nghiệp.",
+# Nạp dữ liệu phụ đề thực tế vào SubEditor của MainWindow
+win.sub_editor.all_segments = [
+    {"index": 1, "start": "00:00:01,200", "end": "00:00:04,500", "text": "Chào mừng các bạn đến với kênh AI Subtitle Suite."},
+    {"index": 2, "start": "00:00:04,800", "end": "00:00:06,200", "text": "Hôm nay chúng ta sẽ cùng khám phá tính năng True Detachable PiP và Dual-Window Split."},
+    {"index": 3, "start": "00:00:06,500", "end": "00:00:09,800", "text": "Vùng xem trước được thế chỗ bằng Placeholder Widget bảo lưu hoàn hảo tỷ lệ Splitter."},
+    {"index": 4, "start": "00:00:10,200", "end": "00:00:13,500", "text": "Tối ưu hóa hoàn hảo cho quy trình làm việc chuyên nghiệp, không gây co giật khi chuyển tab."},
 ]
-for r in rows:
-    lbl_r = QLabel(r)
-    color = "#F8FAFC" if "⚠️" not in r else "#F97316"
-    lbl_r.setStyleSheet(f"background-color: #131D31; color: {color}; font-family: monospace; font-size: 11px; padding: 8px; border-radius: 4px;")
-    left_layout.addWidget(lbl_r)
+win.sub_editor.render_page()
 
-left_layout.addStretch()
-split_layout.addWidget(left_side, stretch=1)
+# Tách video ra PiP
+win.detach_pip_video()
 
-# Right Side: Embedded Preview of Detached PiP Window (Simulating Windows 11 Snap 50/50)
-right_side = QFrame()
-right_side.setStyleSheet("background-color: #0F172A; border: 1.5px solid #0284C7; border-radius: 8px;")
-right_layout = QVBoxLayout(right_side)
-right_layout.setContentsMargins(14, 12, 14, 12)
-right_layout.setSpacing(8)
+# Xử lý events để layout hoàn thiện đầy đủ
+app.processEvents()
 
-lbl_right_title = QLabel("📺 CỬA SỔ VIDEO TÁCH RỜI (WINDOWS 11 SNAP ASSIST 50/50)")
-lbl_right_title.setStyleSheet("color: #38BDF8; font-size: 12px; font-weight: bold; border: none;")
-right_layout.addWidget(lbl_right_title)
+# Chụp trực tiếp từ Live MainWindow runtime (SubEditor thật bên trái, PiP Placeholder thật bên phải)
+_save_evidence(win, "phase3_03_pip_bidirectional_sync.png")
+win.close()
 
-# Mini video frame preview
-lbl_mini_video = QLabel()
-lbl_mini_video.setPixmap(QPixmap.fromImage(img).scaled(480, 260, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-lbl_mini_video.setAlignment(Qt.AlignCenter)
-lbl_mini_video.setStyleSheet("background-color: #000000; border-radius: 6px;")
-right_layout.addWidget(lbl_mini_video, stretch=1)
-
-# Controls
-right_ctrl = QLabel("▶ 00:45 / 03:00  ━━━━━●───────────  [📌 Đang nổi]  [🗗 Gắn lại vào App]")
-right_ctrl.setStyleSheet("color: #94A3B8; font-size: 11px; background-color: #1E293B; padding: 8px; border-radius: 4px;")
-right_layout.addWidget(right_ctrl)
-
-split_layout.addWidget(right_side, stretch=1)
-
-split_demo.show()
-_save_evidence(split_demo, "phase3_03_pip_bidirectional_sync.png")
-
-print("ALL PHASE 3 EVIDENCE CAPTURED SUCCESSFULLY!")
+sys.__stdout__.write("ALL PHASE 3 EVIDENCE CAPTURED SUCCESSFULLY!\n")
+sys.__stdout__.flush()

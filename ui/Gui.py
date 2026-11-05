@@ -46,6 +46,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QScrollArea,
     QSplitter,
+    QStackedWidget,
     QStyle,
     QTabWidget,
     QTextEdit,
@@ -85,7 +86,7 @@ from core.tutorial.progress_store import TourProgressStore
 from core.tutorial.tour_engine import TourEngine
 from core.video_metadata import MetadataWorker
 from player.video_player import VideoPlayerWidget
-from player.pip_player import PiPPlayerWindow
+from player.pip_player import PiPPlayerWindow, PiPWorkspacePlaceholderWidget
 from ui.animations.animation_types import SubtitleAppearMode, SubtitleDisappearMode
 from ui.animations.subtitle_animation_controller import SubtitleTextEffect
 from ui.components.animated_stack import AnimatedStack
@@ -640,6 +641,11 @@ class MainWindow(QMainWindow):
 
         # Khởi tạo PiP Window độc lập & kết nối 2 chiều (FR-07)
         self.pip_window = PiPPlayerWindow()
+        self.pip_placeholder = PiPWorkspacePlaceholderWidget()
+        self.video_stack = QStackedWidget()
+        self.video_stack.addWidget(self.video_player)
+        self.video_stack.addWidget(self.pip_placeholder)
+        self.pip_placeholder.dock_requested.connect(self.dock_pip_video)
         self._saved_splitter_sizes = None
         self.video_player.pip_requested.connect(self.toggle_pip_video)
         self.pip_window.dock_requested.connect(self.dock_pip_video)
@@ -659,7 +665,7 @@ class MainWindow(QMainWindow):
         self.tm_matches_panel = TMMatchesPanel()
         
         self.top_horizontal_splitter.addWidget(self.sub_editor)
-        self.top_horizontal_splitter.addWidget(self.video_player)
+        self.top_horizontal_splitter.addWidget(self.video_stack)
         self.top_horizontal_splitter.setStretchFactor(0, 6) # Subtitle Editor (60%)
         self.top_horizontal_splitter.setStretchFactor(1, 4) # Video Player (40%)
         
@@ -733,7 +739,7 @@ class MainWindow(QMainWindow):
         self.overlay_host = OverlayHost(self)
         self.generation_drawer = self.overlay_host.drawer_surface
         
-        from PySide6.QtWidgets import QListWidget, QStackedWidget, QListWidgetItem
+        from PySide6.QtWidgets import QListWidget, QListWidgetItem
         nav_list = QListWidget(self.generation_drawer)
         nav_list.setFixedWidth(84)
         nav_list.setObjectName("NavRail")
@@ -2567,11 +2573,13 @@ class MainWindow(QMainWindow):
             self.detach_pip_video()
 
     def detach_pip_video(self):
-        """Tách video ra cửa sổ PiP độc lập và mở rộng SubEditor 100% (FR-07 Ràng buộc 1)."""
+        """Tách video ra cửa sổ PiP độc lập và thay thế vùng xem trước bằng Placeholder Widget (FR-07 FINDING-PHASE3-001)."""
         if not hasattr(self, "top_horizontal_splitter") or not hasattr(self, "video_player"):
             return
-        self._saved_splitter_sizes = self.top_horizontal_splitter.sizes()
-        self.video_player.hide()
+        if hasattr(self, "video_stack") and hasattr(self, "pip_placeholder"):
+            self.video_stack.setCurrentIndex(1)
+        else:
+            self.video_player.hide()
         if hasattr(self, "pip_window") and self.pip_window:
             if hasattr(self.video_player, "player"):
                 self.pip_window.set_position(self.video_player.player.position())
@@ -2582,18 +2590,13 @@ class MainWindow(QMainWindow):
             self.pip_window.activateWindow()
 
     def dock_pip_video(self):
-        """Thu video trở lại giao diện chính và phục hồi tỷ lệ thanh chia ban đầu (FR-07 Ràng buộc 1)."""
+        """Thu video trở lại giao diện chính và phục hồi Video Player (FR-07 FINDING-PHASE3-001)."""
         if hasattr(self, "pip_window") and self.pip_window:
             self.pip_window.hide()
-        if hasattr(self, "video_player") and self.video_player:
+        if hasattr(self, "video_stack"):
+            self.video_stack.setCurrentIndex(0)
+        elif hasattr(self, "video_player") and self.video_player:
             self.video_player.show()
-        if hasattr(self, "top_horizontal_splitter"):
-            sizes = getattr(self, "_saved_splitter_sizes", None)
-            if sizes and len(sizes) == 2 and sum(sizes) > 0:
-                self.top_horizontal_splitter.setSizes(sizes)
-            else:
-                self.top_horizontal_splitter.setStretchFactor(0, 6)
-                self.top_horizontal_splitter.setStretchFactor(1, 4)
 
     def eventFilter(self, obj, event):
         try:

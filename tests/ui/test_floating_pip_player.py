@@ -3,7 +3,7 @@ from PySide6.QtCore import Qt, QPoint, QSize
 from PySide6.QtGui import QImage
 from PySide6.QtMultimedia import QVideoFrame
 from PySide6.QtWidgets import QApplication, QSplitter, QWidget
-from player.pip_player import PiPPlayerWindow
+from player.pip_player import PiPPlayerWindow, PiPWorkspacePlaceholderWidget
 from player.video_player import VideoPlayerWidget
 
 @pytest.fixture
@@ -63,30 +63,49 @@ def test_pip_window_bidirectional_signals(pip_window):
     pip_window.btn_dock.click()
     assert len(dock_called) == 1
 
-def test_splitter_detach_undock_100_percent_expansion(qapp):
-    # Ràng buộc 1: Khi detach video, SubEditor mở rộng 100% bề ngang
+def test_pip_workspace_placeholder_widget(qapp):
+    # FINDING-PHASE3-001: Kiểm tra cấu trúc và tương tác của Placeholder Widget
+    placeholder = PiPWorkspacePlaceholderWidget()
+    assert placeholder.objectName() == "pip_workspace_placeholder"
+    assert placeholder.lbl_icon.text() == "📺"
+    assert "PiP ACTIVE" in placeholder.lbl_title.text()
+    assert placeholder.btn_dock.objectName() == "btn_dock_from_placeholder"
+
+    dock_signal_fired = []
+    placeholder.dock_requested.connect(lambda: dock_signal_fired.append(True))
+    placeholder.btn_dock.click()
+    assert len(dock_signal_fired) == 1
+
+def test_splitter_detach_undock_placeholder_preserves_workspace(qapp):
+    # Ràng buộc 1 & FINDING-PHASE3-001: Video container dùng QStackedWidget để bảo toàn kích thước Splitter
+    from PySide6.QtWidgets import QStackedWidget
     splitter = QSplitter(Qt.Horizontal)
     sub_editor = QWidget()
+    video_stack = QStackedWidget()
     video_player = VideoPlayerWidget()
+    placeholder = PiPWorkspacePlaceholderWidget()
+    video_stack.addWidget(video_player)
+    video_stack.addWidget(placeholder)
+    
     splitter.addWidget(sub_editor)
-    splitter.addWidget(video_player)
+    splitter.addWidget(video_stack)
     splitter.setSizes([600, 400])
     splitter.show()
 
-    # Lưu sizes và hide video
-    saved_sizes = splitter.sizes()
-    assert saved_sizes[0] > 0 and saved_sizes[1] > 0
-    video_player.hide()
+    initial_sizes = splitter.sizes()
+    assert initial_sizes[0] > 0 and initial_sizes[1] > 0
 
-    # Khi video bị ẩn, sub_editor chiếm toàn bộ bề ngang
+    # 1. Khi tách PiP (chuyển sang placeholder): kích thước splitter không đổi
+    video_stack.setCurrentIndex(1)
     assert video_player.isHidden() is True
-    assert sub_editor.isVisible() is True
+    assert placeholder.isVisible() is True
+    assert splitter.sizes() == initial_sizes
 
-    # Khi gắn lại (dock), phục hồi kích thước
-    video_player.show()
-    splitter.setSizes(saved_sizes)
+    # 2. Khi gắn lại: video_player phục hồi, kích thước splitter tiếp tục bảo toàn
+    video_stack.setCurrentIndex(0)
     assert video_player.isVisible() is True
-    assert splitter.sizes()[1] > 0
+    assert placeholder.isHidden() is True
+    assert splitter.sizes() == initial_sizes
 
 
 def test_mainwindow_pip_toggle_and_tab_geometry_lock(qapp):
@@ -94,27 +113,48 @@ def test_mainwindow_pip_toggle_and_tab_geometry_lock(qapp):
     win = MainWindow()
     win.show()
     try:
+        # Chuyển sang Tab 1 (Video Workspace) để các widget trong workspace hiển thị
+        win.switch_page(1)
         initial_geo = win.geometry()
+        assert win.video_stack.currentIndex() == 0
+        assert win.video_player.isVisible() is True
+        assert win.pip_placeholder.isHidden() is True
 
-        # 1. Tách PiP
+        # 1. Tách PiP (FINDING-PHASE3-001: Video workspace được thế chỗ bằng Placeholder)
         win.detach_pip_video()
+        assert win.video_stack.currentIndex() == 1
         assert win.video_player.isHidden() is True
+        assert win.pip_placeholder.isVisible() is True
         assert win.pip_window.isVisible() is True
+        sizes = win.top_horizontal_splitter.sizes()
+        assert sizes[0] > 0 and sizes[1] > 0
 
-        # 2. Ràng buộc 3: Chuyển tab không làm thay đổi kích thước MainWindow
+        # 2. Nút 1-click dock trên Placeholder
+        win.pip_placeholder.btn_dock.click()
+        assert win.video_stack.currentIndex() == 0
+        assert win.video_player.isVisible() is True
+        assert win.pip_placeholder.isHidden() is True
+        assert win.pip_window.isHidden() is True
+
+        # 3. Tách lại và kiểm tra chuyển tab không làm biến động kích thước (Ràng buộc 3)
+        win.detach_pip_video()
+        assert win.pip_placeholder.isVisible() is True
+        
         win.switch_page(8) # Tab Dịch thuật AI
         assert win.geometry().width() == initial_geo.width()
         assert win.geometry().height() == initial_geo.height()
-        # PiP vẫn hiển thị ngoài màn hình khi ở tab khác
         assert win.pip_window.isVisible() is True
 
         win.switch_page(1) # Quay lại Tab Studio
         assert win.geometry().width() == initial_geo.width()
         assert win.geometry().height() == initial_geo.height()
+        assert win.pip_placeholder.isVisible() is True
 
-        # 3. Gắn lại (Dock)
+        # 4. Gắn lại (Dock)
         win.dock_pip_video()
+        assert win.video_stack.currentIndex() == 0
         assert win.video_player.isVisible() is True
+        assert win.pip_placeholder.isHidden() is True
         assert win.pip_window.isHidden() is True
     finally:
         win.close()

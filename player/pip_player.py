@@ -5,7 +5,7 @@ from PySide6.QtMultimedia import QVideoFrame
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
-    QLabel, QSlider, QStyle, QApplication
+    QLabel, QSlider, QStyle, QApplication, QFrame
 )
 
 def format_time_ms(ms: int) -> str:
@@ -214,3 +214,80 @@ class PiPPlayerWindow(QWidget):
             event.accept()
             return
         super().keyPressEvent(event)
+
+
+class PiPWorkspacePlaceholderWidget(QFrame):
+    """
+    Placeholder widget hiển thị trong không gian làm việc video khi PiP Player tách ra độc lập (FR-07).
+    Bảo toàn 100% kích thước và tỷ lệ phân chia của Splitter, ngăn chặn co giật giao diện
+    và duy trì tính ổn định hình học khi chuyển đổi qua lại giữa các tab (FINDING-PHASE3-001).
+    """
+    dock_requested = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("pip_workspace_placeholder")
+        self._init_ui()
+
+    def _init_ui(self):
+        self.setStyleSheet("""
+            QFrame#pip_workspace_placeholder {
+                background-color: #0F172A;
+                border: 1.5px dashed #334155;
+                border-radius: 10px;
+                font-family: 'Segoe UI', -apple-system, sans-serif;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignCenter)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(14)
+
+        # 1. Biểu tượng Video PiP
+        self.lbl_icon = QLabel("📺")
+        self.lbl_icon.setAlignment(Qt.AlignCenter)
+        self.lbl_icon.setStyleSheet("font-size: 40px; border: none; background: transparent;")
+        layout.addWidget(self.lbl_icon)
+
+        # 2. Tiêu đề trạng thái
+        self.lbl_title = QLabel("CỬA SỔ XEM TRƯỚC VIDEO ĐANG TÁCH RỜI (PiP ACTIVE)")
+        self.lbl_title.setAlignment(Qt.AlignCenter)
+        self.lbl_title.setStyleSheet("color: #38BDF8; font-size: 13px; font-weight: 700; letter-spacing: 0.5px; border: none; background: transparent;")
+        layout.addWidget(self.lbl_title)
+
+        # 3. Hướng dẫn & Lưu ý bố cục
+        self.lbl_desc = QLabel(
+            "Video đang phát ở cửa sổ độc lập. Bạn có thể kéo thả tự do hoặc dùng Windows Snap (Win + Phím Mũi Tên) để chia đôi màn hình.\n"
+            "Vùng xem trước này được bảo lưu tỷ lệ để giữ nguyên vẹn bố cục ứng dụng mà không gây co giật khi chuyển tab."
+        )
+        self.lbl_desc.setAlignment(Qt.AlignCenter)
+        self.lbl_desc.setWordWrap(True)
+        self.lbl_desc.setStyleSheet("color: #94A3B8; font-size: 12px; line-height: 1.5; border: none; background: transparent; max-width: 480px;")
+        layout.addWidget(self.lbl_desc)
+
+        # 4. Nút bấm 1-click thu hồi video về App
+        self.btn_dock = QPushButton("🗗 Gắn video trở lại đây (Ctrl + P)")
+        self.btn_dock.setObjectName("btn_dock_from_placeholder")
+        self.btn_dock.setCursor(Qt.PointingHandCursor)
+        self.btn_dock.setToolTip("Thu cửa sổ video trở lại khung làm việc chính (Ctrl + P)")
+        self.btn_dock.setStyleSheet("""
+            QPushButton#btn_dock_from_placeholder {
+                background: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 0, stop: 0 #0284C7, stop: 1 #2563EB);
+                color: #FFFFFF;
+                border: none;
+                border-radius: 6px;
+                font-size: 12px;
+                font-weight: 600;
+                padding: 8px 20px;
+            }
+            QPushButton#btn_dock_from_placeholder:hover {
+                background: #0284C7;
+            }
+            QPushButton#btn_dock_from_placeholder:pressed {
+                background: #0369A1;
+            }
+        """)
+        self.btn_dock.clicked.connect(self.dock_requested.emit)
+        layout.addWidget(self.btn_dock, alignment=Qt.AlignCenter)
+
