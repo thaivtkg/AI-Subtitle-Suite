@@ -22,6 +22,7 @@ class TranslationController(QObject):
     appliedTermsChanged = Signal()
     currentSubjectTagChanged = Signal()
     translationProgressChanged = Signal(int)
+    ghostTextChanged = Signal()
 
     def __init__(self, subtitle_model, worker_factory=None):
         super().__init__()
@@ -40,6 +41,8 @@ class TranslationController(QObject):
         self._current_source_language = "English"
         self._manual_pronoun_pair = ""
         self._translation_progress = 0
+        self._ghost_text = ""
+        self._copilot_suggestion = ""
         
         self._subtitle_model = subtitle_model
         self._worker_factory = worker_factory or TranslationWorker
@@ -218,11 +221,18 @@ class TranslationController(QObject):
             return self._project_controller.entity_dictionary
         return self._entities
 
+    def set_translation_memory(self, tm):
+        self._translation_memory = tm
+
     @property
     def translation_memory(self):
         if self._project_controller and hasattr(self._project_controller, "translation_memory"):
             return self._project_controller.translation_memory
         return self._translation_memory
+
+    @Property(str, notify=ghostTextChanged)
+    def ghostText(self):
+        return self._ghost_text
 
     @property
     def _worker(self):
@@ -509,6 +519,56 @@ class TranslationController(QObject):
             self._subtitle_model.update_translation(self._active_translation_index, text, "EDITED")
         self.statusChanged.emit(self._status)
         self.translationUpdated.emit(self._current_translation)
+        self._update_ghost_text()
+
+    def _update_ghost_text(self):
+        typed = self._current_translation or ""
+        if not typed.strip() or self._status == "TRANSLATING":
+            if self._ghost_text != "":
+                self._ghost_text = ""
+                self._copilot_suggestion = ""
+                self.ghostTextChanged.emit()
+            return
+
+        tm = self.translation_memory
+        if tm is None or not hasattr(tm, "query_copilot_prefix"):
+            if self._ghost_text != "":
+                self._ghost_text = ""
+                self._copilot_suggestion = ""
+                self.ghostTextChanged.emit()
+            return
+
+        suggestion = tm.query_copilot_prefix(typed, source_text=getattr(self, "_current_original", ""))
+        if suggestion and suggestion.lower().startswith(typed.lower()):
+            remainder = suggestion[len(typed):]
+            self._copilot_suggestion = suggestion
+            if self._ghost_text != remainder:
+                self._ghost_text = remainder
+                self.ghostTextChanged.emit()
+            return
+
+        if self._ghost_text != "":
+            self._ghost_text = ""
+            self._copilot_suggestion = ""
+            self.ghostTextChanged.emit()
+
+    @Slot()
+    def acceptGhostText(self):
+        if not self._ghost_text:
+            return
+        full_text = self._current_translation + self._ghost_text
+        self._ghost_text = ""
+        self.updateCurrentTranslation(full_text)
+
+    @Slot()
+    def acceptNextWord(self):
+        if not self._ghost_text:
+            return
+        import re
+        match = re.match(r"^(\s*\S+)", self._ghost_text)
+        next_chunk = match.group(1) if match else self._ghost_text
+        new_text = self._current_translation + next_chunk
+        self.updateCurrentTranslation(new_text)
 
     @Slot(int, str, str, str)
     def requestTranslation(self, index, source_lang, target_lang, story_summary):

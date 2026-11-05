@@ -221,6 +221,55 @@ class TranslationMemoryManager:
         
         return results[:max_results]
 
+    def query_copilot_prefix(self, 
+                             prefix: str, 
+                             source_text: Optional[str] = None, 
+                             lang_pair: Optional[str] = None) -> Optional[str]:
+        """Truy vấn tiền tố gợi ý siêu tốc (< 50ms) cho Ghost-Text Translation Copilot."""
+        prefix_clean = prefix.strip() if prefix else ""
+        if not prefix_clean:
+            return None
+            
+        with self._lock:
+            c = self.conn.cursor()
+            
+            # 1. Ưu tiên khớp tiền tố với bản dịch của câu nguồn đang chọn
+            if source_text and source_text.strip():
+                src = source_text.strip()
+                c.execute("""
+                    SELECT target_text FROM tm_segments 
+                    WHERE source_text = ? AND (target_text LIKE ? || '%' OR LOWER(target_text) LIKE LOWER(?) || '%')
+                    ORDER BY usage_count DESC, id DESC LIMIT 1
+                """, (src, prefix_clean, prefix_clean))
+                row = c.fetchone()
+                if row and row['target_text']:
+                    return row['target_text']
+            
+            # 2. Khớp tiền tố trong toàn bộ bộ nhớ dịch (có kèm lọc lang_pair nếu có)
+            params = [prefix_clean]
+            query = "SELECT target_text FROM tm_segments WHERE target_text LIKE ? || '%'"
+            if lang_pair and lang_pair.strip():
+                query += " AND lang_pair = ?"
+                params.append(lang_pair.strip())
+            query += " ORDER BY usage_count DESC, id DESC LIMIT 1"
+            
+            c.execute(query, params)
+            row = c.fetchone()
+            if row and row['target_text']:
+                return row['target_text']
+                
+            # 3. Fallback: tra cứu không phân biệt hoa thường
+            c.execute("""
+                SELECT target_text FROM tm_segments 
+                WHERE LOWER(target_text) LIKE LOWER(?) || '%'
+                ORDER BY usage_count DESC, id DESC LIMIT 1
+            """, (prefix_clean,))
+            row = c.fetchone()
+            if row and row['target_text']:
+                return row['target_text']
+                
+            return None
+
     def close(self):
         with self._lock:
             self.conn.close()

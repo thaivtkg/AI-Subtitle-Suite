@@ -348,6 +348,29 @@ Item {
                                 }
 
                                 Rectangle {
+                                    visible: typeof translationController !== "undefined" && translationController.ghostText && translationController.ghostText.length > 0 && translationController.status !== "TRANSLATING"
+                                    implicitWidth: copilotHintRow.implicitWidth + 14
+                                    implicitHeight: 22
+                                    radius: 11
+                                    color: Qt.rgba(0.2, 0.7, 0.9, 0.15)
+                                    border.color: Theme.accentSapphire
+                                    border.width: 1
+
+                                    RowLayout {
+                                        id: copilotHintRow
+                                        anchors.centerIn: parent
+                                        spacing: 4
+                                        Text { text: "💡"; font.pixelSize: 10 }
+                                        Text {
+                                            text: "Tab: Nhận | Ctrl+→: Từng từ"
+                                            color: Theme.accentSapphire
+                                            font.pixelSize: 10
+                                            font.bold: true
+                                        }
+                                    }
+                                }
+
+                                Rectangle {
                                     visible: translationController.status !== "TRANSLATING" && translationInput.text.trim().length > 0
                                     implicitWidth: confText.implicitWidth + 16
                                     implicitHeight: 22
@@ -492,6 +515,58 @@ Item {
                                         if (focus && translationController.currentTranslation !== text) {
                                             translationController.updateCurrentTranslation(text)
                                         }
+                                    }
+
+                                    Keys.onTabPressed: (event) => {
+                                        if (typeof translationController !== "undefined" && translationController.ghostText && translationController.ghostText.length > 0) {
+                                            translationController.acceptGhostText()
+                                            event.accepted = true
+                                        } else {
+                                            event.accepted = false
+                                        }
+                                    }
+
+                                    Keys.onRightPressed: (event) => {
+                                        if ((event.modifiers & Qt.ControlModifier) && typeof translationController !== "undefined" && translationController.ghostText && translationController.ghostText.length > 0) {
+                                            translationController.acceptNextWord()
+                                            event.accepted = true
+                                        } else {
+                                            event.accepted = false
+                                        }
+                                    }
+
+                                    Text {
+                                        id: ghostTextOverlay
+                                        anchors.fill: parent
+                                        topPadding: translationInput.topPadding
+                                        bottomPadding: translationInput.bottomPadding
+                                        leftPadding: translationInput.leftPadding
+                                        rightPadding: translationInput.rightPadding
+                                        font: translationInput.font
+                                        wrapMode: translationInput.wrapMode
+                                        textFormat: Text.RichText
+                                        visible: translationInput.activeFocus && 
+                                                 typeof translationController !== "undefined" && 
+                                                 translationController.ghostText && 
+                                                 translationController.ghostText.length > 0 && 
+                                                 translationController.status !== "TRANSLATING"
+                                        text: {
+                                            if (!visible) return ""
+                                            var typed = translationInput.text
+                                                .replace(/&/g, "&amp;")
+                                                .replace(/</g, "&lt;")
+                                                .replace(/>/g, "&gt;")
+                                                .replace(/ /g, "&nbsp;")
+                                                .replace(/\n/g, "<br/>");
+                                            var ghost = translationController.ghostText
+                                                .replace(/&/g, "&amp;")
+                                                .replace(/</g, "&lt;")
+                                                .replace(/>/g, "&gt;")
+                                                .replace(/ /g, "&nbsp;")
+                                                .replace(/\n/g, "<br/>");
+                                            return "<span style='color: transparent;'>" + typed + "</span><span style='color: #64748B;'>" + ghost + "</span>"
+                                        }
+                                        z: -1
                                     }
                                 }
                             }
