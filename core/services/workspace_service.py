@@ -120,7 +120,7 @@ class WorkspaceService:
                     raise RuntimeError("Không thể bind video vào project đang mở.")
                 
                 # --- [S7-FIX-03] TRUY VẤN ARTIFACT TỪ KHO BẰNG ID, KHÔNG QUÉT ĐĨA ---
-                active_art_id = project.state.active_artifact_id
+                active_art_id = getattr(project.state, "active_artifact_id", None) or getattr(project.state, "subtitle_artifact_id", None)
                 target_artifact_path = None
                 
                 if active_art_id:
@@ -150,7 +150,7 @@ class WorkspaceService:
                 QTimer.singleShot(500, lambda: self._apply_video_position(workspace.playback_position_ms))
             else:
                 print(f"Không tìm thấy file video gốc: {video_path}")
-                active_art_id = project.state.active_artifact_id
+                active_art_id = getattr(project.state, "active_artifact_id", None) or getattr(project.state, "subtitle_artifact_id", None)
                 if active_art_id:
                     artifact = self.project_service.artifact_store.get(active_art_id)
                     if artifact and os.path.exists(artifact.path):

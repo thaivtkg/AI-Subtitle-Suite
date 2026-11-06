@@ -50,6 +50,7 @@ class SubtitleArtifactService:
             revision=0,
         )
         project.state.subtitle_artifact_id = artifact_id
+        project.state.active_artifact_id = artifact_id
         artifact_store.register(artifact)
         self._save_atomic(path, {"version": 1, "segments": []})
         mark_dirty = getattr(self.project_service, "mark_dirty", None)
@@ -92,6 +93,7 @@ class SubtitleArtifactService:
         )
         artifact_store.register(artifact)
         project.state.subtitle_artifact_id = artifact_id
+        project.state.active_artifact_id = artifact_id
         mark_dirty = getattr(self.project_service, "mark_dirty", None)
         if mark_dirty:
             mark_dirty()

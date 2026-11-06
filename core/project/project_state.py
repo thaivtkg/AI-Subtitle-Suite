@@ -57,6 +57,7 @@ class ProjectState:
     
     active_subtitle_source_id: str = "default"
     subtitle_sources: List[dict] = field(default_factory=list)
+    subtitle_source_segments: dict = field(default_factory=dict)
 
     subtitle_placement: SubtitlePlacementState = field(default_factory=SubtitlePlacementState)
     subtitle_style: dict = field(default_factory=dict)

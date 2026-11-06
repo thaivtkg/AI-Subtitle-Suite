@@ -1778,6 +1778,17 @@ class SubtitleGenerationPanel(QWidget):
             project = getattr(project_service, "current_project", None)
             if not project: return
             
+            # Lưu snapshot cho nguồn hiện tại trước khi chuyển sang nguồn mới (BUG-DATA-002)
+            win = self.window()
+            sub_editor = getattr(win, "sub_editor", None)
+            current_segments = list(getattr(sub_editor, "all_segments", []))
+            current_source_id = getattr(project.state, "active_subtitle_source_id", "default")
+            if not hasattr(project.state, "subtitle_source_segments") or not isinstance(project.state.subtitle_source_segments, dict):
+                project.state.subtitle_source_segments = {}
+            if current_segments:
+                import copy
+                project.state.subtitle_source_segments[current_source_id] = copy.deepcopy(current_segments)
+
             new_source = {
                 "id": source_id,
                 "name": os.path.basename(path),
@@ -1787,6 +1798,8 @@ class SubtitleGenerationPanel(QWidget):
                 project.state.subtitle_sources = []
             project.state.subtitle_sources.append(new_source)
             project.state.active_subtitle_source_id = source_id
+            import copy
+            project.state.subtitle_source_segments[source_id] = copy.deepcopy(segments)
             if hasattr(project_service, "mark_dirty"):
                 project_service.mark_dirty()
                 
@@ -1799,7 +1812,8 @@ class SubtitleGenerationPanel(QWidget):
             self._replace_editor_segments(segments)
                 
         except Exception as e:
-            QMessageBox.critical(self, "L?i import", f"Khng th? d?c file SRT:\n{e}")
+            QMessageBox.critical(self, "Lỗi import", f"Không thể đọc file SRT:\n{e}")
+
     def _on_subtitle_source_changed(self, idx):
         if idx < 0: return
         source_id = self.cmb_subtitle_source.itemData(idx)
@@ -1807,16 +1821,46 @@ class SubtitleGenerationPanel(QWidget):
         project = getattr(project_service, "current_project", None)
         if not project: return
         
-        if getattr(project.state, "active_subtitle_source_id", "default") == source_id:
+        current_active = getattr(project.state, "active_subtitle_source_id", "default")
+        if current_active == source_id:
             return
+
+        import copy
+        win = self.window()
+        sub_editor = getattr(win, "sub_editor", None)
+        current_segments = list(getattr(sub_editor, "all_segments", []))
+        if not hasattr(project.state, "subtitle_source_segments") or not isinstance(project.state.subtitle_source_segments, dict):
+            project.state.subtitle_source_segments = {}
+        if current_segments:
+            project.state.subtitle_source_segments[current_active] = copy.deepcopy(current_segments)
             
         project.state.active_subtitle_source_id = source_id
         if hasattr(project_service, "mark_dirty"):
             project_service.mark_dirty()
             
-        # Clear editor and reload from this source's latest checkpoint.
-        history = self.generation_service.checkpoint_history
-        cp = history[-1] if history else self.generation_service.initial_state
-        import copy
-        segments = copy.deepcopy(getattr(cp, "segments_snapshot", None) or [])
-        self._replace_editor_segments(segments)
+        # 1. Ưu tiên 1: Đọc snapshot đã lưu cho source_id này (BUG-DATA-002)
+        target_segments = project.state.subtitle_source_segments.get(source_id)
+        
+        # 2. Nếu là nguồn "default" và chưa có trong snapshot dict, nạp từ artifact gốc
+        if target_segments is None and source_id == "default":
+            art_id = getattr(project.state, "active_artifact_id", None) or getattr(project.state, "subtitle_artifact_id", None)
+            if art_id and project_service and hasattr(project_service, "artifact_store"):
+                art = project_service.artifact_store.get(art_id)
+                if art and os.path.exists(art.path):
+                    try:
+                        import json
+                        with open(art.path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                        loaded = data.get("segments", [])
+                        if loaded:
+                            target_segments = copy.deepcopy(loaded)
+                    except Exception:
+                        pass
+                        
+        # 3. Fallback sang checkpoint_history nếu không tìm thấy ở trên
+        if target_segments is None:
+            history = self.generation_service.checkpoint_history
+            cp = history[-1] if history else self.generation_service.initial_state
+            target_segments = copy.deepcopy(getattr(cp, "segments_snapshot", None) or [])
+            
+        self._replace_editor_segments(target_segments or [])

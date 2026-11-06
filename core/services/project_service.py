@@ -54,6 +54,9 @@ class ProjectService:
             "subtitle_artifact_id": state.subtitle_artifact_id,
             "selected_segment_id": state.selected_segment_id,
             "dirty": False,
+            "active_subtitle_source_id": getattr(state, "active_subtitle_source_id", "default"),
+            "subtitle_sources": getattr(state, "subtitle_sources", []),
+            "subtitle_source_segments": getattr(state, "subtitle_source_segments", {}),
             "subtitle_placement": asdict(state.subtitle_placement),
             "subtitle_style": getattr(state, "subtitle_style", {}),
             "segment_styles": getattr(state, "segment_styles", {}),
@@ -378,6 +381,9 @@ class ProjectService:
                 project_state.active_artifact_id = s_data.get("active_artifact_id")
                 project_state.subtitle_artifact_id = s_data.get("subtitle_artifact_id")
                 project_state.selected_segment_id = s_data.get("selected_segment_id")
+                project_state.active_subtitle_source_id = s_data.get("active_subtitle_source_id", "default")
+                project_state.subtitle_sources = s_data.get("subtitle_sources", [])
+                project_state.subtitle_source_segments = s_data.get("subtitle_source_segments", {})
 
                 raw_placement = s_data.get("subtitle_placement")
                 if isinstance(raw_placement, dict):
