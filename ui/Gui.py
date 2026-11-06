@@ -1530,6 +1530,9 @@ class MainWindow(QMainWindow):
     @Slot(dict)
     def _on_subtitle_style_changed(self, style: dict):
         """Adapt inspector's public style schema to the overlay renderer."""
+        project = getattr(getattr(self, "project_service", None), "current_project", None)
+        if project and hasattr(project, "state"):
+            project.state.subtitle_style = dict(style)
         position = {"top": "Top", "center": "Middle", "bottom": "Bottom", "custom": "Custom"}.get(
             str(style.get("position", "bottom")).lower(), "Bottom"
         )
@@ -2777,7 +2780,6 @@ class MainWindow(QMainWindow):
             self.page_dashboard.refresh_recent_projects()
         if original_index == 5 and hasattr(self, "page_export") and hasattr(self, "queue_mgr") and self.queue_mgr.active_vid:
             if hasattr(self.page_export, "out_edit") and not self.page_export.out_edit.text().strip():
-                import os
                 self.page_export.out_edit.setText(os.path.dirname(self.queue_mgr.active_vid))
         if original_index in (6, 7) and hasattr(self, "page_help"):
             self.page_help.refresh()
@@ -2810,6 +2812,25 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'timeline_dock'):
             self.timeline_dock.setVisible(target_stack_index == 1)
 
+        # Quản lý Ẩn/Hiện AI Overlay Drawer (chỉ hiện ở Studio Workspace)
+        if hasattr(self, 'overlay_host'):
+            if target_stack_index != 1:
+                if self.overlay_host.isVisible():
+                    self._drawer_was_open_in_workspace = True
+                    self.overlay_host.hide()
+                    self._set_drawer_toggle_icon(False)
+                if hasattr(self, 'btn_drawer_toggle'):
+                    self.btn_drawer_toggle.hide()
+            else:
+                if getattr(self, '_drawer_was_open_in_workspace', False):
+                    self.overlay_host.show()
+                    self.overlay_host.raise_()
+                    self._set_drawer_toggle_icon(True)
+                if hasattr(self, 'btn_drawer_toggle'):
+                    self.btn_drawer_toggle.show()
+                    self.btn_drawer_toggle.raise_()
+                    self._update_drawer_handle_position()
+
         # Xử lý riêng cho Draft Center (chỉ chạy 1 lần)
         if target_stack_index == 3:
             default_dir = self.out_input.text().strip() or os.path.dirname(next(iter(self.queue_mgr.get_items()), ""))
@@ -2826,8 +2847,26 @@ class MainWindow(QMainWindow):
                 btn.setProperty("active", "true" if is_active else "false")
                 btn.style().unpolish(btn)
                 btn.style().polish(btn)
-                if is_active and hasattr(self, 'lbl_page_title'):
+                if is_active and hasattr(self, 'lbl_page_title') and not getattr(self, '_custom_page_title_set', False):
                     self.lbl_page_title.setText(btn.toolTip().strip())
+
+        PAGE_TITLES = {
+            0: "Dashboard",
+            1: "Studio Workspace",
+            2: "Queue & Output",
+            3: "Queue & Output",
+            4: "Draft Center",
+            5: "Export Center",
+            6: "Settings",
+            7: "Help",
+            8: "Dịch thuật AI",
+        }
+        if hasattr(self, 'lbl_page_title'):
+            title = PAGE_TITLES.get(original_index)
+            if not title and hasattr(self, 'nav_btns') and original_index in self.nav_btns:
+                title = self.nav_btns[original_index].toolTip().strip()
+            if title:
+                self.lbl_page_title.setText(title)
 
         # Tự động cấy kính lỏng cho các danh sách trên trang mới
         self._apply_liquid_to_all_listboxes()
@@ -3665,17 +3704,37 @@ class MainWindow(QMainWindow):
         self.page_dashboard.quick_progress.setValue(0)
         self.page_dashboard.card_status_val.setText("Processing")
         
-        overlay = getattr(getattr(self, "video_player", None), "subtitle_overlay", None)
-        outline_w = float(getattr(overlay, "outline_width", 2.0))
-        font_c = getattr(overlay, "text_color", None)
-        font_color = font_c.name() if font_c else "white"
+        style = {}
+        if hasattr(self, "inspector_panel") and self.inspector_panel:
+            try:
+                style = self.inspector_panel.get_current_style() or {}
+            except Exception:
+                pass
+        if not style:
+            proj = getattr(getattr(self, "project_service", None), "current_project", None)
+            style = getattr(getattr(proj, "state", None), "subtitle_style", {}) or {}
+
+        font_name = style.get("font_name") or (self.page_settings.font_combo.currentText() if hasattr(self, "page_settings") else "Arial")
+        font_size = style.get("font_size") or (self.page_settings.size_spin.value() if hasattr(self, "page_settings") else 24)
+        font_color = style.get("font_color")
+        if not font_color:
+            overlay = getattr(getattr(self, "video_player", None), "subtitle_overlay", None)
+            font_c = getattr(overlay, "text_color", None)
+            font_color = font_c.name() if font_c else "white"
+
+        outline_w = style.get("outline_width")
+        if outline_w is None:
+            overlay = getattr(getattr(self, "video_player", None), "subtitle_overlay", None)
+            outline_w = float(getattr(overlay, "outline_width", 2.0))
+        else:
+            outline_w = float(outline_w)
         self.worker = HardsubWorker(
             video_path=self.queue_mgr.active_vid,
             srt_path=srt_path,
             output_dir=out_dir,
-            font_size=self.page_settings.size_spin.value(),
+            font_size=font_size,
             font_color=font_color,
-            font_name=self.page_settings.font_combo.currentText(),
+            font_name=font_name,
             project_state=getattr(getattr(self.project_service, "current_project", None), "state", None),
             segments=getattr(self.sub_editor, "all_segments", None),
             outline_width=outline_w,
@@ -3918,17 +3977,37 @@ class MainWindow(QMainWindow):
             self.process_next_batch_item()
             return
 
-        overlay = getattr(getattr(self, "video_player", None), "subtitle_overlay", None)
-        outline_w = float(getattr(overlay, "outline_width", 2.0))
-        font_c = getattr(overlay, "text_color", None)
-        font_color = font_c.name() if font_c else "white"
+        style = {}
+        if hasattr(self, "inspector_panel") and self.inspector_panel:
+            try:
+                style = self.inspector_panel.get_current_style() or {}
+            except Exception:
+                pass
+        if not style:
+            proj = getattr(getattr(self, "project_service", None), "current_project", None)
+            style = getattr(getattr(proj, "state", None), "subtitle_style", {}) or {}
+
+        font_name = style.get("font_name") or (self.page_settings.font_combo.currentText() if hasattr(self, "page_settings") else "Arial")
+        font_size = style.get("font_size") or (self.page_settings.size_spin.value() if hasattr(self, "page_settings") else 24)
+        font_color = style.get("font_color")
+        if not font_color:
+            overlay = getattr(getattr(self, "video_player", None), "subtitle_overlay", None)
+            font_c = getattr(overlay, "text_color", None)
+            font_color = font_c.name() if font_c else "white"
+
+        outline_w = style.get("outline_width")
+        if outline_w is None:
+            overlay = getattr(getattr(self, "video_player", None), "subtitle_overlay", None)
+            outline_w = float(getattr(overlay, "outline_width", 2.0))
+        else:
+            outline_w = float(outline_w)
         self.worker = HardsubWorker(
             video_path=self.current_vid,
             srt_path=current_srt,
             output_dir=self.output_dir,
-            font_size=self.page_settings.size_spin.value(),
+            font_size=font_size,
             font_color=font_color,
-            font_name=self.page_settings.font_combo.currentText(),
+            font_name=font_name,
             project_state=getattr(getattr(self.project_service, "current_project", None), "state", None),
             segments=getattr(self.sub_editor, "all_segments", None),
             outline_width=outline_w,
@@ -3971,17 +4050,37 @@ class MainWindow(QMainWindow):
             return
 
         out_dir = self.page_export.out_edit.text().strip() or self.output_dir
-        overlay = getattr(getattr(self, "video_player", None), "subtitle_overlay", None)
-        outline_w = float(getattr(overlay, "outline_width", 2.0))
-        font_c = getattr(overlay, "text_color", None)
-        font_color = font_c.name() if font_c else "white"
+        style = {}
+        if hasattr(self, "inspector_panel") and self.inspector_panel:
+            try:
+                style = self.inspector_panel.get_current_style() or {}
+            except Exception:
+                pass
+        if not style:
+            proj = getattr(getattr(self, "project_service", None), "current_project", None)
+            style = getattr(getattr(proj, "state", None), "subtitle_style", {}) or {}
+
+        font_name = style.get("font_name") or (self.page_settings.font_combo.currentText() if hasattr(self, "page_settings") else "Arial")
+        font_size = style.get("font_size") or (self.page_settings.size_spin.value() if hasattr(self, "page_settings") else 24)
+        font_color = style.get("font_color")
+        if not font_color:
+            overlay = getattr(getattr(self, "video_player", None), "subtitle_overlay", None)
+            font_c = getattr(overlay, "text_color", None)
+            font_color = font_c.name() if font_c else "white"
+
+        outline_w = style.get("outline_width")
+        if outline_w is None:
+            overlay = getattr(getattr(self, "video_player", None), "subtitle_overlay", None)
+            outline_w = float(getattr(overlay, "outline_width", 2.0))
+        else:
+            outline_w = float(outline_w)
         self.worker = HardsubWorker(
             video_path=self.current_vid,
             srt_path=shadow_srt,
             output_dir=out_dir,
-            font_size=self.page_settings.size_spin.value(),
+            font_size=font_size,
             font_color=font_color,
-            font_name=self.page_settings.font_combo.currentText(),
+            font_name=font_name,
             project_state=getattr(getattr(self.project_service, "current_project", None), "state", None),
             segments=getattr(self.sub_editor, "all_segments", None),
             outline_width=outline_w,
@@ -4364,6 +4463,14 @@ class MainWindow(QMainWindow):
             self.subtitle_generation_service.on_finish = None
             self.subtitle_generation_service.cancel_generation()
             self._restore_panel_callbacks()
+        if hasattr(self, "page_translation") and self.page_translation:
+            try:
+                controller = getattr(self.page_translation, "translation_controller", None)
+                if controller and hasattr(controller, "cancelTranslation"):
+                    controller.cancelTranslation()
+            except Exception:
+                pass
+
         if hasattr(self, 'worker') and self.worker and self.worker.isRunning():
             self.worker.cancel()
             self.append_log("[HỆ THỐNG] Đang dừng an toàn...")
@@ -4771,6 +4878,14 @@ class MainWindow(QMainWindow):
         })
         save_settings(settings)
         
+        if hasattr(self, "page_translation") and self.page_translation:
+            try:
+                controller = getattr(self.page_translation, "translation_controller", None)
+                if controller and hasattr(controller, "cancelTranslation"):
+                    controller.cancelTranslation()
+            except Exception:
+                pass
+
         if hasattr(self, 'worker') and self.worker and self.worker.isRunning():
             self.worker.cancel()
             self.worker.wait(1000)

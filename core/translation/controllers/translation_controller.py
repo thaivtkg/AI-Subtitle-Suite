@@ -150,6 +150,16 @@ class TranslationController(QObject):
             self._set_engine_status("Error")
 
     @Slot()
+    def _is_model_valid(self) -> bool:
+        """Kiểm tra đối tượng C++ SubtitleModel có còn tồn tại trong bộ nhớ không."""
+        if getattr(self, "_subtitle_model", None) is None:
+            return False
+        try:
+            import shiboken6
+            return bool(shiboken6.isValid(self._subtitle_model))
+        except Exception:
+            return True
+
     def openHotkeys(self):
         """AUD-UX-003: Mở Bảng tra cứu phím tắt từ CAT Studio."""
         from ui.dialogs.hotkeys_cheatsheet_dialog import HotkeysCheatsheetDialog
@@ -181,8 +191,13 @@ class TranslationController(QObject):
         self._active_translation_index = -1
         self._status = "PENDING"
         self._translation_progress = 0
-        if 0 <= target_idx < len(self._subtitle_model.get_all_data()):
-            self._subtitle_model.update_translation(target_idx, "", "PENDING")
+        try:
+            if self._is_model_valid() and 0 <= target_idx < len(self._subtitle_model.get_all_data()):
+                self._subtitle_model.update_translation(target_idx, "", "PENDING")
+        except (RuntimeError, Exception):
+            pass
+
+
         if target_idx == self._current_index or self._current_index < 0:
             self._current_translation = ""
             self.translationUpdated.emit("")
@@ -702,6 +717,8 @@ class TranslationController(QObject):
 
     @Slot(int, str)
     def on_progress(self, index, text):
+        if not self._is_model_valid():
+            return
         sender = self.sender()
         if sender is not None and sender is not self.worker:
             return
@@ -720,6 +737,8 @@ class TranslationController(QObject):
 
     @Slot(int, str)
     def on_finished(self, index, text):
+        if not self._is_model_valid():
+            return
         if hasattr(self, "_progress_timer") and self._progress_timer.isActive():
             self._progress_timer.stop()
         if hasattr(self, "_watchdog_timer") and self._watchdog_timer.isActive():
@@ -766,6 +785,8 @@ class TranslationController(QObject):
 
     @Slot(int, str)
     def on_error(self, index, err_msg):
+        if not self._is_model_valid():
+            return
         if hasattr(self, "_progress_timer") and self._progress_timer.isActive():
             self._progress_timer.stop()
         if hasattr(self, "_watchdog_timer") and self._watchdog_timer.isActive():

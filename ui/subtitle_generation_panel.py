@@ -363,6 +363,24 @@ class SubtitleGenerationPanel(QWidget):
         self.btn_rollback.setEnabled(False)
         history_layout.addWidget(self.btn_rollback)
         
+        self.history_list_layout = QVBoxLayout()
+        history_layout.addLayout(self.history_list_layout)
+        
+        # Quick Rollback row
+        quick_row = QHBoxLayout()
+        quick_row.addWidget(QLabel("Rollback:"))
+        self.btn_rb_10 = QPushButton("10")
+        self.btn_rb_30 = QPushButton("30")
+        self.btn_rb_50 = QPushButton("50")
+        self.btn_rb_60 = QPushButton("60")
+        self.btn_rb_initial = QPushButton("Initial")
+        for btn in (self.btn_rb_10, self.btn_rb_30, self.btn_rb_50, self.btn_rb_60, self.btn_rb_initial):
+            quick_row.addWidget(btn)
+            btn.clicked.connect(lambda checked=False, b=btn: self._on_quick_rollback_clicked(b.text()))
+            
+        quick_row.addStretch()
+        history_layout.addLayout(quick_row)
+
         settings_layout.addWidget(self.history_group)
         
         self.history_list.itemSelectionChanged.connect(self._on_history_selection_changed)
@@ -382,33 +400,6 @@ class SubtitleGenerationPanel(QWidget):
         context_layout.addWidget(self.lbl_context_status, stretch=1)
         context_layout.addWidget(self.btn_context_edit)
         settings_layout.addLayout(context_layout)
-        
-        # --- PHASE 3: HISTORY GROUP ---
-        self.history_group = QGroupBox("↩ Generation History")
-        history_layout = QVBoxLayout(self.history_group)
-        history_layout.setContentsMargins(12, 12, 12, 12)
-        history_layout.setSpacing(8)
-        
-        self.history_list_layout = QVBoxLayout()
-        history_layout.addLayout(self.history_list_layout)
-        
-        # Quick Rollback row
-        quick_row = QHBoxLayout()
-        quick_row.addWidget(QLabel("Rollback:"))
-        self.btn_rb_10 = QPushButton("10")
-        self.btn_rb_30 = QPushButton("30")
-        self.btn_rb_50 = QPushButton("50")
-        self.btn_rb_60 = QPushButton("60")
-        self.btn_rb_initial = QPushButton("Initial")
-        for btn in (self.btn_rb_10, self.btn_rb_30, self.btn_rb_50, self.btn_rb_60, self.btn_rb_initial):
-            quick_row.addWidget(btn)
-            btn.clicked.connect(lambda checked=False, b=btn: self._on_quick_rollback_clicked(b.text()))
-            
-        quick_row.addStretch()
-        history_layout.addLayout(quick_row)
-        
-        settings_layout.addWidget(self.history_group)
-        # ------------------------------
 
         settings_layout.addStretch()
         self.settings_scroll_area.setWidget(self.settings_scroll_content)

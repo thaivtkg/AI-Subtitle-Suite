@@ -2054,7 +2054,7 @@ class SubtitleEditorWidget(QWidget):
             base = os.path.splitext(path)[0] if path else "Project"
             default_name = f"{base}.srt"
             path, _ = QFileDialog.getSaveFileName(self, "Xuất file SRT", default_name, "SubRip Subtitle (*.srt)")
-            if not path: return
+            if not path: return None
             
         from core.export.export_service import generate_srt_content
             
@@ -2078,7 +2078,11 @@ class SubtitleEditorWidget(QWidget):
         explicit_path = bool(filepath)
         path = filepath or self.srt_path
         
-        if silent and not explicit_path:
+        if explicit_path:
+            if not path.endswith('.ai-subtitle-draft'):
+                base = os.path.splitext(path)[0]
+                path = f"{base}.ai-subtitle-draft"
+        elif silent:
             if not path:
                 path = "Project.ai-subtitle-draft"
             elif not path.endswith('.ai-subtitle-draft'):
@@ -2089,7 +2093,7 @@ class SubtitleEditorWidget(QWidget):
             default_name = f"{base}.ai-subtitle-draft"
             path, _ = QFileDialog.getSaveFileName(self, "Lưu Timing Artifact", default_name, "AI Subtitle Draft (*.ai-subtitle-draft)")
             
-        if not path: return
+        if not path: return None
         
         try:
             if not getattr(self, "project_service", None):
@@ -2103,9 +2107,11 @@ class SubtitleEditorWidget(QWidget):
             if not silent:
                 file_name = os.path.basename(path)
                 Toast.show_success(self.window(), f"Đã bảo lưu Draft: {file_name}")
+            return path
         except Exception as e:
             if not silent: 
                 Toast.show_error(self.window(), f"Lỗi lưu Draft: {e!s}")
+            return None
 
     def load_draft_file(self, draft_path):
         if not getattr(self, "project_service", None) or not draft_path:

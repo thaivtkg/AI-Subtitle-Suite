@@ -75,8 +75,12 @@ class DraftCenterPage(QWidget):
         # Clear layout
         while self.cards_layout.count() > 0:
             item = self.cards_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+            w = item.widget()
+            if w:
+                w.hide()
+                w.setParent(None)
+                w.deleteLater()
+        self.empty_state = None
 
         draft_files = []
         if self.active_dir and os.path.exists(self.active_dir):
