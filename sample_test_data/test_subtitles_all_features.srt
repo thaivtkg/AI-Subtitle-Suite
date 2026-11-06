@@ -1,0 +1,23 @@
+1
+00:00:01,000 --> 00:00:04,500
+Chào mừng các bạn đến với bộ dữ liệu kiểm thử của AI Subtitle Suite!
+
+2
+00:00:05,200 --> 00:00:06,600
+Hôm nay chúng ta sẽ cùng kiểm thử tính năng cảnh báo tốc độ đọc rất nhanh này xem cảnh báo CPS viền đỏ cam và nút tách câu thông minh có xuất hiện không nhé!
+
+3
+00:00:07,000 --> 00:00:11,500
+Đây là câu phụ đề thứ ba đang bị đè lên mốc thời gian của câu thứ tư bên dưới.
+
+4
+00:00:10,000 --> 00:00:14,000
+Câu thứ tư này bắt đầu từ giây thứ 10, trong khi câu ba kết thúc ở giây 11.5 gây va chạm Overlap.
+
+5
+00:00:14,800 --> 00:00:18,500
+Khoảng lặng này thích hợp để bạn thử kéo chuột kết hợp phím Alt (Alt + Drag) rà đĩa âm thanh Jog-Audio.
+
+6
+00:00:19,000 --> 00:00:24,000
+Hãy thử bấm Ctrl + P để tách cửa sổ Video PiP rời và trải nghiệm chia đôi màn hình Windows 11 nhé!

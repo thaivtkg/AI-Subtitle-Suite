@@ -1,0 +1,11 @@
+1
+00:00:01,000 --> 00:00:04,500
+Welcome to AI Subtitle Suite - Next Generation Subtitle Platform!
+
+2
+00:00:08,000 --> 00:00:13,000
+Testing Multi-Source subtitle switching without losing original data.
+
+3
+00:00:18,000 --> 00:00:23,000
+Professional desktop video subtitle editing with local AI acceleration.
