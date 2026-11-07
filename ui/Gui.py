@@ -1425,6 +1425,13 @@ class MainWindow(QMainWindow):
         self.stats_timer.start(1000)
         self.inspector_panel.emit_current_style()
 
+        # FR-03: Khởi tạo Global Spotlight Overlay toàn cục 60 FPS
+        from ui.core.liquid_theme_engine import GlobalSpotlightOverlay
+        self.spotlight_overlay = GlobalSpotlightOverlay(self)
+        self.spotlight_overlay.setGeometry(self.rect())
+        self.spotlight_overlay.show()
+        self.spotlight_overlay.raise_()
+
     # --- HÀM THỰC THI SIGNAL AN TOÀN TRÊN MAIN THREAD ---
     def _apply_subtitle_placement(self, placement, *, mark_dirty=False):
         """Apply one semantic placement value across project state and UI."""
@@ -1606,10 +1613,23 @@ class MainWindow(QMainWindow):
             # 3. [FIX REVIEW 1] Nạp Data Provider SAU KHI cả SRT và Sóng âm đã sẵn sàng trên Main Thread
             self.timeline_data_provider.load_runtime_data(self.sub_editor.all_segments, duration_ms)
 
+            # FR-04: Tạo vad_data cho Heatmap 3 phân tầng
+            from core.waveform.waveform_service import WaveformService
+            import numpy as np
+            segs = self.timeline_data_provider.get_all_segments()
+            vad_data = None
+            if duration_ms > 0:
+                if segs:
+                    vad_data = WaveformService.build_vad_density_from_intervals(duration_ms, segs)
+                elif peaks is not None and len(peaks) > 0:
+                    amps = (peaks[:, 1] - peaks[:, 0]) / 2.0
+                    vad_data = np.where(amps >= 0.5, 0.85, np.where(amps >= 0.2, 0.50, 0.10)).astype(np.float32)
+
             self.timeline_widget.load_project_data(
                 duration_ms,
-                self.timeline_data_provider.get_all_segments(),
-                peaks
+                segs,
+                peaks,
+                vad_data=vad_data
             )
             self._emit_debug_event("waveform", "waveform accepted")
         except RuntimeError as e:
@@ -2347,6 +2367,9 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        if hasattr(self, "spotlight_overlay") and self.spotlight_overlay:
+            self.spotlight_overlay.setGeometry(self.rect())
+            self.spotlight_overlay.raise_()
         top_offset = self.topbar.height() if hasattr(self, 'topbar') and self.topbar.isVisible() else 42
         avail_h = self.height() - top_offset
         if hasattr(self, 'overlay_host'):
@@ -2603,6 +2626,13 @@ class MainWindow(QMainWindow):
 
     def eventFilter(self, obj, event):
         try:
+            if event.type() == QEvent.MouseMove:
+                if hasattr(self, "spotlight_overlay") and self.spotlight_overlay:
+                    g_pos = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
+                    self.spotlight_overlay.update_cursor_pos(self.mapFromGlobal(g_pos))
+            elif event.type() == QEvent.Leave and obj is self:
+                if hasattr(self, "spotlight_overlay") and self.spotlight_overlay:
+                    self.spotlight_overlay.clear_cursor_pos()
             if event.type() == QEvent.KeyPress and (not hasattr(self, "isActiveWindow") or self.isActiveWindow()):
                 # Phím tắt toàn cục Ctrl + P bật/tắt PiP Video (FR-07)
                 if event.modifiers() == Qt.ControlModifier and event.key() == Qt.Key_P:
@@ -2797,6 +2827,8 @@ class MainWindow(QMainWindow):
         }
         target_stack_index = NAV_TO_STACK.get(original_index, min(original_index, 7))
         self.stack.setCurrentIndex(target_stack_index)
+        if hasattr(self, "spotlight_overlay") and self.spotlight_overlay:
+            self.spotlight_overlay.raise_()
         
         if original_index in (5, 6):
             self._sync_debug_logging_controls()

@@ -22,12 +22,28 @@ def find_timeline_gaps(duration_ms: int, segments) -> list[TimelineGap]:
     intervals = []
     for segment in segments:
         try:
-            start = max(0, min(duration_ms, int(segment.start_ms)))
-            end = max(0, min(duration_ms, int(segment.end_ms)))
-        except (TypeError, ValueError, OverflowError):
+            if isinstance(segment, dict):
+                s_val = segment.get("start_ms", segment.get("start", 0))
+                e_val = segment.get("end_ms", segment.get("end", 0))
+                seg_id = segment.get("segment_id", segment.get("id"))
+            else:
+                s_val = getattr(segment, "start_ms", getattr(segment, "start", 0))
+                e_val = getattr(segment, "end_ms", getattr(segment, "end", 0))
+                seg_id = getattr(segment, "segment_id", getattr(segment, "id", None))
+
+            if isinstance(s_val, str) and ":" in s_val:
+                p = s_val.replace(",", ".").split(":")
+                s_val = int((float(p[0]) * 3600 + float(p[1]) * 60 + float(p[2])) * 1000)
+            if isinstance(e_val, str) and ":" in e_val:
+                p = e_val.replace(",", ".").split(":")
+                e_val = int((float(p[0]) * 3600 + float(p[1]) * 60 + float(p[2])) * 1000)
+
+            start = max(0, min(duration_ms, int(s_val)))
+            end = max(0, min(duration_ms, int(e_val)))
+        except (TypeError, ValueError, OverflowError, AttributeError):
             continue
         if end > start:
-            intervals.append((start, end, segment.segment_id))
+            intervals.append((start, end, seg_id))
     intervals.sort(key=lambda item: (item[0], -item[1]))
 
     gaps = []

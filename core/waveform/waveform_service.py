@@ -88,15 +88,47 @@ class WaveformService:
         return peaks_normalized
 
     @staticmethod
+    def _parse_to_ms(val) -> int:
+        if isinstance(val, (int, np.integer)):
+            return int(val)
+        if isinstance(val, (float, np.floating)):
+            return int(val * 1000 if val < 10000 else val)
+        if isinstance(val, str):
+            val = val.strip()
+            if ":" in val:
+                parts = val.replace(",", ".").split(":")
+                if len(parts) == 3:
+                    h, m, s = float(parts[0]), float(parts[1]), float(parts[2])
+                    return int((h * 3600 + m * 60 + s) * 1000)
+                elif len(parts) == 2:
+                    m, s = float(parts[0]), float(parts[1])
+                    return int((m * 60 + s) * 1000)
+            try:
+                f = float(val)
+                return int(f * 1000 if f < 10000 else f)
+            except ValueError:
+                return 0
+        return 0
+
+    @staticmethod
     def build_vad_density_from_intervals(duration_ms: int, speech_intervals: list, chunk_ms: int = 10) -> np.ndarray:
         """FR-04: Xây dựng mảng xác suất giọng nói VAD 10ms từ danh sách intervals"""
         num_chunks = max(1, int(duration_ms / float(chunk_ms)))
         vad_array = np.full(num_chunks, 0.1, dtype=np.float32)
+        if not speech_intervals:
+            return vad_array
+
         for interval in speech_intervals:
-            s_raw = interval.get("start_ms", interval.get("start", 0))
-            e_raw = interval.get("end_ms", interval.get("end", 0))
-            start_ms = int(s_raw * 1000 if isinstance(s_raw, float) and s_raw < 10000 else s_raw)
-            end_ms = int(e_raw * 1000 if isinstance(e_raw, float) and e_raw < 10000 else e_raw)
+            if isinstance(interval, dict):
+                s_raw = interval.get("start_ms", interval.get("start", 0))
+                e_raw = interval.get("end_ms", interval.get("end", 0))
+            else:
+                s_raw = getattr(interval, "start_ms", getattr(interval, "start", 0))
+                e_raw = getattr(interval, "end_ms", getattr(interval, "end", 0))
+
+            start_ms = WaveformService._parse_to_ms(s_raw)
+            end_ms = WaveformService._parse_to_ms(e_raw)
+
             if end_ms <= start_ms:
                 continue
             trans_start = max(0, int((start_ms - 100) / chunk_ms))

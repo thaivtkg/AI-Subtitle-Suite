@@ -1,4 +1,4 @@
-from PySide6.QtCore import QObject, QEvent, QElapsedTimer, QPoint, QPointF, Qt
+from PySide6.QtCore import QObject, QEvent, QElapsedTimer, QPoint, QPointF, Qt, QRect
 from PySide6.QtWidgets import QWidget
 from PySide6.QtGui import QPainter, QRadialGradient, QColor
 
@@ -964,3 +964,54 @@ def draw_spotlight(
     painter.setPen(Qt.NoPen)
     painter.drawRect(widget.rect())
     painter.restore()
+
+
+class GlobalSpotlightOverlay(QWidget):
+    """Lớp phủ toàn cục tạo hiệu ứng đèn rọi Spotlight Chuột 60 FPS (FR-03).
+    - Xuyên thấu sự kiện chuột 100% (WA_TransparentForMouseEvents = True)
+    - Throttling 60 FPS (delta >= 16ms)
+    - Quầng sáng Sapphire (#38BDF8) bán kính radius=120px
+    """
+    def __init__(self, parent: QWidget = None):
+        super().__init__(parent)
+        self.setObjectName("global_spotlight_overlay")
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.timer = QElapsedTimer()
+        self.timer.start()
+        self.last_update_ms = 0
+        self.cursor_pos: QPoint | None = None
+        self.radius = 120
+        self.spotlight_color = QColor(56, 189, 248, 25)  # Sapphire #38BDF8 alpha 25/255
+        self.is_active = True
+
+    def update_cursor_pos(self, pos: QPoint | None):
+        """Cập nhật tọa độ chuột với throttling 60 FPS (>= 16ms)."""
+        if not self.is_active or pos is None:
+            return
+        self.cursor_pos = pos
+        elapsed = self.timer.elapsed()
+        if elapsed - self.last_update_ms >= 16:
+            self.last_update_ms = elapsed
+            self.update()
+
+    def clear_cursor_pos(self):
+        """Xóa tọa độ chuột khi rời khỏi ứng dụng."""
+        if self.cursor_pos is not None:
+            self.cursor_pos = None
+            self.update()
+
+    def paintEvent(self, event):
+        if not self.is_active or self.cursor_pos is None:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        gradient = QRadialGradient(QPointF(self.cursor_pos), float(self.radius))
+        gradient.setColorAt(0.0, self.spotlight_color)
+        gradient.setColorAt(1.0, QColor(56, 189, 248, 0))
+        painter.setBrush(gradient)
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(self.cursor_pos, self.radius, self.radius)
+        painter.end()

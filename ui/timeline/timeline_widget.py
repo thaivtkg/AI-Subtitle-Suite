@@ -425,6 +425,16 @@ class TimelineWidget(QScrollArea):
         self.container.ruler.set_data(duration_ms)
         self.container.track.set_data(segments, duration_ms)
         self.container.track.set_gaps(find_timeline_gaps(duration_ms, segments))
+
+        # Auto-derivation fallback nếu caller không truyền vad_data
+        if vad_data is None and duration_ms > 0:
+            import numpy as np
+            from core.waveform.waveform_service import WaveformService
+            if segments:
+                vad_data = WaveformService.build_vad_density_from_intervals(duration_ms, segments)
+            elif peaks_normalized is not None and len(peaks_normalized) > 0:
+                amps = (peaks_normalized[:, 1] - peaks_normalized[:, 0]) / 2.0
+                vad_data = np.where(amps >= 0.5, 0.85, np.where(amps >= 0.2, 0.50, 0.10)).astype(np.float32)
         if peaks_normalized is not None:
             self.container.waveform.set_data(peaks_normalized, duration_ms, vad_data=vad_data)
         elif vad_data is not None:
