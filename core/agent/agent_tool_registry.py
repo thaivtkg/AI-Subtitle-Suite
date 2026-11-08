@@ -10,22 +10,33 @@ def create_timing(
     count: int = 5,
     duration_per_block_ms: int = 3000,
     gap_ms: int = 500,
+    video_path: Optional[str] = None,
+    start_offset_s: float = 0.0,
+    vad_threshold: Optional[float] = None,
+    min_silence_ms: Optional[int] = None,
+    speech_pad_ms: Optional[int] = None,
+    max_speech_duration_s: Optional[float] = None,
+    preserved_segments: Optional[List[Dict[str, Any]]] = None,
+    **kwargs: Any,
 ) -> Dict[str, Any]:
-    """Tạo count khối timing phụ đề mẫu."""
-    from ui.SubEditor import ms_to_time_str
-    segments = []
-    current_ms = gap_ms
-    for i in range(count):
-        start_ms = current_ms
-        end_ms = start_ms + duration_per_block_ms
-        segments.append({
-            "id": i + 1,
-            "start": ms_to_time_str(start_ms),
-            "end": ms_to_time_str(end_ms),
-            "text": f"Dòng phụ đề #{i+1}",
-            "translation": f"Subtitle line #{i+1}",
-        })
-        current_ms = end_ms + gap_ms
+    """Tạo count khối timing phụ đề mẫu, sử dụng VAD nếu có video hoặc fallback an toàn."""
+    from core.agent.vad_timing_service import generate_vad_timing_segments
+
+    if preserved_segments is None and "preview_segments" in kwargs:
+        preserved_segments = kwargs["preview_segments"]
+
+    segments = generate_vad_timing_segments(
+        count=count,
+        video_path=video_path,
+        start_offset_s=start_offset_s,
+        vad_threshold=vad_threshold,
+        min_silence_ms=min_silence_ms,
+        speech_pad_ms=speech_pad_ms,
+        max_speech_duration_s=max_speech_duration_s,
+        duration_per_block_ms=duration_per_block_ms,
+        gap_ms=gap_ms,
+        preserved_segments=preserved_segments,
+    )
     return {"segments": segments, "count": len(segments), "status": "ok"}
 
 

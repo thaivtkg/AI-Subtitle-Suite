@@ -155,16 +155,60 @@ class AgentCopilotController(QObject):
                     )
                 )
 
-        # 3. Check Timing Creation (tạo timing N câu)
+        # 3. Check Timing Creation (tạo timing N câu - VAD Preset CFG-9 & Gate 1 Preview)
+        preview_segments = None
         if "tạo timing" in lower or ("timing" in lower and any(w in lower for w in ["tạo", "khởi tạo", "add"])):
             m_count = re.search(r"(\d+)\s*câu", lower)
             count = int(m_count.group(1)) if m_count else 5
+
+            start_offset_s = 0.0
+            m_tc = re.search(r"từ\s+(\d{1,2}):(\d{2})", lower)
+            if m_tc:
+                start_offset_s = float(int(m_tc.group(1)) * 60 + int(m_tc.group(2)))
+            else:
+                m_sec = re.search(r"từ\s+(?:giây\s+)?(\d+(?:\.\d+)?)\s*(?:giây|s)?", lower)
+                if m_sec:
+                    start_offset_s = float(m_sec.group(1))
+
+            vad_threshold = None
+            m_th = re.search(r"(?:ngưỡng|threshold)\s*[:=]?\s*(\d+(?:\.\d+)?)", lower)
+            if m_th:
+                vad_threshold = float(m_th.group(1))
+
+            min_silence_ms = None
+            m_sil = re.search(r"(?:min_silence|im lặng tối thiểu)\s*[:=]?\s*(\d+)(?:\s*ms)?", lower)
+            if m_sil:
+                min_silence_ms = int(m_sil.group(1))
+
+            video_path = self.context_ledger.video_path
+
+            from core.agent.vad_timing_service import generate_vad_timing_segments
+            preview_segments = generate_vad_timing_segments(
+                count=count,
+                video_path=video_path,
+                start_offset_s=start_offset_s,
+                vad_threshold=vad_threshold,
+                min_silence_ms=min_silence_ms,
+                duration_per_block_ms=3000,
+            )
+
+            tool_args = {"count": count}
+            if video_path:
+                tool_args["video_path"] = video_path
+            if start_offset_s > 0:
+                tool_args["start_offset_s"] = start_offset_s
+            if vad_threshold is not None:
+                tool_args["vad_threshold"] = vad_threshold
+            if min_silence_ms is not None:
+                tool_args["min_silence_ms"] = min_silence_ms
+            tool_args["preview_segments"] = preview_segments
+
             steps.append(
                 AgentStep(
                     id=f"step_{len(steps)+1}",
                     title=f"Khởi tạo Timing {count} câu đầu",
                     tool_name="create_timing",
-                    tool_args={"count": count},
+                    tool_args=tool_args,
                 )
             )
 
@@ -234,12 +278,16 @@ class AgentCopilotController(QObject):
                 )
             )
 
-        return AgentTaskPlan(prompt=prompt, steps=steps, current_step_index=0)
+        return AgentTaskPlan(prompt=prompt, steps=steps, current_step_index=0, preview_segments=preview_segments)
 
-    def approve_plan(self) -> None:
+    def approve_plan(self, preserved_segments: Optional[List[Dict[str, Any]]] = None) -> None:
         if not self.active_plan or not self.active_plan.steps:
             return
         self._waiting_plan_approval = False
+        if preserved_segments and self.active_plan.steps:
+            curr_step = self.active_plan.current_step()
+            if curr_step and curr_step.tool_name == "create_timing":
+                curr_step.tool_args["preserved_segments"] = preserved_segments
         self._run_current_step()
 
     def _run_current_step(self) -> None:
@@ -260,6 +308,8 @@ class AgentCopilotController(QObject):
 
         # 2. Execute tool
         args = dict(step.tool_args)
+        if step.tool_name == "create_timing" and "video_path" not in args and self.context_ledger.video_path:
+            args["video_path"] = self.context_ledger.video_path
         if step.tool_name in ("adjust_subtitle_bounds", "shift_subtitles") and "segments" not in args:
             if not self._active_segments:
                 from core.agent.agent_tool_registry import create_timing

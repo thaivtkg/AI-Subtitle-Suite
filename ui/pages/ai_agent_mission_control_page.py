@@ -108,6 +108,9 @@ class AIAgentMissionControlPage(QWidget):
         self.col_inspect.set_badge_status("waiting")
         self.col_inspect.btn_approve_next.setText("✔ Duyệt Kế Hoạch & Bắt Đầu")
         self.col_inspect.btn_approve_next.setEnabled(True)
+        preview_segs = getattr(plan, "preview_segments", None)
+        if preview_segs:
+            self.col_inspect.inspection_card.render_result("Xem trước kế hoạch Timing (Cổng 1)", {"segments": preview_segs})
 
     @Slot(int, object)
     def _on_step_started(self, step_idx: int, step: AgentStep):
@@ -139,7 +142,8 @@ class AIAgentMissionControlPage(QWidget):
     @Slot()
     def _on_approve_clicked(self):
         if self.controller.is_waiting_plan_approval():
-            self.controller.approve_plan()
+            preserved = self.col_inspect.get_current_segments()
+            self.controller.approve_plan(preserved_segments=preserved)
         elif self.controller.is_waiting_task_approval():
             self.controller.approve_next_step()
 
@@ -150,4 +154,7 @@ class AIAgentMissionControlPage(QWidget):
         self.col_inspect.btn_approve_next.setEnabled(True)
 
     def get_current_segments(self):
-        return self.col_inspect.get_current_segments()
+        segs = self.col_inspect.get_current_segments()
+        if not segs and hasattr(self.controller, "_active_segments") and self.controller._active_segments:
+            return self.controller._active_segments
+        return segs

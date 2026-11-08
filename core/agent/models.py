@@ -68,6 +68,7 @@ class AgentTaskPlan:
     current_step_index: int = 0
     status: StepStatus = StepStatus.PENDING
     created_at: float = field(default_factory=time.time)
+    preview_segments: Optional[List[Dict[str, Any]]] = None
 
     def current_step(self) -> Optional[AgentStep]:
         if 0 <= self.current_step_index < len(self.steps):
@@ -90,6 +91,7 @@ class AgentTaskPlan:
             "current_step_index": self.current_step_index,
             "status": self.status.value if isinstance(self.status, StepStatus) else str(self.status),
             "created_at": self.created_at,
+            "preview_segments": self.preview_segments,
         }
 
     @classmethod
@@ -110,6 +112,7 @@ class AgentTaskPlan:
             current_step_index=data.get("current_step_index", 0),
             status=status_enum,
             created_at=data.get("created_at", time.time()),
+            preview_segments=data.get("preview_segments"),
         )
 
 

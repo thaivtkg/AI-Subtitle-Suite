@@ -3430,6 +3430,21 @@ class MainWindow(QMainWindow):
             if getattr(self, "quality_inspector_panel", None):
                 self.quality_inspector_panel.set_segments([])
 
+    def _sync_agent_video_context(self, vid_path: str):
+        if not hasattr(self, "page_ai_agent") or not self.page_ai_agent:
+            return
+        if not vid_path:
+            return
+        controller = getattr(self.page_ai_agent, "controller", None)
+        if not controller:
+            return
+        controller.context_ledger.video_path = vid_path
+        dur_func = getattr(self, "_queue_video_duration_ms", None)
+        if callable(dur_func):
+            controller.context_ledger.duration_ms = dur_func(vid_path)
+        if hasattr(self.page_ai_agent, "col_chat"):
+            self.page_ai_agent.col_chat.update_ledger(controller.context_ledger)
+
     def on_queue_item_clicked(
         self, item_ref, fresh_project=False, project_id=None, project_root=None
     ):
@@ -3447,6 +3462,7 @@ class MainWindow(QMainWindow):
                 queue_data = items.get(item_ref, {})
         vid_path = queue_data.get("video_path", item_ref)
         self.current_vid = vid_path
+        self._sync_agent_video_context(vid_path)
 
         bound_project_id = (
             project_id if project_id is not None else queue_data.get("project_id")
