@@ -42,6 +42,7 @@ class LiquidNavWidget(QWidget):
         self.tabs = [
             {"icon": "📊", "id": 0, "tooltip": "Dashboard"},
             {"icon": "🎬", "id": 1, "tooltip": "Studio Workspace"},
+            {"icon": "🤖", "id": 9, "tooltip": "Phòng Điều Hành AI Agent"},
             {"icon": "🌐", "id": 8, "tooltip": "Dịch thuật AI"},
             {"icon": "📋", "id": 3, "tooltip": "Queue & Output"},
             {"icon": "📦", "id": 4, "tooltip": "Draft Center"},
@@ -92,6 +93,16 @@ class LiquidNavWidget(QWidget):
             proxy.setToolTip(tab["tooltip"])
             self.btn_map[tab["id"]] = proxy
         self.btn_map[2] = self.btn_map.get(3, self.btn_map.get(2))
+
+    @property
+    def active_index(self) -> int:
+        return self.current_index
+
+    def _get_tab_index_by_id(self, tab_id: int) -> int:
+        for idx, tab in enumerate(self.tabs):
+            if tab["id"] == tab_id or (tab_id in (2, 3) and tab["id"] in (2, 3)):
+                return idx
+        return 0
 
     def set_active_tab(self, page_id: int):
         """API Hotfix: Chuyển tab từ xa cho Gui.py"""

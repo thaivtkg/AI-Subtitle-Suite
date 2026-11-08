@@ -104,8 +104,10 @@ class AnimatedStack(QWidget):
         self._is_transitioning = False
 
     def currentWidget(self):
-        if self.current_index >= 0 and self.current_index < len(self.widgets):
-            return self.widgets[self.current_index]
+        idx = self.currentIndex()
+        if 0 <= idx < len(self.widgets):
+            return self.widgets[idx]
+        return None
 
     def count(self) -> int:
         return len(self.widgets)

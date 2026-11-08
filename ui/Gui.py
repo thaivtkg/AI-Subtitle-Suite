@@ -100,6 +100,7 @@ from ui.pages.draft_center_page import DraftCenterPage
 from ui.pages.export_center_page import ExportCenterPage
 from ui.pages.help_center_page import HelpCenterPage
 from ui.pages.translation_studio_page import TranslationStudioPage
+from ui.pages.ai_agent_mission_control_page import AIAgentMissionControlPage
 from ui.help.first_run_banner import FirstRunBanner
 from ui.help.first_run_controller import FirstRunController
 from ui.help.shortcut_provider import RuntimeShortcutProvider
@@ -1323,6 +1324,10 @@ class MainWindow(QMainWindow):
             self.sub_editor.segments_merge_applied.connect(self.page_translation.handle_segments_merged)
             self.sub_editor.segments_merge_undone.connect(self.page_translation.handle_segments_merge_undo)
         self.stack.addWidget(self.page_translation)
+
+        # Page 9 (Index 8): AI Agent Mission Control Page
+        self.page_ai_agent = AIAgentMissionControlPage(parent=self)
+        self.stack.addWidget(self.page_ai_agent)
 
         right_layout.addWidget(self.stack, stretch=1)
 
@@ -2785,8 +2790,23 @@ class MainWindow(QMainWindow):
             self.btn_theme.setText("🔲")
             self.append_log("🔲 Đã chuyển sang giao diện Zen Mặc định")
 
+    def _on_nav_tab_changed(self, tab_id: int):
+        """Alias to switch page by navigation tab ID."""
+        self.switch_page(tab_id)
+
     def switch_page(self, original_index):
         prev_nav_index = getattr(self, "_active_nav_index", None)
+
+        # Cầu nối Dữ liệu (Data Sync Bridge): Khi rời khỏi trang AI Agent (tab 9) sang Workspace (tab 1)
+        if prev_nav_index == 9 and original_index == 1:
+            if hasattr(self, "page_ai_agent") and hasattr(self, "sub_editor"):
+                agent_segs = self.page_ai_agent.get_current_segments()
+                if agent_segs:
+                    import copy
+                    self.sub_editor.all_segments = copy.deepcopy(agent_segs)
+                    self.sub_editor.render_page()
+                    if hasattr(self, "video_player"):
+                        self.video_player.refresh_current_subtitle()
 
         # Cầu nối Dữ liệu (Data Sync Bridge): Khi rời khỏi trang Dịch thuật
         if prev_nav_index == 8 and original_index != 8:
@@ -2824,8 +2844,9 @@ class MainWindow(QMainWindow):
             6: 5,  # Settings Center
             7: 6,  # Help Center
             8: 7,  # Dịch thuật AI
+            9: 8,  # Phòng Điều Hành AI Agent
         }
-        target_stack_index = NAV_TO_STACK.get(original_index, min(original_index, 7))
+        target_stack_index = NAV_TO_STACK.get(original_index, min(original_index, 8))
         self.stack.setCurrentIndex(target_stack_index)
         if hasattr(self, "spotlight_overlay") and self.spotlight_overlay:
             self.spotlight_overlay.raise_()
@@ -2892,6 +2913,7 @@ class MainWindow(QMainWindow):
             6: "Settings",
             7: "Help",
             8: "Dịch thuật AI",
+            9: "Phòng Điều Hành AI Agent",
         }
         if hasattr(self, 'lbl_page_title'):
             title = PAGE_TITLES.get(original_index)
