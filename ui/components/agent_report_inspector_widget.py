@@ -1,3 +1,4 @@
+import copy
 from typing import Optional, Dict, Any, List
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -85,6 +86,7 @@ class EditableResultReportWidget(QScrollArea):
         self.layout.setContentsMargins(6, 6, 6, 6)
         self.layout.setSpacing(4)
         self.setWidget(self.container)
+        self.current_segments = []
         self.show_placeholder()
 
     def show_placeholder(self):
@@ -109,6 +111,7 @@ class EditableResultReportWidget(QScrollArea):
         self.layout.addWidget(hint)
 
         segments = result_dict.get("segments", [])
+        self.current_segments = copy.deepcopy(segments)
         if segments:
             for i, seg in enumerate(segments[:30]):
                 t_in = seg.get("start", "00:00.000")
@@ -120,6 +123,7 @@ class EditableResultReportWidget(QScrollArea):
                 time_str = f"{t_in} → {t_out}"
                 text = seg.get("text", "")
                 row = EditableSegmentRow(i + 1, time_str, text, is_active=(i == 1), parent=self.container)
+                row.text_changed.connect(self._on_segment_text_changed)
                 self.layout.addWidget(row)
         else:
             # Render general report fields
@@ -140,6 +144,14 @@ class EditableResultReportWidget(QScrollArea):
             self.layout.addWidget(text_view)
 
         self.layout.addStretch()
+
+    def _on_segment_text_changed(self, idx: int, new_text: str):
+        if 0 <= idx - 1 < len(self.current_segments):
+            self.current_segments[idx - 1]["text"] = new_text
+            self.current_segments[idx - 1]["translation"] = new_text
+
+    def get_current_segments(self) -> List[Dict[str, Any]]:
+        return self.current_segments
 
 
 class AgentReportInspectorWidget(QWidget):
@@ -300,3 +312,6 @@ class AgentReportInspectorWidget(QWidget):
 
     def _on_redo_clicked(self):
         self.redo_clicked.emit()
+
+    def get_current_segments(self) -> List[Dict[str, Any]]:
+        return self.inspection_card.get_current_segments()

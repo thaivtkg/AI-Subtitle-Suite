@@ -96,7 +96,7 @@ class SubtitleValidator:
                     all_issues.setdefault(index + 1, []).append(
                         ValidationIssue(index + 1, profile.overlap_severity or Severity.WARNING, "OVERLAP", f"Chồng lấn {overlap_ms}ms với câu trước đó")
                     )
-            elif profile.small_gap_ms is not None and 0 < next_start - current_end < profile.small_gap_ms:
+            elif profile.small_gap_ms is not None and current_end is not None and next_start is not None and 0 < next_start - current_end < profile.small_gap_ms:
                 all_issues.setdefault(index, []).append(
                     ValidationIssue(index, Severity.WARNING, "SMALL_GAP", f"Khoảng cách chỉ {next_start - current_end}ms với câu tiếp theo")
                 )

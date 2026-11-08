@@ -2797,6 +2797,17 @@ class MainWindow(QMainWindow):
     def switch_page(self, original_index):
         prev_nav_index = getattr(self, "_active_nav_index", None)
 
+        # Cầu nối Dữ liệu (Data Sync Bridge): Khi rời khỏi trang AI Agent (tab 9) sang Workspace (tab 1)
+        if prev_nav_index == 9 and original_index == 1:
+            if hasattr(self, "page_ai_agent") and hasattr(self, "sub_editor"):
+                agent_segs = self.page_ai_agent.get_current_segments()
+                if agent_segs:
+                    import copy
+                    self.sub_editor.all_segments = copy.deepcopy(agent_segs)
+                    self.sub_editor.render_page()
+                    if hasattr(self, "video_player"):
+                        self.video_player.refresh_current_subtitle()
+
         # Cầu nối Dữ liệu (Data Sync Bridge): Khi rời khỏi trang Dịch thuật
         if prev_nav_index == 8 and original_index != 8:
             if hasattr(self, "page_translation") and self.page_translation and hasattr(self, "sub_editor"):

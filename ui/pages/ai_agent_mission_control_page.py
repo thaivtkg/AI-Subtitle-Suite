@@ -148,3 +148,6 @@ class AIAgentMissionControlPage(QWidget):
         self.controller.request_task_revision("Yêu cầu làm lại task này")
         self.col_inspect.step_stepper.set_plan(self.controller.active_plan)
         self.col_inspect.btn_approve_next.setEnabled(True)
+
+    def get_current_segments(self):
+        return self.col_inspect.get_current_segments()
