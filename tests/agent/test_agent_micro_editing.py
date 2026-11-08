@@ -117,3 +117,34 @@ def test_controller_hitl_lifecycle_with_micro_editing():
     assert controller._active_segments[0]["start"] == "00:00:01,400"
     # 3600 + 1000 = 4600ms -> 00:00:04,600
     assert controller._active_segments[0]["end"] == "00:00:04,600"
+
+
+def test_tool_adjust_subtitle_bounds_overlap_auto_resolve():
+    initial_segs = [
+        {"id": 1, "start": "00:00:01,000", "end": "00:00:03,000", "text": "Segment 1"},
+        {"id": 2, "start": "00:00:03,200", "end": "00:00:05,000", "text": "Segment 2"},
+    ]
+    # Extending end by 500ms (3000 -> 3500) will overlap with Seg 2 (start 3200)
+    res = adjust_subtitle_bounds(delta_start_ms=0, delta_end_ms=500, segments=initial_segs)
+    assert res["status"] == "ok"
+    adj = res["segments"]
+    # Seg 1 end trimmed to next_start 3200ms -> 00:00:03,200
+    assert adj[0]["end"] == "00:00:03,200"
+    assert adj[1]["start"] == "00:00:03,200"
+
+
+def test_tool_shift_subtitles_non_negative_clamp_and_independent_subsequent_segments():
+    initial_segs = [
+        {"id": 1, "start": "00:00:00,300", "end": "00:00:02,000", "text": "Segment 1"},
+        {"id": 2, "start": "00:00:03,000", "end": "00:00:05,000", "text": "Segment 2"},
+    ]
+    # Shift backwards -500ms:
+    # Seg 1: start 300 - 500 clamped to 0ms; end 2000 - 500 = 1500ms
+    # Seg 2: start 3000 - 500 = 2500ms; end 5000 - 500 = 4500ms
+    res = shift_subtitles(offset_ms=-500, segments=initial_segs)
+    assert res["status"] == "ok"
+    shifted = res["segments"]
+    assert shifted[0]["start"] == "00:00:00,000"
+    assert shifted[0]["end"] == "00:00:01,500"
+    assert shifted[1]["start"] == "00:00:02,500"
+    assert shifted[1]["end"] == "00:00:04,500"

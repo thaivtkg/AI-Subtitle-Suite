@@ -42,20 +42,24 @@ def adjust_subtitle_bounds(
     for i, s in enumerate(segs):
         sc = dict(s)
         st = max(0, time_str_to_ms(sc.get("start", 0)) + delta_start_ms)
-        en = max(st + 100, time_str_to_ms(sc.get("end", 0)) + delta_end_ms)
+        en = max(st + 200, time_str_to_ms(sc.get("end", 0)) + delta_end_ms)
         sc["start"] = ms_to_time_str(st)
         sc["end"] = ms_to_time_str(en)
         modified_segs.append(sc)
 
-    # Auto resolve overlaps
-    for i in range(1, len(modified_segs)):
-        prev_end = time_str_to_ms(modified_segs[i-1]["end"])
+    # Auto resolve overlaps (P0 Overlap Prevention)
+    for i in range(len(modified_segs) - 1):
         curr_start = time_str_to_ms(modified_segs[i]["start"])
-        if curr_start < prev_end:
-            modified_segs[i]["start"] = ms_to_time_str(prev_end + 50)
-            curr_end = time_str_to_ms(modified_segs[i]["end"])
-            if curr_end <= prev_end + 50:
-                modified_segs[i]["end"] = ms_to_time_str(prev_end + 300)
+        curr_end = time_str_to_ms(modified_segs[i]["end"])
+        next_start = time_str_to_ms(modified_segs[i+1]["start"])
+        if curr_end > next_start:
+            if next_start - curr_start >= 200:
+                modified_segs[i]["end"] = ms_to_time_str(next_start)
+            else:
+                modified_segs[i+1]["start"] = ms_to_time_str(curr_end)
+                next_end = time_str_to_ms(modified_segs[i+1]["end"])
+                if next_end < curr_end + 200:
+                    modified_segs[i+1]["end"] = ms_to_time_str(curr_end + 200)
 
     return {
         "segments": modified_segs,
@@ -78,7 +82,7 @@ def shift_subtitles(
     for s in segs:
         sc = dict(s)
         st = max(0, time_str_to_ms(sc.get("start", 0)) + offset_ms)
-        en = max(st + 100, time_str_to_ms(sc.get("end", 0)) + offset_ms)
+        en = max(st + 200, time_str_to_ms(sc.get("end", 0)) + offset_ms)
         sc["start"] = ms_to_time_str(st)
         sc["end"] = ms_to_time_str(en)
         shifted.append(sc)
