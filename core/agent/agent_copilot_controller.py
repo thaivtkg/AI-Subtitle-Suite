@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 from typing import Any, Dict, List, Optional
 from PySide6.QtCore import QObject, Signal
@@ -42,6 +43,9 @@ class AgentCopilotController(QObject):
     ):
         super().__init__(parent)
         self.tool_registry = tool_registry or AgentToolRegistry()
+        if not self.tool_registry.has_tool("create_timing"):
+            self.tool_registry.register_default_tools()
+        self._active_segments: List[Dict[str, Any]] = []
         self.llm_client = llm_client or MultiProviderLLMClient()
         self.snapshot_manager = snapshot_manager
         self.context_ledger = context_ledger or AgentContextLedger()
@@ -104,13 +108,80 @@ class AgentCopilotController(QObject):
         lower = prompt.lower()
         steps: List[AgentStep] = []
 
-        if any(w in lower for w in ["nhận diện", "gen sub", "asr", "whisper", "tạo sub"]):
+        # 1. Check Subtitle Timing Bounds (Micro-editing duration: đầu / cuối)
+        is_duration = ("thời lượng" in lower or "mốc" in lower) and any(k in lower for k in ["đầu", "cuối"])
+        if is_duration:
+            d_start = 0
+            d_end = 0
+            m_s1 = re.search(r"(?:giảm|lùi|trừ|sớm)\s+(\d+)\s*ms\s*(?:ở\s+)?mốc\s*đầu", lower) or re.search(r"mốc\s*đầu\s*(?:giảm|lùi|trừ|sớm)\s+(\d+)\s*ms", lower)
+            if m_s1:
+                d_start = -int(m_s1.group(1))
+            m_s2 = re.search(r"(?:tăng|tiến|cộng|muộn)\s+(\d+)\s*ms\s*(?:ở\s+)?mốc\s*đầu", lower) or re.search(r"mốc\s*đầu\s*(?:tăng|tiến|cộng|muộn)\s+(\d+)\s*ms", lower)
+            if m_s2:
+                d_start = int(m_s2.group(1))
+
+            m_e1 = re.search(r"(?:tăng|tiến|cộng|thêm)\s+(\d+)\s*ms\s*(?:ở\s+)?mốc\s*cuối", lower) or re.search(r"mốc\s*cuối\s*(?:tăng|tiến|cộng|thêm)\s+(\d+)\s*ms", lower)
+            if m_e1:
+                d_end = int(m_e1.group(1))
+            m_e2 = re.search(r"(?:giảm|lùi|trừ|bớt)\s+(\d+)\s*ms\s*(?:ở\s+)?mốc\s*cuối", lower) or re.search(r"mốc\s*cuối\s*(?:giảm|lùi|trừ|bớt)\s+(\d+)\s*ms", lower)
+            if m_e2:
+                d_end = -int(m_e2.group(1))
+
             steps.append(
                 AgentStep(
                     id=f"step_{len(steps)+1}",
-                    title="ASR Gen Sub (Faster-Whisper)",
+                    title=f"Điều chỉnh thời lượng phụ đề (Đầu: {d_start:+d}ms, Cuối: {d_end:+d}ms)",
+                    tool_name="adjust_subtitle_bounds",
+                    tool_args={"delta_start_ms": d_start, "delta_end_ms": d_end, "scope": "all"},
+                )
+            )
+
+        # 2. Check Subtitle Time Shift (Micro-editing offset: lên / lùi)
+        is_shift = any(k in lower for k in ["đưa", "dịch chuyển", "đẩy", "dời", "lùi", "tiến"]) and any(k in lower for k in ["sub", "phụ đề", "đoạn"])
+        if is_shift and not is_duration:
+            direction = -1 if any(k in lower for k in ["lùi", "xuống", "giảm", "trừ", "sớm"]) else 1
+            m_num = re.search(r"(\d+(?:\.\d+)?)\s*(s|giây|ms)", lower)
+            if m_num:
+                val_s, unit = m_num.groups()
+                val = float(val_s)
+                ms = int(val * 1000) if unit in ("s", "giây") else int(val)
+                offset = ms * direction
+                steps.append(
+                    AgentStep(
+                        id=f"step_{len(steps)+1}",
+                        title=f"Dịch chuyển thời gian phụ đề ({offset:+d}ms)",
+                        tool_name="shift_subtitles",
+                        tool_args={"offset_ms": offset, "scope": "all"},
+                    )
+                )
+
+        # 3. Check Timing Creation (tạo timing N câu)
+        if "tạo timing" in lower or ("timing" in lower and any(w in lower for w in ["tạo", "khởi tạo", "add"])):
+            m_count = re.search(r"(\d+)\s*câu", lower)
+            count = int(m_count.group(1)) if m_count else 5
+            steps.append(
+                AgentStep(
+                    id=f"step_{len(steps)+1}",
+                    title=f"Khởi tạo Timing {count} câu đầu",
+                    tool_name="create_timing",
+                    tool_args={"count": count},
+                )
+            )
+
+        # 4. Check ASR Gen Sub (support N segments limit)
+        elif any(w in lower for w in ["nhận diện", "gen sub", "asr", "whisper", "tạo sub"]):
+            m_lim = re.search(r"(\d+)\s*câu", lower)
+            limit = int(m_lim.group(1)) if m_lim else None
+            title = f"ASR Gen Sub {limit} câu đầu (Faster-Whisper)" if limit else "ASR Gen Sub (Faster-Whisper)"
+            args = {"language": self.context_ledger.source_lang or "auto"}
+            if limit:
+                args["limit"] = limit
+            steps.append(
+                AgentStep(
+                    id=f"step_{len(steps)+1}",
+                    title=title,
                     tool_name="run_asr",
-                    tool_args={"language": self.context_ledger.source_lang or "auto"},
+                    tool_args=args,
                 )
             )
 
@@ -188,13 +259,28 @@ class AgentCopilotController(QObject):
             self._last_pre_task_snapshot_id = self.snapshot_manager.take_snapshot(f"pre_task_{step.id}")
 
         # 2. Execute tool
-        exec_res = self.tool_registry.safe_execute_tool(step.tool_name, step.tool_args)
+        args = dict(step.tool_args)
+        if step.tool_name in ("adjust_subtitle_bounds", "shift_subtitles") and "segments" not in args:
+            if not self._active_segments:
+                from core.agent.agent_tool_registry import create_timing
+                init_res = create_timing(count=5)
+                self._active_segments = init_res.get("segments", [])
+            args["segments"] = self._active_segments
+
+        exec_res = self.tool_registry.safe_execute_tool(step.tool_name, args)
 
         if exec_res.get("success"):
             step.status = StepStatus.COMPLETED
             step.completed_at = time.time()
             step.result_summary = f"Hoàn thành {step.title}"
-            self._last_step_result = exec_res.get("result", {})
+            res_dict = exec_res.get("result", {})
+            if isinstance(res_dict, dict) and "segments" in res_dict:
+                limit = args.get("limit")
+                if limit and isinstance(res_dict["segments"], list):
+                    res_dict["segments"] = res_dict["segments"][:limit]
+                self._active_segments = res_dict["segments"]
+
+            self._last_step_result = res_dict
 
             # PAUSE and WAIT for user approval
             self._waiting_task_approval = True

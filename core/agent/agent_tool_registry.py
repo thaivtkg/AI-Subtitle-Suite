@@ -5,6 +5,92 @@ from typing import Any, Callable, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
+
+def create_timing(
+    count: int = 5,
+    duration_per_block_ms: int = 3000,
+    gap_ms: int = 500,
+) -> Dict[str, Any]:
+    """Tạo count khối timing phụ đề mẫu."""
+    from ui.SubEditor import ms_to_time_str
+    segments = []
+    current_ms = gap_ms
+    for i in range(count):
+        start_ms = current_ms
+        end_ms = start_ms + duration_per_block_ms
+        segments.append({
+            "id": i + 1,
+            "start": ms_to_time_str(start_ms),
+            "end": ms_to_time_str(end_ms),
+            "text": f"Dòng phụ đề #{i+1}",
+            "translation": f"Subtitle line #{i+1}",
+        })
+        current_ms = end_ms + gap_ms
+    return {"segments": segments, "count": len(segments), "status": "ok"}
+
+
+def adjust_subtitle_bounds(
+    delta_start_ms: int = 0,
+    delta_end_ms: int = 0,
+    scope: str = "all",
+    segments: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Điều chỉnh mốc thời gian bắt đầu và kết thúc của các câu phụ đề theo millisecond."""
+    from ui.SubEditor import ms_to_time_str, time_str_to_ms
+    segs = segments or []
+    modified_segs = []
+    for i, s in enumerate(segs):
+        sc = dict(s)
+        st = max(0, time_str_to_ms(sc.get("start", 0)) + delta_start_ms)
+        en = max(st + 100, time_str_to_ms(sc.get("end", 0)) + delta_end_ms)
+        sc["start"] = ms_to_time_str(st)
+        sc["end"] = ms_to_time_str(en)
+        modified_segs.append(sc)
+
+    # Auto resolve overlaps
+    for i in range(1, len(modified_segs)):
+        prev_end = time_str_to_ms(modified_segs[i-1]["end"])
+        curr_start = time_str_to_ms(modified_segs[i]["start"])
+        if curr_start < prev_end:
+            modified_segs[i]["start"] = ms_to_time_str(prev_end + 50)
+            curr_end = time_str_to_ms(modified_segs[i]["end"])
+            if curr_end <= prev_end + 50:
+                modified_segs[i]["end"] = ms_to_time_str(prev_end + 300)
+
+    return {
+        "segments": modified_segs,
+        "count": len(modified_segs),
+        "delta_start_ms": delta_start_ms,
+        "delta_end_ms": delta_end_ms,
+        "status": "ok",
+    }
+
+
+def shift_subtitles(
+    offset_ms: int = 0,
+    scope: str = "all",
+    segments: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Dịch chuyển toàn bộ phụ đề tiến hoặc lùi theo millisecond."""
+    from ui.SubEditor import ms_to_time_str, time_str_to_ms
+    segs = segments or []
+    shifted = []
+    for s in segs:
+        sc = dict(s)
+        st = max(0, time_str_to_ms(sc.get("start", 0)) + offset_ms)
+        en = max(st + 100, time_str_to_ms(sc.get("end", 0)) + offset_ms)
+        sc["start"] = ms_to_time_str(st)
+        sc["end"] = ms_to_time_str(en)
+        shifted.append(sc)
+
+    return {
+        "segments": shifted,
+        "count": len(shifted),
+        "offset_ms": offset_ms,
+        "status": "ok",
+    }
+
+
 class AgentToolRegistry:
     """
     Registry of tools exposed to AI Agent Copilot.
@@ -87,3 +173,9 @@ class AgentToolRegistry:
                 },
             })
         return schemas
+
+    def register_default_tools(self) -> None:
+        """Đăng ký bộ công cụ vi mô và tiện ích mặc định cho Agent."""
+        self.register_tool("create_timing", create_timing, description="Tạo các khối timing phụ đề mẫu")
+        self.register_tool("adjust_subtitle_bounds", adjust_subtitle_bounds, description="Điều chỉnh mốc đầu và mốc cuối của phụ đề theo millisecond")
+        self.register_tool("shift_subtitles", shift_subtitles, description="Dịch chuyển toàn bộ phụ đề tiến/lùi theo millisecond")
