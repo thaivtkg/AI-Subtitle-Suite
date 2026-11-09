@@ -192,3 +192,61 @@ def test_tc_acc_ux_err_02_redo_button_unlocks_deadlock(qtbot):
     qtbot.mouseClick(btn_redo, Qt.MouseButton.LeftButton)
 
     controller.request_task_revision.assert_called_once()
+
+
+# =========================================================================
+# TC-ACC-STYLE-REPORT-01: Data Continuity khi đổi Subtitle Style (Gate 1)
+# =========================================================================
+def test_tc_acc_style_report_01_data_continuity():
+    controller = AgentCopilotController()
+
+    # 1. Tạo 5 câu timing
+    controller.submit_prompt("tạo timing 5 câu đầu")
+    controller.approve_plan()
+    assert controller.is_waiting_task_approval()
+    assert len(controller._active_segments) == 5
+
+    # 2. Đổi style
+    controller.submit_prompt("đổi style sub chữ vàng viền đen cỡ 24 font Roboto")
+    controller.approve_plan()
+    assert controller.is_waiting_task_approval()
+
+    # Gate 1: Phải bảo tồn nguyên vẹn 5 câu phụ đề, không làm mất danh sách!
+    assert len(controller._active_segments) == 5
+    assert controller._active_segments[0]["start"] == "00:00:00,500"
+    assert controller._last_step_result.get("style", {}).get("font_name") == "Roboto"
+    assert "segments" in controller._last_step_result
+    assert len(controller._last_step_result["segments"]) == 5
+
+
+# =========================================================================
+# TC-ACC-STYLE-REPORT-02: Visual Style Card & Đồng thời hiển thị (Gate 2 & 3)
+# =========================================================================
+def test_tc_acc_style_report_02_visual_card_and_simultaneous_rendering(qtbot):
+    from ui.pages.ai_agent_mission_control_page import AIAgentMissionControlPage
+    from ui.components.agent_report_inspector_widget import SubtitleStyleCardWidget, EditableSegmentRow
+    from PySide6.QtWidgets import QTextEdit
+
+    controller = AgentCopilotController()
+    page = AIAgentMissionControlPage(controller=controller)
+    qtbot.addWidget(page)
+    page.show()
+
+    # 1. Tạo 5 câu timing
+    controller.submit_prompt("tạo timing 5 câu đầu")
+    controller.approve_plan()
+
+    # 2. Đổi style chữ đỏ viền trắng cỡ 30 font Arial
+    controller.submit_prompt("đổi style sub chữ đỏ viền trắng cỡ 30 font Arial")
+    controller.approve_plan()
+    assert controller.is_waiting_task_approval()
+
+    # Gate 2: Khối hiển thị đồ họa StyleCardWidget phải tồn tại, KHÔNG dùng QTextEdit in thô dictionary!
+    style_card = page.findChild(SubtitleStyleCardWidget)
+    assert style_card is not None
+    text_edits = page.col_inspect.inspection_card.findChildren(QTextEdit)
+    assert len(text_edits) == 0
+
+    # Gate 3: Cả thẻ Style ở trên VÀ danh sách 5 câu phụ đề ở dưới đều được hiển thị đồng thời!
+    rows = page.findChildren(EditableSegmentRow)
+    assert len(rows) == 5

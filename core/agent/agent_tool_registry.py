@@ -116,6 +116,7 @@ def apply_subtitle_style(
     outline_width: Optional[int] = None,
     shadow: Optional[bool] = None,
     position: Optional[str] = None,
+    segments: Optional[List[Dict[str, Any]]] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
     """Tinh chỉnh giao diện và định dạng phụ đề (Font, Size, Màu chữ, Viền, Shadow)."""
@@ -135,11 +136,17 @@ def apply_subtitle_style(
     if position:
         style["position"] = position
 
-    return {
+    segs = segments or kwargs.get("segments", [])
+    res: Dict[str, Any] = {
         "status": "ok",
         "style": style,
         "message": f"Đã áp dụng định dạng phụ đề: {style}",
     }
+    if segs:
+        res["segments"] = segs
+        res["count"] = len(segs)
+
+    return res
 
 
 def rescan_subtitles(

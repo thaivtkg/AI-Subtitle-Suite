@@ -1,6 +1,7 @@
 import copy
 from typing import Optional, Dict, Any, List
 from PySide6.QtCore import Qt, Signal, QEvent
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -15,6 +16,78 @@ from PySide6.QtWidgets import (
 
 from core.agent.models import AgentTaskPlan, AgentStep, StepStatus
 from ui.components.agent_task_stepper_widget import AgentTaskStepperWidget
+
+
+class SubtitleStyleCardWidget(QWidget):
+    """Khối hiển thị đồ họa trực quan định dạng kiểu chữ phụ đề (Font, Size, Màu chữ, Viền, Shadow)."""
+
+    def __init__(self, style_dict: Dict[str, Any], parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setObjectName("subtitle_style_card")
+        self.style_dict = style_dict or {}
+        self._init_ui()
+
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+
+        self.setStyleSheet("""
+            QWidget#subtitle_style_card {
+                background: #0f172a;
+                border: 1px solid #334155;
+                border-radius: 4px;
+            }
+        """)
+
+        # Header title
+        title_box = QHBoxLayout()
+        title_box.setSpacing(6)
+        lbl_title = QLabel("🎨 <strong>Định Dạng Kiểu Chữ Phụ Đề</strong> (Subtitle Style)", self)
+        lbl_title.setStyleSheet("color: #38bdf8; font-size: 11px; background: transparent;")
+        title_box.addWidget(lbl_title)
+        title_box.addStretch()
+        layout.addLayout(title_box)
+
+        # Chips row
+        grid = QHBoxLayout()
+        grid.setSpacing(6)
+
+        font_name = self.style_dict.get("font_name", "Arial")
+        font_size = self.style_dict.get("font_size", 24)
+        font_color = self.style_dict.get("font_color", "#FFFF00")
+        outline_color = self.style_dict.get("outline_color", "#000000")
+        outline_width = self.style_dict.get("outline_width", 2)
+        shadow = self.style_dict.get("shadow", False)
+
+        def make_chip(text: str, color_hex: Optional[str] = None) -> QFrame:
+            chip = QFrame(self)
+            chip.setStyleSheet("QFrame { background: #1e293b; border: 1px solid #334155; border-radius: 3px; }")
+            c_l = QHBoxLayout(chip)
+            c_l.setContentsMargins(6, 3, 6, 3)
+            c_l.setSpacing(5)
+            if color_hex:
+                qc = QColor(color_hex)
+                valid_color = qc.name() if qc.isValid() else color_hex
+                swatch = QLabel(chip)
+                swatch.setFixedSize(14, 14)
+                swatch.setStyleSheet(f"background-color: {valid_color}; border: 1px solid #64748b; border-radius: 2px;")
+                c_l.addWidget(swatch)
+            lbl = QLabel(text, chip)
+            lbl.setStyleSheet("color: #e2e8f0; font-size: 10px; background: transparent; border: none;")
+            c_l.addWidget(lbl)
+            return chip
+
+        grid.addWidget(make_chip(f"Font: {font_name}"))
+        grid.addWidget(make_chip(f"Cỡ: {font_size}px"))
+        grid.addWidget(make_chip(f"Chữ: {font_color}", color_hex=font_color))
+        if outline_color:
+            grid.addWidget(make_chip(f"Viền: {outline_color} ({outline_width}px)", color_hex=outline_color))
+        if shadow:
+            grid.addWidget(make_chip("Bóng: Bật"))
+        grid.addStretch()
+
+        layout.addLayout(grid)
 
 
 class EditableSegmentRow(QWidget):
@@ -152,13 +225,21 @@ class EditableResultReportWidget(QScrollArea):
     def render_result(self, step_title: str, result_dict: Dict[str, Any]):
         self.clear()
 
-        hint = QLabel("Dữ liệu kết quả (bạn có thể click sửa trực tiếp text trước khi duyệt):", self.container)
-        hint.setStyleSheet("color: #64748b; font-size: 9px; margin-bottom: 2px;")
-        self.layout.addWidget(hint)
-
-        segments = result_dict.get("segments", [])
+        has_style = isinstance(result_dict, dict) and "style" in result_dict and bool(result_dict["style"])
+        segments = result_dict.get("segments", []) if isinstance(result_dict, dict) else []
         self.current_segments = copy.deepcopy(segments)
+
+        # 1. Render Style Card if style is present (Gate 2)
+        if has_style:
+            style_card = SubtitleStyleCardWidget(result_dict["style"], parent=self.container)
+            self.layout.addWidget(style_card)
+
+        # 2. Render Segments if present (Gate 3)
         if segments:
+            lbl_segs = QLabel("📝 <strong>Danh sách câu phụ đề</strong> (click sửa trực tiếp trước khi duyệt):", self.container)
+            lbl_segs.setStyleSheet("color: #94a3b8; font-size: 10px; margin-top: 4px; margin-bottom: 2px; background: transparent;")
+            self.layout.addWidget(lbl_segs)
+
             for i, seg in enumerate(segments[:30]):
                 t_in = seg.get("start", "00:00.000")
                 t_out = seg.get("end", "00:00.000")
@@ -173,8 +254,12 @@ class EditableResultReportWidget(QScrollArea):
                 row.focused.connect(self._on_row_focused)
                 self._rows.append(row)
                 self.layout.addWidget(row)
-        else:
-            # Render general report fields
+        elif not has_style:
+            # Fallback only when neither style nor segments exist
+            hint = QLabel("Dữ liệu kết quả:", self.container)
+            hint.setStyleSheet("color: #64748b; font-size: 9px; margin-bottom: 2px;")
+            self.layout.addWidget(hint)
+
             text_view = QTextEdit(self.container)
             text_view.setReadOnly(False)
             text_view.setStyleSheet("""

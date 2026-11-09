@@ -444,7 +444,7 @@ class AgentCopilotController(QObject):
         args = dict(step.tool_args)
         if step.tool_name == "create_timing" and "video_path" not in args and self.context_ledger.video_path:
             args["video_path"] = self.context_ledger.video_path
-        if step.tool_name in ("adjust_subtitle_bounds", "shift_subtitles", "rescan_subtitles", "run_asr") and "segments" not in args:
+        if step.tool_name in ("adjust_subtitle_bounds", "shift_subtitles", "rescan_subtitles", "run_asr", "apply_subtitle_style") and "segments" not in args:
             if not self._active_segments:
                 from core.agent.agent_tool_registry import create_timing
                 init_res = create_timing(count=5)
