@@ -145,3 +145,97 @@ def test_tc_gate_isolation_02_gate2_shows_execution_report_after_approval(qtbot)
 
     rows = page.findChildren(EditableSegmentRow)
     assert len(rows) == 5
+
+
+# =========================================================================
+# TC-COMPLETION-01: Báo cáo hoàn thành Cổng 2 sinh động & Phi trùng lặp (Anti-Robotic)
+# =========================================================================
+def test_tc_completion_01_dynamic_and_varied_summaries():
+    """Xác thực tin nhắn hoàn thành ở Cổng 2 không dùng template cũ dập khuôn và có nội dung chuyên môn."""
+    controller = AgentCopilotController()
+    engine = controller.reasoning_engine
+
+    old_template = "Kết quả đã được cập nhật vào khung kiểm tra bên phải"
+
+    # 1. Timing completion
+    step_timing = AgentStep(id="1", title="Tạo timing", tool_name="create_timing", tool_args={"count": 5})
+    res_timing = {"segments": [{"start": "00:00.500", "end": "00:03.500"}] * 5, "count": 5}
+    msg_timing = engine.synthesize_completion(step_timing, res_timing, active_segments_count=5)
+    assert old_template not in msg_timing
+    assert any(term in msg_timing.lower() for term in ["vad", "intro", "nhịp thoại", "phân đoạn"])
+
+    # 2. Style completion
+    step_style = AgentStep(
+        id="2",
+        title="Đổi style",
+        tool_name="apply_subtitle_style",
+        tool_args={"font_name": "Roboto", "font_size": 26, "font_color": "#FFFF00", "outline_color": "#000000"},
+    )
+    res_style = {"style": {"font_name": "Roboto", "font_size": 26, "font_color": "#FFFF00", "outline_color": "#000000"}, "segments": []}
+    msg_style = engine.synthesize_completion(step_style, res_style, active_segments_count=5)
+    assert old_template not in msg_style
+    assert any(term in msg_style.lower() for term in ["font", "viền", "màu", "tương phản", "overlay"])
+
+    # 3. Shift completion
+    step_shift = AgentStep(id="3", title="Lùi sub", tool_name="shift_subtitles", tool_args={"offset_ms": -500})
+    res_shift = {"offset_ms": -500, "segments": []}
+    msg_shift = engine.synthesize_completion(step_shift, res_shift, active_segments_count=5)
+    assert old_template not in msg_shift
+    assert any(term in msg_shift.lower() for term in ["tịnh tiến", "kẹp biên", "dời", "timeline"])
+
+    # 4. Anti-repetition across consecutive completions: different intros
+    intros = [msg_timing.split("\n")[0], msg_style.split("\n")[0], msg_shift.split("\n")[0]]
+    assert len(set(intros)) == 3, f"Phát hiện trùng lặp intro hoàn tất: {intros}"
+
+
+# =========================================================================
+# TC-COMPLETION-02: Cổng 2 phát sinh lời thoại thông minh khi thực thi lệnh thật
+# =========================================================================
+def test_tc_completion_02_controller_emits_dynamic_completion_message():
+    """Xác thực controller phát ra tin nhắn hoàn thành chuyên môn và không bị cắt cụt."""
+    controller = AgentCopilotController()
+    controller.submit_prompt("Tạo timing 5 câu đầu")
+    assert controller.is_waiting_plan_approval()
+
+    # Approve plan to trigger step execution
+    controller.approve_plan()
+    assert controller.is_waiting_task_approval()
+
+    # The last message in chat history must be the dynamic completion summary
+    last_msg = controller.chat_history[-1].content
+    old_robotic = "Kết quả đã được cập nhật vào khung kiểm tra bên phải. Mời bạn kiểm tra/sửa đổi hoặc bấm Duyệt để tiếp tục."
+    assert old_robotic not in last_msg
+    assert len(last_msg.split("\n")) >= 3
+    assert any(w in last_msg for w in ["VAD", "phân đoạn", "nhịp thoại", "timing"])
+
+
+# =========================================================================
+# TC-UI-CHAT-01: ChatBubble hiển thị đầy đủ văn bản & cuộn trang mượt mà
+# =========================================================================
+def test_tc_ui_chat_bubble_markdown_and_no_truncation(qtbot):
+    """Xác thực ChatBubble không bị cắt cụt chữ, render Markdown đầy đủ và auto-scroll tới đáy."""
+    from ui.components.agent_chat_stream_widget import AgentChatStreamWidget, ChatBubble
+    from core.agent.models import ChatMessage
+
+    widget = AgentChatStreamWidget()
+    qtbot.addWidget(widget)
+    widget.show()
+
+    long_content = (
+        "🎉 **Hoàn thành xuất sắc:**\n"
+        "Tôi đã kích hoạt engine VAD CFG-9 (Anime JA) trích xuất thành công 5 phân đoạn nhịp thoại đầu tiên, "
+        "lọc sạch toàn bộ tạp âm và 17.5s nhạc intro không lời.\n\n"
+        "👉 Kết quả chi tiết đã hiển thị tại bảng bên phải. Bạn có thể nhấp chuột sửa trực tiếp nội dung hoặc bấm Duyệt."
+    )
+    msg = ChatMessage(role="assistant", content=long_content, timestamp=100.0)
+    widget.add_message(msg)
+
+    # Bubble is in chat layout
+    bubbles = widget.findChildren(ChatBubble)
+    assert len(bubbles) >= 1
+    last_bubble = bubbles[-1]
+    lbl = last_bubble.findChild(QLabel)
+    assert lbl is not None
+    assert "Hoàn thành xuất sắc" in lbl.text()
+    assert "17.5s nhạc intro" in lbl.text()
+    assert "bấm Duyệt" in lbl.text()

@@ -95,12 +95,16 @@ class ChatBubble(QWidget):
     def __init__(self, message: ChatMessage, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._message = message
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 2, 0, 2)
 
-        lbl = QLabel(message.content, self)
+        lbl = QLabel(self)
+        lbl.setTextFormat(Qt.TextFormat.MarkdownText)
+        lbl.setText(message.content)
         lbl.setWordWrap(True)
         lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        lbl.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.MinimumExpanding)
 
         is_user = message.role == "user"
         if is_user:
@@ -172,6 +176,7 @@ class AgentChatStreamWidget(QWidget):
         self.chat_layout.setSpacing(8)
         self.chat_layout.addStretch()
         self.scroll_area.setWidget(self.chat_container)
+        self.scroll_area.verticalScrollBar().rangeChanged.connect(self._on_scroll_range_changed)
         main_layout.addWidget(self.scroll_area, 1)
 
         # 3. Input Box
@@ -230,15 +235,26 @@ class AgentChatStreamWidget(QWidget):
 
         main_layout.addWidget(input_container)
 
+    def _on_scroll_range_changed(self, min_val: int, max_val: int):
+        try:
+            if hasattr(self, "scroll_area") and self.scroll_area:
+                vsb = self.scroll_area.verticalScrollBar()
+                if vsb:
+                    vsb.setValue(max_val)
+        except RuntimeError:
+            pass
+
     def add_message(self, message: ChatMessage):
         """Append a new bubble message and auto-scroll to the bottom."""
         bubble = ChatBubble(message, self.chat_container)
         # Insert before stretch
         self.chat_layout.insertWidget(self.chat_layout.count() - 1, bubble)
-        # Scroll to bottom
-        self.scroll_area.verticalScrollBar().setValue(
-            self.scroll_area.verticalScrollBar().maximum()
-        )
+        try:
+            vsb = self.scroll_area.verticalScrollBar()
+            if vsb:
+                vsb.setValue(vsb.maximum())
+        except RuntimeError:
+            pass
 
     def set_messages(self, messages: List[ChatMessage]):
         """Clear and load full chat message history."""

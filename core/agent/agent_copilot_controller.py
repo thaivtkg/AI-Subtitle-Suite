@@ -473,9 +473,11 @@ class AgentCopilotController(QObject):
             # PAUSE and WAIT for user approval
             self._waiting_task_approval = True
 
-            report_msg = (
-                f"✅ **Hoàn thành Task #{idx+1} ({step.title})**\n"
-                f"Kết quả đã được cập nhật vào khung kiểm tra bên phải. Mời bạn kiểm tra/sửa đổi hoặc bấm Duyệt để tiếp tục."
+            report_msg = self.reasoning_engine.synthesize_completion(
+                step=step,
+                result=res_dict,
+                context_ledger=self.context_ledger,
+                active_segments_count=len(self._active_segments),
             )
             chat_reply = ChatMessage(role="assistant", content=report_msg, timestamp=time.time())
             self.chat_history.append(chat_reply)
