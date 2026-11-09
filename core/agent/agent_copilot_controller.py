@@ -12,6 +12,7 @@ from core.agent.models import (
     AgentContextLedger,
 )
 from core.agent.agent_tool_registry import AgentToolRegistry
+from core.agent.reasoning_engine import DynamicReasoningEngine
 from core.agent.multi_provider_client import MultiProviderLLMClient, ProviderConfig
 from core.agent.snapshot_manager import SnapshotManager
 
@@ -46,6 +47,7 @@ class AgentCopilotController(QObject):
         if not self.tool_registry.has_tool("create_timing"):
             self.tool_registry.register_default_tools()
         self._active_segments: List[Dict[str, Any]] = []
+        self.reasoning_engine = DynamicReasoningEngine()
         self.llm_client = llm_client or MultiProviderLLMClient()
         self.snapshot_manager = snapshot_manager
         self.context_ledger = context_ledger or AgentContextLedger()
@@ -86,11 +88,13 @@ class AgentCopilotController(QObject):
         self._waiting_plan_approval = True
         self._waiting_task_approval = False
 
-        # 3. Record agent response
-        summary_text = (
-            f"Kế hoạch gồm {len(plan.steps)} bước đã sẵn sàng:\n"
-            + "\n".join([f"[{i+1}] {s.title}" for i, s in enumerate(plan.steps)])
-            + "\nMời bạn kiểm tra và duyệt kế hoạch để bắt đầu."
+        # 3. Record agent response with dynamic CoT reasoning & anti-repetition
+        active_count = len(self._active_segments) if self._active_segments else 0
+        summary_text = self.reasoning_engine.synthesize_reasoning(
+            prompt=prompt,
+            plan=plan,
+            context_ledger=self.context_ledger,
+            active_segments_count=active_count,
         )
         agent_msg = ChatMessage(role="assistant", content=summary_text, timestamp=time.time())
         self.chat_history.append(agent_msg)

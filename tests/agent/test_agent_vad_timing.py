@@ -50,11 +50,12 @@ def test_tc_vad_02_cfg9_anime_ja_preset_parameters():
 
 
 # =========================================================================
-# TC-VAD-03: Hiển thị Preview Card tại Cổng 1
+# TC-VAD-03: Hiển thị Plan Briefing Card tại Cổng 1 (Strict Gate Isolation)
 # =========================================================================
 def test_tc_vad_03_gate1_preview_card_in_ui(qtbot):
     from ui.pages.ai_agent_mission_control_page import AIAgentMissionControlPage
     from ui.components.agent_report_inspector_widget import EditableSegmentRow
+    from ui.components.plan_briefing_widget import PlanBriefingCardWidget
     from PySide6.QtWidgets import QLabel
 
     controller = AgentCopilotController()
@@ -68,15 +69,18 @@ def test_tc_vad_03_gate1_preview_card_in_ui(qtbot):
     # Gate 1 state: waiting plan approval
     assert controller.is_waiting_plan_approval()
 
-    # Preview card must immediately render 5 segments with timestamps, NOT a blank placeholder!
+    # Gate 1: PlanBriefingCardWidget hiển thị, KHÔNG rò rỉ hàng phụ đề
+    card = page.findChild(PlanBriefingCardWidget)
+    assert card is not None
     rows = page.findChildren(EditableSegmentRow)
-    assert len(rows) == 5
+    assert len(rows) == 0
+
     badge = page.findChild(QLabel, "status_badge")
     assert badge.text() == "CHỜ BẠN DUYỆT"
 
 
 # =========================================================================
-# TC-VAD-04: Kế thừa văn bản sửa tay tại Cổng 1 (Text Preservation)
+# TC-VAD-04: Kế thừa văn bản sửa tay tại Cổng 2 (Text Preservation)
 # =========================================================================
 def test_tc_vad_04_text_preservation_from_gate1_to_gate2(qtbot):
     from ui.pages.ai_agent_mission_control_page import AIAgentMissionControlPage
@@ -92,18 +96,24 @@ def test_tc_vad_04_text_preservation_from_gate1_to_gate2(qtbot):
     controller.submit_prompt("Tạo timing 5 câu đầu")
     assert controller.is_waiting_plan_approval()
 
-    # User edits segment #1 text directly at Gate 1
-    rows = page.findChildren(EditableSegmentRow)
-    assert len(rows) == 5
-    custom_text = "Lời thoại nhân vật chính (Sửa tay ở Cổng 1)"
-    rows[0].editor.setText(custom_text)
-
     # User clicks approve plan ("✔ Duyệt Kế Hoạch & Bắt Đầu")
     btn_approve = page.findChild(QPushButton, "btn_approve_next")
     qtbot.mouseClick(btn_approve, Qt.MouseButton.LeftButton)
 
-    # After step execution, text must be preserved 100%!
+    # After step execution, Gate 2 renders segments
     assert controller.is_waiting_task_approval()
+    rows = page.findChildren(EditableSegmentRow)
+    assert len(rows) == 5
+
+    # User edits segment #1 text directly at Gate 2
+    custom_text = "Lời thoại nhân vật chính (Sửa tay ở Cổng 2)"
+    rows[0].editor.setText(custom_text)
+
+    # User clicks approve ("✔ Duyệt & Chạy bước tiếp")
+    btn_approve = page.findChild(QPushButton, "btn_approve_next")
+    qtbot.mouseClick(btn_approve, Qt.MouseButton.LeftButton)
+
+    # Preserved in active segments upon text edit and approval
     assert controller._active_segments[0]["text"] == custom_text
 
 

@@ -104,13 +104,8 @@ class AIAgentMissionControlPage(QWidget):
     @Slot(object)
     def _on_plan_ready(self, plan: AgentTaskPlan):
         self.col_inspect.step_stepper.set_plan(plan)
-        self.col_inspect.lbl_report_title.setText("🔍 DUYỆT KẾ HOẠCH TỔNG QUAN")
-        self.col_inspect.set_badge_status("waiting")
-        self.col_inspect.btn_approve_next.setText("✔ Duyệt Kế Hoạch & Bắt Đầu")
-        self.col_inspect.btn_approve_next.setEnabled(True)
-        preview_segs = getattr(plan, "preview_segments", None)
-        if preview_segs:
-            self.col_inspect.inspection_card.render_result("Xem trước kế hoạch Timing (Cổng 1)", {"segments": preview_segs})
+        # CỔNG 1: Render PlanBriefingCardWidget (Strict Gate Isolation - KHÔNG rò rỉ dữ liệu kết quả)
+        self.col_inspect.render_plan_briefing(plan)
 
     @Slot(int, object)
     def _on_step_started(self, step_idx: int, step: AgentStep):
@@ -143,6 +138,9 @@ class AIAgentMissionControlPage(QWidget):
             preserved = self.col_inspect.get_current_segments()
             self.controller.approve_plan(preserved_segments=preserved)
         elif self.controller.is_waiting_task_approval():
+            preserved = self.col_inspect.get_current_segments()
+            if preserved:
+                self.controller._active_segments = preserved
             self.controller.approve_next_step()
 
     @Slot()

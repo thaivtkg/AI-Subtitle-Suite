@@ -222,6 +222,15 @@ class EditableResultReportWidget(QScrollArea):
                 w.setParent(None)
                 w.deleteLater()
 
+    def render_plan_briefing(self, plan: AgentTaskPlan):
+        """Kết xuất thẻ tóm tắt kế hoạch tại Cổng 1 (Strict Gate Isolation - KHÔNG lộ kết quả)."""
+        self.clear()
+        self.current_segments = []
+        from ui.components.plan_briefing_widget import PlanBriefingCardWidget
+        card = PlanBriefingCardWidget(plan, parent=self.container)
+        self.layout.addWidget(card)
+        self.layout.addStretch()
+
     def render_result(self, step_title: str, result_dict: Dict[str, Any]):
         self.clear()
 
@@ -448,6 +457,13 @@ class AgentReportInspectorWidget(QWidget):
                     border-radius: 4px;
                 }
             """)
+
+    def render_plan_briefing(self, plan: AgentTaskPlan):
+        self.lbl_report_title.setText("🔍 DUYỆT KẾ HOẠCH TỔNG QUAN")
+        self.set_badge_status("waiting")
+        self.inspection_card.render_plan_briefing(plan)
+        self.btn_approve_next.setText("✔ Duyệt Kế Hoạch & Bắt Đầu")
+        self.btn_approve_next.setEnabled(True)
 
     def update_report(self, step_idx: int, step: AgentStep, result: Dict[str, Any]):
         self.lbl_report_title.setText(f"🔍 BÁO CÁO KẾT QUẢ TASK #{step_idx + 1}")
