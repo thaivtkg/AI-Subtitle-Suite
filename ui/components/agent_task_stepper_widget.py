@@ -84,7 +84,10 @@ class AgentTaskStepperWidget(QWidget):
         while self.layout.count() > 0:
             item = self.layout.takeAt(0)
             if item.widget():
-                item.widget().deleteLater()
+                w = item.widget()
+                w.hide()
+                w.setParent(None)
+                w.deleteLater()
 
     def set_plan(self, plan: Optional[AgentTaskPlan]):
         self.clear()

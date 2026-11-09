@@ -24,18 +24,19 @@ DEFAULT_CFG9_PRESET = {
     "min_silence_duration_ms": 300,
     "speech_pad_ms": 300,
     "max_speech_duration_s": 6.0,
+    "min_speech_duration_ms": 750,  # Lọc bỏ tạp âm/SFX/nhịp trống intro ngắn < 0.75s
 }
 
 
 def extract_audio_window(
     video_path: Optional[str],
     start_offset_s: float = 0.0,
-    max_duration_s: float = 120.0,
+    max_duration_s: float = 180.0,
     sampling_rate: int = 16000,
 ) -> Optional[np.ndarray]:
     """
     Gate 1 & TC-VAD-10: Windowed Audio Extraction.
-    Decodes only the leading audio window (default 60s - 120s) instead of the entire video.
+    Decodes only the leading audio window (default 120s - 180s) instead of the entire video.
     Ensures execution time < 0.3s and RAM usage < 50MB.
     """
     if not video_path or not os.path.exists(video_path) or av is None:
@@ -94,6 +95,7 @@ def detect_speech_intervals_vad(
     min_silence_ms: Optional[int] = None,
     speech_pad_ms: Optional[int] = None,
     max_speech_duration_s: Optional[float] = None,
+    min_speech_duration_ms: Optional[int] = None,
 ) -> List[Dict[str, int]]:
     """
     Detect speech chunks using Silero VAD with Preset CFG-9 Anime JA parameters.
@@ -106,6 +108,7 @@ def detect_speech_intervals_vad(
     msil = min_silence_ms if min_silence_ms is not None else DEFAULT_CFG9_PRESET["min_silence_duration_ms"]
     spad = speech_pad_ms if speech_pad_ms is not None else DEFAULT_CFG9_PRESET["speech_pad_ms"]
     mmax = max_speech_duration_s if max_speech_duration_s is not None else DEFAULT_CFG9_PRESET["max_speech_duration_s"]
+    minspeech = min_speech_duration_ms if min_speech_duration_ms is not None else DEFAULT_CFG9_PRESET.get("min_speech_duration_ms", 750)
 
     try:
         options = VadOptions(
@@ -113,6 +116,7 @@ def detect_speech_intervals_vad(
             min_silence_duration_ms=msil,
             speech_pad_ms=spad,
             max_speech_duration_s=mmax,
+            min_speech_duration_ms=minspeech,
         )
         chunks = get_speech_timestamps(audio, options, sampling_rate=sampling_rate)
         intervals = []
@@ -140,6 +144,7 @@ def generate_vad_timing_segments(
     min_silence_ms: Optional[int] = None,
     speech_pad_ms: Optional[int] = None,
     max_speech_duration_s: Optional[float] = None,
+    min_speech_duration_ms: Optional[int] = None,
     duration_per_block_ms: int = 2500,
     gap_ms: int = 500,
     preserved_segments: Optional[List[Dict[str, Any]]] = None,
@@ -156,7 +161,7 @@ def generate_vad_timing_segments(
         audio = extract_audio_window(
             video_path,
             start_offset_s=start_offset_s,
-            max_duration_s=max(120.0, count * 15.0),
+            max_duration_s=max(180.0, count * 25.0),
         )
         if audio is not None:
             intervals = detect_speech_intervals_vad(
@@ -166,6 +171,7 @@ def generate_vad_timing_segments(
                 min_silence_ms=min_silence_ms,
                 speech_pad_ms=speech_pad_ms,
                 max_speech_duration_s=max_speech_duration_s,
+                min_speech_duration_ms=min_speech_duration_ms,
             )
             for idx, inter in enumerate(intervals[:count]):
                 segments.append({
