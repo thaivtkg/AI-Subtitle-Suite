@@ -2803,6 +2803,15 @@ class MainWindow(QMainWindow):
         if prev_nav_index == 9 and original_index != 9:
             self._sync_from_ai_agent_page()
 
+        # Cầu nối Dữ liệu 2 chiều (Bi-directional Data Sync Bridge): Khi chuyển sang trang AI Agent (tab 9)
+        if original_index == 9:
+            if hasattr(self, "page_ai_agent") and self.page_ai_agent and hasattr(self, "sub_editor"):
+                if hasattr(self.sub_editor, "all_segments") and self.sub_editor.all_segments:
+                    import copy
+                    self.page_ai_agent.controller._active_segments = copy.deepcopy(self.sub_editor.all_segments)
+                if hasattr(self, "video_player") and hasattr(self.video_player, "video_path") and self.video_player.video_path:
+                    self.page_ai_agent.controller.context_ledger.video_path = self.video_player.video_path
+
         # Cầu nối Dữ liệu (Data Sync Bridge): Khi rời khỏi trang Dịch thuật
         if prev_nav_index == 8 and original_index != 8:
             if hasattr(self, "page_translation") and self.page_translation and hasattr(self, "sub_editor"):

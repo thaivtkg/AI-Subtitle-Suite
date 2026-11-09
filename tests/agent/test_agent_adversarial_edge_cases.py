@@ -36,13 +36,13 @@ def test_tc_adv_01_shift_negative_clamp_no_overlap():
     # Kiểm tra không có 2 câu nào bị trùng khít tại [0, 200]
     starts = [time_str_to_ms(s["start"]) for s in shifted]
     assert len(set(starts)) == 3, f"Các mốc start bị trùng lặp: {starts}"
-    # Câu 1: [0, 200], Câu 2: [200, 400], Câu 3: [400, 600] (Không bị đè chồng kẹp sàn)
+    # Câu 1 (2s): [0, 2000], Câu 2 (2s): [2000, 4000], Câu 3 (1.5s): [4000, 5500] (Bảo toàn thời lượng gốc, không bị bóp về 200ms)
     assert shifted[0]["start"] == "00:00:00,000"
-    assert shifted[0]["end"] == "00:00:00,200"
-    assert shifted[1]["start"] == "00:00:00,200"
-    assert shifted[1]["end"] == "00:00:00,400"
-    assert shifted[2]["start"] == "00:00:00,400"
-    assert shifted[2]["end"] == "00:00:00,600"
+    assert shifted[0]["end"] == "00:00:02,000"
+    assert shifted[1]["start"] == "00:00:02,000"
+    assert shifted[1]["end"] == "00:00:04,000"
+    assert shifted[2]["start"] == "00:00:04,000"
+    assert shifted[2]["end"] == "00:00:05,500"
 
 
 def test_tc_adv_02_reversed_sentence_and_time_ranges():

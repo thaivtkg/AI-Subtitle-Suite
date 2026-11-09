@@ -47,6 +47,7 @@ class AgentCopilotController(QObject):
         if not self.tool_registry.has_tool("create_timing"):
             self.tool_registry.register_default_tools()
         self._active_segments: List[Dict[str, Any]] = []
+        self._pre_task_segments: Optional[List[Dict[str, Any]]] = None
         self.reasoning_engine = DynamicReasoningEngine()
         self.llm_client = llm_client or MultiProviderLLMClient()
         self.snapshot_manager = snapshot_manager
@@ -114,6 +115,7 @@ class AgentCopilotController(QObject):
 
         # 1. Check Subtitle Timing Bounds (Micro-editing duration: đầu / cuối)
         is_duration = ("thời lượng" in lower or "mốc" in lower or "đầu" in lower) and any(k in lower for k in ["mốc đầu", "mốc cuối", "đầu câu", "cuối câu", "mốc"])
+        is_duration_action = False
         if is_duration and any(k in lower for k in ["đầu", "cuối"]):
             d_start = 0
             d_end = 0
@@ -143,6 +145,7 @@ class AgentCopilotController(QObject):
             d_end = de_pos if de_pos != 0 else de_neg
 
             if d_start != 0 or d_end != 0 or "thời lượng" in lower:
+                is_duration_action = True
                 steps.append(
                     AgentStep(
                         id=f"step_{len(steps)+1}",
@@ -154,7 +157,7 @@ class AgentCopilotController(QObject):
 
         # 2. Check Subtitle Time Shift (Micro-editing offset: lên / lùi)
         is_shift = any(k in lower for k in ["đưa", "dịch chuyển", "đẩy", "dời", "lùi", "tiến"]) and any(k in lower for k in ["sub", "phụ đề", "đoạn"])
-        if is_shift and not is_duration:
+        if is_shift and not is_duration_action:
             direction = -1 if any(k in lower for k in ["lùi", "xuống", "giảm", "trừ", "sớm"]) else 1
             m_num = re.search(r"(\d+(?:\.\d+)?)\s*(s|giây|ms)", lower)
             if m_num:
@@ -197,17 +200,6 @@ class AgentCopilotController(QObject):
                 min_silence_ms = int(m_sil.group(1))
 
             video_path = self.context_ledger.video_path
-
-            from core.agent.vad_timing_service import generate_vad_timing_segments
-            preview_segments = generate_vad_timing_segments(
-                count=count,
-                video_path=video_path,
-                start_offset_s=start_offset_s,
-                vad_threshold=vad_threshold,
-                min_silence_ms=min_silence_ms,
-                duration_per_block_ms=3000,
-            )
-
             tool_args = {"count": count}
             if video_path:
                 tool_args["video_path"] = video_path
@@ -217,7 +209,7 @@ class AgentCopilotController(QObject):
                 tool_args["vad_threshold"] = vad_threshold
             if min_silence_ms is not None:
                 tool_args["min_silence_ms"] = min_silence_ms
-            tool_args["preview_segments"] = preview_segments
+            tool_args["preview_segments"] = None
 
             steps.append(
                 AgentStep(
@@ -232,7 +224,7 @@ class AgentCopilotController(QObject):
         elif any(w in lower for w in ["quét lại", "rescan", "scan lại"]):
             m_rng = re.search(r"từ\s+câu\s+(\d+)\s+đến\s+(?:câu\s+)?(\d+)", lower)
             m_time = re.search(r"từ\s+(?:giây\s+)?(\d+(?:\.\d+)?)(?:\s*s|\s*giây)?\s+đến\s+(?:giây\s+)?(\d+(?:\.\d+)?)(?:\s*s|\s*giây)?", lower)
-            m_single = re.search(r"câu\s+(?:số\s+|thứ\s+)?(\d+)", lower)
+            m_multi = re.search(r"câu\s+((?:\d+(?:\s*,\s*|\s+và\s+|\s+)?)+)", lower)
 
             if m_rng:
                 raw_a = int(m_rng.group(1))
@@ -261,16 +253,28 @@ class AgentCopilotController(QObject):
                         tool_args={"scope": "time_interval", "start_ms": int(s_sec * 1000), "end_ms": int(e_sec * 1000)},
                     )
                 )
-            elif m_single:
-                s_idx = int(m_single.group(1))
-                steps.append(
-                    AgentStep(
-                        id=f"step_{len(steps)+1}",
-                        title=f"Quét lại phụ đề câu #{s_idx}",
-                        tool_name="rescan_subtitles",
-                        tool_args={"scope": "selected", "segment_indices": [s_idx]},
+            elif m_multi:
+                nums = [int(x) for x in re.findall(r"\d+", m_multi.group(1))]
+                if len(nums) > 1:
+                    indices = sorted(list(set(nums)))
+                    steps.append(
+                        AgentStep(
+                            id=f"step_{len(steps)+1}",
+                            title=f"Quét lại phụ đề các câu: {', '.join(str(x) for x in indices)}",
+                            tool_name="rescan_subtitles",
+                            tool_args={"scope": "selected", "segment_indices": indices},
+                        )
                     )
-                )
+                elif len(nums) == 1:
+                    s_idx = nums[0]
+                    steps.append(
+                        AgentStep(
+                            id=f"step_{len(steps)+1}",
+                            title=f"Quét lại phụ đề câu #{s_idx}",
+                            tool_name="rescan_subtitles",
+                            tool_args={"scope": "selected", "segment_indices": [s_idx]},
+                        )
+                    )
             else:
                 steps.append(
                     AgentStep(
@@ -284,7 +288,7 @@ class AgentCopilotController(QObject):
         # 5. Check ASR Gen Sub (odd sentence, range, or limit)
         elif any(w in lower for w in ["nhận diện", "gen sub", "asr", "whisper", "tạo sub"]):
             m_rng = re.search(r"từ\s+câu\s+(\d+)\s+đến\s+(?:câu\s+)?(\d+)", lower)
-            m_idx = re.search(r"câu\s+(?:số\s+|thứ\s+)?(\d+)", lower)
+            m_multi = re.search(r"câu\s+((?:\d+(?:\s*,\s*|\s+và\s+|\s+)?)+)", lower)
             m_lim = re.search(r"(\d+)\s*câu(?:\s*đầu)?", lower)
 
             args = {"language": self.context_ledger.source_lang or "auto"}
@@ -295,10 +299,16 @@ class AgentCopilotController(QObject):
                 indices = list(range(st_idx, en_idx + 1))
                 args["indices"] = indices
                 title = f"ASR Gen Sub từ câu {st_idx} đến câu {en_idx} (Faster-Whisper)"
-            elif m_idx:
-                idx = int(m_idx.group(1))
-                args["indices"] = [idx]
-                title = f"ASR Gen Sub câu #{idx} (Faster-Whisper)"
+            elif m_multi:
+                nums = [int(x) for x in re.findall(r"\d+", m_multi.group(1))]
+                if len(nums) > 1:
+                    indices = sorted(list(set(nums)))
+                    args["indices"] = indices
+                    title = f"ASR Gen Sub các câu: {', '.join(str(x) for x in indices)} (Faster-Whisper)"
+                elif len(nums) == 1:
+                    idx = nums[0]
+                    args["indices"] = [idx]
+                    title = f"ASR Gen Sub câu #{idx} (Faster-Whisper)"
             elif m_lim:
                 limit = int(m_lim.group(1))
                 args["limit"] = limit
@@ -458,6 +468,8 @@ class AgentCopilotController(QObject):
         self.step_started.emit(idx, step)
 
         # 1. Take transactional pre-task snapshot for rollback
+        import copy
+        self._pre_task_segments = copy.deepcopy(self._active_segments)
         if self.snapshot_manager:
             self._last_pre_task_snapshot_id = self.snapshot_manager.take_snapshot(f"pre_task_{step.id}")
 
@@ -467,9 +479,10 @@ class AgentCopilotController(QObject):
             args["video_path"] = self.context_ledger.video_path
         if step.tool_name in ("adjust_subtitle_bounds", "shift_subtitles", "rescan_subtitles", "run_asr", "apply_subtitle_style") and "segments" not in args:
             if not self._active_segments:
-                from core.agent.agent_tool_registry import create_timing
-                init_res = create_timing(count=5)
-                self._active_segments = init_res.get("segments", [])
+                if step.tool_name != "apply_subtitle_style":
+                    from core.agent.agent_tool_registry import create_timing
+                    init_res = create_timing(count=5)
+                    self._active_segments = init_res.get("segments", [])
             args["segments"] = self._active_segments
 
         exec_res = self.tool_registry.safe_execute_tool(step.tool_name, args)
@@ -519,6 +532,11 @@ class AgentCopilotController(QObject):
             return
 
         self._waiting_task_approval = False
+        curr_step = self.active_plan.current_step()
+        if curr_step and curr_step.status == StepStatus.PENDING:
+            self._run_current_step()
+            return
+
         if self.active_plan.advance_step():
             self._run_current_step()
         else:
@@ -537,6 +555,9 @@ class AgentCopilotController(QObject):
             return
 
         # 1. Rollback to pre-task snapshot
+        import copy
+        if self._pre_task_segments is not None:
+            self._active_segments = copy.deepcopy(self._pre_task_segments)
         if self.snapshot_manager and self._last_pre_task_snapshot_id:
             restored = self.snapshot_manager.restore_snapshot(self._last_pre_task_snapshot_id)
             if restored:

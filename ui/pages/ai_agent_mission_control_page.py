@@ -95,6 +95,10 @@ class AIAgentMissionControlPage(QWidget):
 
     @Slot(str)
     def _on_prompt_submitted(self, prompt: str):
+        import copy
+        edited = self.col_inspect.get_current_segments()
+        if edited:
+            self.controller._active_segments = copy.deepcopy(edited)
         self.controller.submit_prompt(prompt)
 
     @Slot(object)
@@ -147,6 +151,14 @@ class AIAgentMissionControlPage(QWidget):
     def _on_redo_clicked(self):
         self.controller.request_task_revision("Yêu cầu làm lại task này")
         self.col_inspect.step_stepper.set_plan(self.controller.active_plan)
+        if hasattr(self.controller, "_active_segments") and self.controller._active_segments:
+            curr_step = self.controller.active_plan.current_step()
+            self.col_inspect.update_report(
+                self.controller.current_step_index,
+                curr_step,
+                {"segments": self.controller._active_segments, "status": "reverted"},
+            )
+        self.col_inspect.btn_approve_next.setText("✔ Chạy lại Task này")
         self.col_inspect.btn_approve_next.setEnabled(True)
 
     def get_current_segments(self):

@@ -112,7 +112,10 @@ def shift_subtitles(
         raw_en = orig_en + offset_ms
 
         st = max(0, prev_end, raw_st)
-        en = max(st + 200, raw_en)
+        if raw_en <= st + 200:
+            en = st + orig_dur
+        else:
+            en = raw_en
         sc["start"] = ms_to_time_str(st)
         sc["end"] = ms_to_time_str(en)
         prev_end = en
