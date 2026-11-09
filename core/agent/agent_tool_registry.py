@@ -44,30 +44,40 @@ def adjust_subtitle_bounds(
     delta_start_ms: int = 0,
     delta_end_ms: int = 0,
     scope: str = "all",
+    segment_indices: Optional[List[int]] = None,
     segments: Optional[List[Dict[str, Any]]] = None,
+    **kwargs: Any,
 ) -> Dict[str, Any]:
     """Điều chỉnh mốc thời gian bắt đầu và kết thúc của các câu phụ đề theo millisecond."""
     from ui.SubEditor import ms_to_time_str, time_str_to_ms
     segs = segments or []
+    target_indices = set(segment_indices) if segment_indices else None
     modified_segs = []
     for i, s in enumerate(segs):
         sc = dict(s)
+        seg_id = sc.get("id") if isinstance(sc.get("id"), int) else (i + 1)
         orig_st = time_str_to_ms(sc.get("start", 0))
         orig_en = max(orig_st + 200, time_str_to_ms(sc.get("end", 0)))
-        raw_st = max(0, orig_st + delta_start_ms)
-        raw_en = orig_en + delta_end_ms
 
-        # Chốt chặn nghịch đảo biên (Boundary Inversion Guard: raw_st > raw_en - 200)
-        if raw_st > raw_en - 200:
-            mid = max(100, (orig_st + orig_en) // 2)
-            st = max(0, mid - 100)
-            en = st + 200
+        if target_indices is None or seg_id in target_indices:
+            raw_st = max(0, orig_st + delta_start_ms)
+            raw_en = orig_en + delta_end_ms
+
+            # Chốt chặn nghịch đảo biên (Boundary Inversion Guard: raw_st > raw_en - 200)
+            if raw_st > raw_en - 200:
+                mid = max(100, (orig_st + orig_en) // 2)
+                st = max(0, mid - 100)
+                en = st + 200
+            else:
+                st = raw_st
+                en = max(st + 200, raw_en)
+
+            sc["start"] = ms_to_time_str(st)
+            sc["end"] = ms_to_time_str(en)
         else:
-            st = raw_st
-            en = max(st + 200, raw_en)
+            sc["start"] = ms_to_time_str(orig_st)
+            sc["end"] = ms_to_time_str(orig_en)
 
-        sc["start"] = ms_to_time_str(st)
-        sc["end"] = ms_to_time_str(en)
         modified_segs.append(sc)
 
     # Auto resolve overlaps (P0 Overlap Prevention)
@@ -89,6 +99,7 @@ def adjust_subtitle_bounds(
         "count": len(modified_segs),
         "delta_start_ms": delta_start_ms,
         "delta_end_ms": delta_end_ms,
+        "segment_indices": segment_indices,
         "status": "ok",
     }
 
@@ -96,32 +107,40 @@ def adjust_subtitle_bounds(
 def shift_subtitles(
     offset_ms: int = 0,
     scope: str = "all",
+    segment_indices: Optional[List[int]] = None,
     segments: Optional[List[Dict[str, Any]]] = None,
+    **kwargs: Any,
 ) -> Dict[str, Any]:
     """Dịch chuyển toàn bộ phụ đề tiến hoặc lùi theo millisecond."""
     from ui.SubEditor import ms_to_time_str, time_str_to_ms
     segs = segments or []
+    target_indices = set(segment_indices) if segment_indices else None
     prev_end = 0
     shifted = []
-    for s in segs:
+    for i, s in enumerate(segs):
         sc = dict(s)
+        seg_id = sc.get("id") if isinstance(sc.get("id"), int) else (i + 1)
         orig_st = time_str_to_ms(sc.get("start", 0))
         orig_en = max(orig_st + 200, time_str_to_ms(sc.get("end", 0)))
         orig_dur = max(200, orig_en - orig_st)
-        raw_st = orig_st + offset_ms
-        raw_en = orig_en + offset_ms
 
-        st = max(0, prev_end, raw_st)
-        en = st + orig_dur
-        sc["start"] = ms_to_time_str(st)
-        sc["end"] = ms_to_time_str(en)
-        prev_end = en
+        if target_indices is None or seg_id in target_indices:
+            raw_st = orig_st + offset_ms
+            st = max(0, prev_end, raw_st)
+            en = st + orig_dur
+            sc["start"] = ms_to_time_str(st)
+            sc["end"] = ms_to_time_str(en)
+            prev_end = en
+        else:
+            prev_end = orig_en
+
         shifted.append(sc)
 
     return {
         "segments": shifted,
         "count": len(shifted),
         "offset_ms": offset_ms,
+        "segment_indices": segment_indices,
         "status": "ok",
     }
 
@@ -178,14 +197,31 @@ def rescan_subtitles(
     **kwargs: Any,
 ) -> Dict[str, Any]:
     """Quét lại (rescan) âm thanh cho các đoạn phụ đề được chỉ định."""
+    from ui.SubEditor import time_str_to_ms
     segs = segments or []
     indices = segment_indices or []
     rescanned = []
-    for s in segs:
+    for i, s in enumerate(segs):
         sc = dict(s)
-        if scope == "all" or sc.get("id") in indices:
-            sc["text"] = f"{sc.get('text', '')} (quét lại)".strip()
+        seg_id = sc.get("id") if isinstance(sc.get("id"), int) else (i + 1)
+        should_rescan = False
+        if scope == "all":
+            should_rescan = True
+        elif scope == "time_interval":
+            if start_ms is not None and end_ms is not None:
+                st = time_str_to_ms(sc.get("start", 0))
+                en = time_str_to_ms(sc.get("end", 0))
+                if en > start_ms and st < end_ms:
+                    should_rescan = True
+        elif seg_id in indices:
+            should_rescan = True
+
+        if should_rescan:
+            txt = sc.get("text", "")
+            if not txt.endswith("(quét lại)"):
+                sc["text"] = f"{txt} (quét lại)".strip()
         rescanned.append(sc)
+
     return {
         "status": "ok",
         "scope": scope,
@@ -205,25 +241,44 @@ def run_asr(
     **kwargs: Any,
 ) -> Dict[str, Any]:
     """Nhận diện giọng nói (ASR) với hỗ trợ giới hạn số câu hoặc các câu chỉ định."""
+    from ui.SubEditor import ms_to_time_str
     segs = segments or []
     if not segs:
-        from ui.SubEditor import ms_to_time_str
         count = limit or (max(indices) if indices else 5)
+        generated = []
         for i in range(count):
             idx = i + 1
             if indices and idx not in indices:
                 continue
-            segs.append({
+            generated.append({
                 "id": idx,
                 "start": ms_to_time_str(i * 3000 + 500),
                 "end": ms_to_time_str((i + 1) * 3000),
                 "text": f"Nội dung nhận diện câu #{idx}",
                 "translation": f"Recognized content #{idx}",
             })
-    elif indices:
-        segs = [s for s in segs if s.get("id") in indices]
-    elif limit:
-        segs = segs[:limit]
+        segs = generated
+    else:
+        modified_segs = []
+        target_indices = set(indices) if indices else None
+        for i, s in enumerate(segs):
+            sc = dict(s)
+            seg_id = sc.get("id") if isinstance(sc.get("id"), int) else (i + 1)
+            is_target = False
+            if target_indices is not None:
+                if seg_id in target_indices:
+                    is_target = True
+            elif limit is not None:
+                if i < limit:
+                    is_target = True
+            else:
+                is_target = True
+
+            if is_target:
+                sc["text"] = f"Nội dung nhận diện câu #{seg_id} (Whisper)"
+                sc["translation"] = f"Recognized content #{seg_id}"
+            modified_segs.append(sc)
+        segs = modified_segs
 
     return {
         "status": "ok",
@@ -232,6 +287,42 @@ def run_asr(
         "indices": indices,
         "segments": segs,
         "count": len(segs),
+    }
+
+
+def translate_subtitles(
+    target_lang: str = "vi",
+    segments: Optional[List[Dict[str, Any]]] = None,
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    """Dịch phụ đề sang ngôn ngữ đích trong CAT Studio."""
+    segs = segments or []
+    translated = []
+    for s in segs:
+        sc = dict(s)
+        sc["translation"] = f"[{target_lang.upper()}] {sc.get('text', '')}".strip()
+        translated.append(sc)
+    return {
+        "status": "ok",
+        "target_lang": target_lang,
+        "segments": translated,
+        "count": len(translated),
+    }
+
+
+def render_hardsub(
+    resolution: str = "1080p",
+    segments: Optional[List[Dict[str, Any]]] = None,
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    """Cấu hình và kết xuất video Hardsub hoàn chỉnh."""
+    segs = segments or []
+    return {
+        "status": "ok",
+        "resolution": resolution,
+        "segments": segs,
+        "count": len(segs),
+        "message": f"Cấu hình xuất video Hardsub {resolution} đã sẵn sàng",
     }
 
 
@@ -334,4 +425,6 @@ class AgentToolRegistry:
         self.register_tool("apply_subtitle_style", apply_subtitle_style, description="Tinh chỉnh định dạng phụ đề (Font, Size, Màu chữ, Viền)")
         self.register_tool("rescan_subtitles", rescan_subtitles, description="Quét lại âm thanh phụ đề theo câu hoặc thời gian")
         self.register_tool("run_asr", run_asr, description="Nhận diện giọng nói với Whisper")
+        self.register_tool("translate_subtitles", translate_subtitles, description="Dịch phụ đề sang ngôn ngữ đích trong CAT Studio")
+        self.register_tool("render_hardsub", render_hardsub, description="Kết xuất video Hardsub MP4")
         self.register_tool("process_general_task", process_general_task, description="Xử lý tác vụ tổng quát an toàn")

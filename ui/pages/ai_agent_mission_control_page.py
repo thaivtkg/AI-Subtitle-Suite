@@ -166,6 +166,8 @@ class AIAgentMissionControlPage(QWidget):
 
     @Slot()
     def _on_redo_clicked(self):
+        if self.controller.is_waiting_plan_approval():
+            return
         import copy
         self.controller.request_task_revision("Yêu cầu làm lại task này")
         self.col_inspect.step_stepper.set_plan(self.controller.active_plan)

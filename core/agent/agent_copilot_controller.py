@@ -115,7 +115,7 @@ class AgentCopilotController(QObject):
         steps: List[AgentStep] = []
 
         # 1. Check Subtitle Timing Bounds (Micro-editing duration: đầu / cuối)
-        is_duration = ("thời lượng" in lower or "mốc" in lower or "đầu" in lower) and any(k in lower for k in ["mốc đầu", "mốc cuối", "đầu câu", "cuối câu", "mốc"])
+        is_duration = ("thời lượng" in lower or "mốc" in lower or "đầu" in lower or "cuối" in lower) and any(k in lower for k in ["mốc đầu", "mốc cuối", "đầu câu", "cuối câu", "mốc", "đầu", "cuối"])
         is_duration_action = False
         if is_duration and any(k in lower for k in ["đầu", "cuối"]):
             d_start = 0
@@ -124,10 +124,12 @@ class AgentCopilotController(QObject):
             def _parse_delta(text: str, pos_key: str, dir_mult: int, words: list) -> int:
                 w_pat = "|".join(words)
                 # Form 1: (tăng|giảm) [val] [unit] (ở|cho)? (mốc đầu|đầu câu)
-                p1 = rf"(?:{w_pat})\s+(?:thêm\s+)?(\d+(?:\.\d+)?)\s*(s|giây|ms)?\s*(?:ở|cho)?\s*(?:mốc\s*{pos_key}|{pos_key}\s*câu|{pos_key})"
+                p1 = rf"(?:{w_pat})\s+(?:thêm\s+)?([+-]?\d+(?:\.\d+)?)\s*(s|giây|ms)?\s*(?:ở|cho)?\s*(?:mốc\s*{pos_key}|{pos_key}\s*câu|{pos_key})"
                 # Form 2: (mốc đầu|đầu câu) (tăng|giảm) (thêm)? [val] [unit]
-                p2 = rf"(?:mốc\s*{pos_key}|{pos_key}\s*câu|{pos_key})\s*(?:{w_pat})\s*(?:thêm\s+)?(\d+(?:\.\d+)?)\s*(s|giây|ms)?"
-                m = re.search(p1, text) or re.search(p2, text)
+                p2 = rf"(?:mốc\s*{pos_key}|{pos_key}\s*câu|{pos_key})\s*(?:{w_pat})\s*(?:thêm\s+)?([+-]?\d+(?:\.\d+)?)\s*(s|giây|ms)?"
+                # Form 3 (Vietnamese natural order): (giảm|tăng) [mốc đầu|mốc cuối] (câu X)? (thêm|đi)? [val] [unit]
+                p3 = rf"(?:{w_pat})\s+(?:ở\s+|cho\s+)?(?:mốc\s*{pos_key}|{pos_key}\s*câu|{pos_key})(?:\s+câu\s+(?:số\s+|thứ\s+)?\d+)?\s*(?:thêm\s+|đi\s+|bớt\s+|lên\s+|xuống\s+)?([+-]?\d+(?:\.\d+)?)\s*(s|giây|ms)?"
+                m = re.search(p1, text) or re.search(p2, text) or re.search(p3, text)
                 if m:
                     val_str, unit = m.group(1), m.group(2)
                     val = float(val_str)
@@ -147,31 +149,63 @@ class AgentCopilotController(QObject):
 
             if d_start != 0 or d_end != 0 or "thời lượng" in lower:
                 is_duration_action = True
+                m_target = re.search(r"câu\s+(?:số\s+|thứ\s+)?(\d+)", lower)
+                bound_indices = [int(m_target.group(1))] if m_target else None
+                bound_args: Dict[str, Any] = {
+                    "delta_start_ms": d_start,
+                    "delta_end_ms": d_end,
+                    "scope": "selected" if bound_indices else "all",
+                }
+                if bound_indices:
+                    bound_args["segment_indices"] = bound_indices
+                    title = f"Điều chỉnh thời lượng câu #{bound_indices[0]} (Đầu: {d_start:+d}ms, Cuối: {d_end:+d}ms)"
+                else:
+                    title = f"Điều chỉnh thời lượng phụ đề (Đầu: {d_start:+d}ms, Cuối: {d_end:+d}ms)"
+
                 steps.append(
                     AgentStep(
                         id=f"step_{len(steps)+1}",
-                        title=f"Điều chỉnh thời lượng phụ đề (Đầu: {d_start:+d}ms, Cuối: {d_end:+d}ms)",
+                        title=title,
                         tool_name="adjust_subtitle_bounds",
-                        tool_args={"delta_start_ms": d_start, "delta_end_ms": d_end, "scope": "all"},
+                        tool_args=bound_args,
                     )
                 )
 
         # 2. Check Subtitle Time Shift (Micro-editing offset: lên / lùi)
-        is_shift = any(k in lower for k in ["đưa", "dịch chuyển", "đẩy", "dời", "lùi", "tiến"]) and any(k in lower for k in ["sub", "phụ đề", "đoạn"])
+        is_shift = (
+            any(k in lower for k in ["đưa", "dịch chuyển", "đẩy", "dời", "lùi", "tiến"])
+            or ("dịch" in lower and any(u in lower for u in ["s", "giây", "ms"]))
+        ) and any(k in lower for k in ["sub", "phụ đề", "đoạn", "câu", "timing"])
         if is_shift and not is_duration_action:
             direction = -1 if any(k in lower for k in ["lùi", "xuống", "giảm", "trừ", "sớm"]) else 1
-            m_num = re.search(r"(\d+(?:\.\d+)?)\s*(s|giây|ms)", lower)
+            m_num = re.search(r"([+-]?\d+(?:\.\d+)?)\s*(s|giây|ms)", lower)
             if m_num:
                 val_s, unit = m_num.groups()
                 val = float(val_s)
+                if val < 0:
+                    direction = -1
+                    val = abs(val)
                 ms = int(val * 1000) if unit in ("s", "giây") else int(val)
                 offset = ms * direction
+
+                m_target = re.search(r"câu\s+(?:số\s+|thứ\s+)?(\d+)", lower)
+                shift_indices = [int(m_target.group(1))] if m_target else None
+                shift_args: Dict[str, Any] = {
+                    "offset_ms": offset,
+                    "scope": "selected" if shift_indices else "all",
+                }
+                if shift_indices:
+                    shift_args["segment_indices"] = shift_indices
+                    title = f"Dịch chuyển câu #{shift_indices[0]} ({offset:+d}ms)"
+                else:
+                    title = f"Dịch chuyển thời gian phụ đề ({offset:+d}ms)"
+
                 steps.append(
                     AgentStep(
                         id=f"step_{len(steps)+1}",
-                        title=f"Dịch chuyển thời gian phụ đề ({offset:+d}ms)",
+                        title=title,
                         tool_name="shift_subtitles",
-                        tool_args={"offset_ms": offset, "scope": "all"},
+                        tool_args=shift_args,
                     )
                 )
 
@@ -326,7 +360,15 @@ class AgentCopilotController(QObject):
                 )
             )
 
-        if any(w in lower for w in ["dịch", "translate", "cat", "tiếng việt", "tiếng hàn", "tiếng anh"]):
+        is_trans = False
+        if any(w in lower for w in ["translate", "cat", "tiếng việt", "tiếng hàn", "tiếng anh", "tiếng nhật", "sang tiếng"]):
+            is_trans = True
+        elif "dịch" in lower and not is_shift and not any(u in lower for u in ["ms", "s", "giây"]):
+            is_trans = True
+        elif ("dịch phụ đề" in lower or "dịch sub" in lower) and not any(u in lower for u in ["ms", "s", "giây"]):
+            is_trans = True
+
+        if is_trans:
             target = "vi"
             if "hàn" in lower:
                 target = "ko"
@@ -478,7 +520,7 @@ class AgentCopilotController(QObject):
         args = dict(step.tool_args)
         if step.tool_name == "create_timing" and "video_path" not in args and self.context_ledger.video_path:
             args["video_path"] = self.context_ledger.video_path
-        if step.tool_name in ("adjust_subtitle_bounds", "shift_subtitles", "rescan_subtitles", "run_asr", "apply_subtitle_style") and "segments" not in args:
+        if step.tool_name in ("adjust_subtitle_bounds", "shift_subtitles", "rescan_subtitles", "run_asr", "apply_subtitle_style", "translate_subtitles", "render_hardsub") and "segments" not in args:
             if not self._active_segments:
                 if step.tool_name != "apply_subtitle_style":
                     from core.agent.agent_tool_registry import create_timing
@@ -494,9 +536,6 @@ class AgentCopilotController(QObject):
             step.result_summary = f"Hoàn thành {step.title}"
             res_dict = exec_res.get("result", {})
             if isinstance(res_dict, dict) and "segments" in res_dict:
-                limit = args.get("limit")
-                if limit and isinstance(res_dict["segments"], list):
-                    res_dict["segments"] = res_dict["segments"][:limit]
                 self._active_segments = res_dict["segments"]
 
             self._last_step_result = res_dict
@@ -552,7 +591,7 @@ class AgentCopilotController(QObject):
             self.plan_completed.emit(self.active_plan)
 
     def request_task_revision(self, critique_text: str = "") -> None:
-        if not self.active_plan:
+        if not self.active_plan or self._waiting_plan_approval:
             return
 
         # 1. Rollback to pre-task snapshot

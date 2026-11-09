@@ -377,6 +377,7 @@ class AgentReportInspectorWidget(QWidget):
             }
         """)
         self.btn_redo_task.clicked.connect(self._on_redo_clicked)
+        self.btn_redo_task.setEnabled(False)
         ab_layout.addWidget(self.btn_redo_task)
 
         self.btn_approve_next = QPushButton("✔ Duyệt & Chạy bước tiếp", action_bar)
@@ -464,12 +465,14 @@ class AgentReportInspectorWidget(QWidget):
         self.inspection_card.render_plan_briefing(plan)
         self.btn_approve_next.setText("✔ Duyệt Kế Hoạch & Bắt Đầu")
         self.btn_approve_next.setEnabled(True)
+        self.btn_redo_task.setEnabled(False)
 
     def update_report(self, step_idx: int, step: AgentStep, result: Dict[str, Any]):
         self.lbl_report_title.setText(f"🔍 BÁO CÁO KẾT QUẢ TASK #{step_idx + 1}")
         self.set_badge_status("waiting")
         self.inspection_card.render_result(step.title, result)
         self.btn_approve_next.setEnabled(True)
+        self.btn_redo_task.setEnabled(True)
 
     def show_error(self, step_idx: int, step: AgentStep, error: str):
         self.lbl_report_title.setText(f"❌ TASK #{step_idx + 1} THẤT BẠI")
