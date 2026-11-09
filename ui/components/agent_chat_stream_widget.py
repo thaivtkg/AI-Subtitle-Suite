@@ -1,6 +1,6 @@
 import time
 from typing import Optional, List
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -90,42 +90,45 @@ class ProjectMemoryBar(QWidget):
 
 
 class ChatBubble(QWidget):
-    """Individual chat bubble widget for User or Assistant."""
+    """Individual chat bubble widget for User or Assistant with dynamic height & zero truncation."""
 
     def __init__(self, message: ChatMessage, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._message = message
-        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 2, 0, 2)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        h_layout = QHBoxLayout(self)
+        h_layout.setContentsMargins(0, 2, 0, 2)
+        h_layout.setSpacing(0)
 
-        lbl = QLabel(self)
-        lbl.setTextFormat(Qt.TextFormat.MarkdownText)
-        lbl.setText(message.content)
-        lbl.setWordWrap(True)
-        lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        lbl.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.MinimumExpanding)
+        self.lbl = QLabel(self)
+        self.lbl.setTextFormat(Qt.TextFormat.MarkdownText)
+        self.lbl.setText(message.content)
+        self.lbl.setWordWrap(True)
+        self.lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
 
         is_user = message.role == "user"
         if is_user:
-            lbl.setStyleSheet("""
+            self.lbl.setStyleSheet("""
                 background: #0284c7;
                 color: #ffffff;
-                padding: 6px 10px;
+                padding: 8px 12px;
                 border-radius: 8px 8px 0 8px;
                 font-size: 11px;
             """)
-            layout.addWidget(lbl, 0, Qt.AlignmentFlag.AlignRight)
+            h_layout.addStretch(1)
+            h_layout.addWidget(self.lbl, 4)
         else:
-            lbl.setStyleSheet("""
+            self.lbl.setStyleSheet("""
                 background: #1e293b;
                 color: #e2e8f0;
-                padding: 6px 10px;
+                padding: 8px 12px;
                 border-radius: 8px 8px 8px 0;
                 border: 1px solid #334155;
                 font-size: 11px;
             """)
-            layout.addWidget(lbl, 0, Qt.AlignmentFlag.AlignLeft)
+            h_layout.addWidget(self.lbl, 4)
+            h_layout.addStretch(1)
 
 
 class AgentChatStreamWidget(QWidget):
@@ -249,10 +252,14 @@ class AgentChatStreamWidget(QWidget):
         bubble = ChatBubble(message, self.chat_container)
         # Insert before stretch
         self.chat_layout.insertWidget(self.chat_layout.count() - 1, bubble)
+        QTimer.singleShot(50, self._scroll_to_bottom)
+
+    def _scroll_to_bottom(self):
         try:
-            vsb = self.scroll_area.verticalScrollBar()
-            if vsb:
-                vsb.setValue(vsb.maximum())
+            if hasattr(self, "scroll_area") and self.scroll_area:
+                vsb = self.scroll_area.verticalScrollBar()
+                if vsb:
+                    vsb.setValue(vsb.maximum())
         except RuntimeError:
             pass
 
