@@ -96,9 +96,14 @@ class AIAgentMissionControlPage(QWidget):
     @Slot(str)
     def _on_prompt_submitted(self, prompt: str):
         import copy
-        edited = self.col_inspect.get_current_segments()
-        if edited:
-            self.controller._active_segments = copy.deepcopy(edited)
+        if hasattr(self, "col_inspect") and self.col_inspect:
+            edited = self.col_inspect.get_current_segments()
+            if edited:
+                self.controller._active_segments = copy.deepcopy(edited)
+                win_getter = getattr(self, "window", None)
+                parent_win = win_getter() if callable(win_getter) else None
+                if parent_win and hasattr(parent_win, "_sync_from_ai_agent_page"):
+                    parent_win._sync_from_ai_agent_page()
         self.controller.submit_prompt(prompt)
 
     @Slot(object)
@@ -138,10 +143,22 @@ class AIAgentMissionControlPage(QWidget):
 
     @Slot()
     def _on_approve_clicked(self):
+        from core.agent.models import StepStatus
         if self.controller.is_waiting_plan_approval():
             preserved = self.col_inspect.get_current_segments()
-            self.controller.approve_plan(preserved_segments=preserved)
-        elif self.controller.is_waiting_task_approval():
+            self.controller.approve_plan(preserved_segments=preserved if preserved else None)
+            return
+
+        curr_step = self.controller.active_plan.current_step() if self.controller.active_plan else None
+        if curr_step and curr_step.status == StepStatus.PENDING:
+            if hasattr(self.col_inspect.inspection_card, "_rows") and self.col_inspect.inspection_card._rows:
+                preserved = self.col_inspect.get_current_segments()
+                if preserved:
+                    self.controller._active_segments = preserved
+            self.controller.approve_next_step()
+            return
+
+        if self.controller.is_waiting_task_approval():
             preserved = self.col_inspect.get_current_segments()
             if preserved:
                 self.controller._active_segments = preserved
@@ -149,14 +166,17 @@ class AIAgentMissionControlPage(QWidget):
 
     @Slot()
     def _on_redo_clicked(self):
+        import copy
         self.controller.request_task_revision("Yêu cầu làm lại task này")
         self.col_inspect.step_stepper.set_plan(self.controller.active_plan)
-        if hasattr(self.controller, "_active_segments") and self.controller._active_segments:
-            curr_step = self.controller.active_plan.current_step()
+        curr_step = self.controller.active_plan.current_step() if self.controller.active_plan else None
+        reverted_segs = copy.deepcopy(self.controller._active_segments)
+        self.col_inspect.inspection_card.current_segments = reverted_segs
+        if curr_step:
             self.col_inspect.update_report(
                 self.controller.current_step_index,
                 curr_step,
-                {"segments": self.controller._active_segments, "status": "reverted"},
+                {"segments": reverted_segs, "status": "reverted"},
             )
         self.col_inspect.btn_approve_next.setText("✔ Chạy lại Task này")
         self.col_inspect.btn_approve_next.setEnabled(True)

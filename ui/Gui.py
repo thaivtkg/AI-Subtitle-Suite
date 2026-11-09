@@ -1329,6 +1329,7 @@ class MainWindow(QMainWindow):
         self.page_ai_agent = AIAgentMissionControlPage(parent=self)
         if hasattr(self.page_ai_agent, "controller") and self.page_ai_agent.controller:
             self.page_ai_agent.controller.step_completed.connect(self._on_agent_step_completed)
+            self.page_ai_agent.controller.step_reverted.connect(self._on_agent_step_reverted)
         self.stack.addWidget(self.page_ai_agent)
 
         right_layout.addWidget(self.stack, stretch=1)
@@ -2806,11 +2807,15 @@ class MainWindow(QMainWindow):
         # Cầu nối Dữ liệu 2 chiều (Bi-directional Data Sync Bridge): Khi chuyển sang trang AI Agent (tab 9)
         if original_index == 9:
             if hasattr(self, "page_ai_agent") and self.page_ai_agent and hasattr(self, "sub_editor"):
-                if hasattr(self.sub_editor, "all_segments") and self.sub_editor.all_segments:
+                if hasattr(self.sub_editor, "all_segments") and self.sub_editor.all_segments is not None:
                     import copy
-                    self.page_ai_agent.controller._active_segments = copy.deepcopy(self.sub_editor.all_segments)
-                if hasattr(self, "video_player") and hasattr(self.video_player, "video_path") and self.video_player.video_path:
-                    self.page_ai_agent.controller.context_ledger.video_path = self.video_player.video_path
+                    synced = copy.deepcopy(self.sub_editor.all_segments)
+                    self.page_ai_agent.controller._active_segments = synced
+                    if hasattr(self.page_ai_agent, "col_inspect") and hasattr(self.page_ai_agent.col_inspect, "inspection_card"):
+                        if not self.page_ai_agent.controller.is_waiting_task_approval():
+                            self.page_ai_agent.col_inspect.inspection_card.current_segments = copy.deepcopy(synced)
+            if hasattr(self, "video_player") and getattr(self.video_player, "video_path", None):
+                self._sync_agent_video_context(self.video_player.video_path)
 
         # Cầu nối Dữ liệu (Data Sync Bridge): Khi rời khỏi trang Dịch thuật
         if prev_nav_index == 8 and original_index != 8:
@@ -3445,6 +3450,16 @@ class MainWindow(QMainWindow):
                     self.sub_editor.render_page()
                 if hasattr(self, "video_player") and hasattr(self.video_player, "refresh_current_subtitle"):
                     self.video_player.refresh_current_subtitle()
+
+    @Slot(int, object, list)
+    def _on_agent_step_reverted(self, step_idx: int, step: object, reverted_segments: list):
+        if hasattr(self, "sub_editor"):
+            import copy
+            self.sub_editor.all_segments = copy.deepcopy(reverted_segments)
+            if hasattr(self.sub_editor, "render_page"):
+                self.sub_editor.render_page()
+            if hasattr(self, "video_player") and hasattr(self.video_player, "refresh_current_subtitle"):
+                self.video_player.refresh_current_subtitle()
 
     @Slot(int, object, dict)
     def _on_agent_step_completed(self, step_idx: int, step: object, result: dict):

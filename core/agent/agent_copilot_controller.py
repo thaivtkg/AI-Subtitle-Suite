@@ -33,6 +33,7 @@ class AgentCopilotController(QObject):
     plan_completed = Signal(object)  # (AgentTaskPlan)
     chat_message_added = Signal(object)  # (ChatMessage)
     notification_requested = Signal(str)  # (notification_text)
+    step_reverted = Signal(int, object, list)  # (step_index, AgentStep, reverted_segments)
 
     def __init__(
         self,
@@ -224,7 +225,7 @@ class AgentCopilotController(QObject):
         elif any(w in lower for w in ["quét lại", "rescan", "scan lại"]):
             m_rng = re.search(r"từ\s+câu\s+(\d+)\s+đến\s+(?:câu\s+)?(\d+)", lower)
             m_time = re.search(r"từ\s+(?:giây\s+)?(\d+(?:\.\d+)?)(?:\s*s|\s*giây)?\s+đến\s+(?:giây\s+)?(\d+(?:\.\d+)?)(?:\s*s|\s*giây)?", lower)
-            m_multi = re.search(r"câu\s+((?:\d+(?:\s*,\s*|\s+và\s+|\s+)?)+)", lower)
+            m_multi = re.search(r"câu\s+(?:số\s+|thứ\s+)?((?:\d+(?:\s*,\s*|\s+và\s+|\s+hoặc\s+|\s+)?)+)", lower)
 
             if m_rng:
                 raw_a = int(m_rng.group(1))
@@ -288,7 +289,7 @@ class AgentCopilotController(QObject):
         # 5. Check ASR Gen Sub (odd sentence, range, or limit)
         elif any(w in lower for w in ["nhận diện", "gen sub", "asr", "whisper", "tạo sub"]):
             m_rng = re.search(r"từ\s+câu\s+(\d+)\s+đến\s+(?:câu\s+)?(\d+)", lower)
-            m_multi = re.search(r"câu\s+((?:\d+(?:\s*,\s*|\s+và\s+|\s+)?)+)", lower)
+            m_multi = re.search(r"câu\s+(?:số\s+|thứ\s+)?((?:\d+(?:\s*,\s*|\s+và\s+|\s+hoặc\s+|\s+)?)+)", lower)
             m_lim = re.search(r"(\d+)\s*câu(?:\s*đầu)?", lower)
 
             args = {"language": self.context_ledger.source_lang or "auto"}
@@ -581,3 +582,5 @@ class AgentCopilotController(QObject):
         self.chat_history.append(rollback_msg)
         self.chat_message_added.emit(rollback_msg)
         self._waiting_task_approval = True
+        if step:
+            self.step_reverted.emit(self.current_step_index, step, copy.deepcopy(self._active_segments))

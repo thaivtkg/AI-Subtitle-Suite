@@ -138,13 +138,13 @@ def test_tool_shift_subtitles_non_negative_clamp_and_independent_subsequent_segm
         {"id": 1, "start": "00:00:00,300", "end": "00:00:02,000", "text": "Segment 1"},
         {"id": 2, "start": "00:00:03,000", "end": "00:00:05,000", "text": "Segment 2"},
     ]
-    # Shift backwards -500ms:
-    # Seg 1: start 300 - 500 clamped to 0ms; end 2000 - 500 = 1500ms
+    # Shift backwards -500ms (Rigid Translation Invariant):
+    # Seg 1: start 300 - 500 clamped to 0ms; dur = 1700ms -> end = 0 + 1700 = 1700ms
     # Seg 2: start 3000 - 500 = 2500ms; end 5000 - 500 = 4500ms
     res = shift_subtitles(offset_ms=-500, segments=initial_segs)
     assert res["status"] == "ok"
     shifted = res["segments"]
     assert shifted[0]["start"] == "00:00:00,000"
-    assert shifted[0]["end"] == "00:00:01,500"
+    assert shifted[0]["end"] == "00:00:01,700"
     assert shifted[1]["start"] == "00:00:02,500"
     assert shifted[1]["end"] == "00:00:04,500"
