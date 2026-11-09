@@ -1,6 +1,6 @@
 import copy
 from typing import Optional, Dict, Any, List
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QEvent
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -21,6 +21,7 @@ class EditableSegmentRow(QWidget):
     """Row displaying a segment with editable text."""
 
     text_changed = Signal(int, str)
+    focused = Signal(int)
 
     def __init__(self, index: int, time_str: str, text: str, is_active: bool = False, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -29,14 +30,7 @@ class EditableSegmentRow(QWidget):
         layout.setContentsMargins(6, 4, 6, 4)
         layout.setSpacing(6)
 
-        border_style = "border-left: 2px solid #38bdf8;" if is_active else ""
-        self.setStyleSheet(f"""
-            QWidget {{
-                background: #1e293b;
-                border-radius: 3px;
-                {border_style}
-            }}
-        """)
+        self.set_active(is_active)
 
         # Label index & time
         self.lbl_info = QLabel(f"<strong>#{index:02d}</strong> [{time_str}]", self)
@@ -59,7 +53,23 @@ class EditableSegmentRow(QWidget):
             }
         """)
         self.editor.textChanged.connect(lambda t: self.text_changed.emit(self.index, t))
+        self.editor.installEventFilter(self)
         layout.addWidget(self.editor, 1)
+
+    def set_active(self, is_active: bool):
+        border_style = "border-left: 2px solid #38bdf8;" if is_active else "border-left: 2px solid transparent;"
+        self.setStyleSheet(f"""
+            QWidget {{
+                background: #1e293b;
+                border-radius: 3px;
+                {border_style}
+            }}
+        """)
+
+    def eventFilter(self, obj, event):
+        if obj == self.editor and event.type() == QEvent.Type.FocusIn:
+            self.focused.emit(self.index)
+        return super().eventFilter(obj, event)
 
 
 class EditableResultReportWidget(QScrollArea):
@@ -87,6 +97,7 @@ class EditableResultReportWidget(QScrollArea):
         self.layout.setSpacing(4)
         self.setWidget(self.container)
         self.current_segments = []
+        self._rows: List[EditableSegmentRow] = []
         self.show_placeholder()
 
     def show_placeholder(self):
@@ -98,10 +109,14 @@ class EditableResultReportWidget(QScrollArea):
         self.layout.addStretch()
 
     def clear(self):
+        self._rows.clear()
         while self.layout.count() > 0:
             item = self.layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+            w = item.widget()
+            if w:
+                w.hide()
+                w.setParent(None)
+                w.deleteLater()
 
     def render_result(self, step_title: str, result_dict: Dict[str, Any]):
         self.clear()
@@ -122,8 +137,10 @@ class EditableResultReportWidget(QScrollArea):
                     t_out = f"{int(t_out)//60:02d}:{int(t_out)%60:02d}.{int((t_out*1000)%1000):03d}"
                 time_str = f"{t_in} → {t_out}"
                 text = seg.get("text", "")
-                row = EditableSegmentRow(i + 1, time_str, text, is_active=(i == 1), parent=self.container)
+                row = EditableSegmentRow(i + 1, time_str, text, is_active=False, parent=self.container)
                 row.text_changed.connect(self._on_segment_text_changed)
+                row.focused.connect(self._on_row_focused)
+                self._rows.append(row)
                 self.layout.addWidget(row)
         else:
             # Render general report fields
@@ -144,6 +161,10 @@ class EditableResultReportWidget(QScrollArea):
             self.layout.addWidget(text_view)
 
         self.layout.addStretch()
+
+    def _on_row_focused(self, index: int):
+        for r in self._rows:
+            r.set_active(r.index == index)
 
     def _on_segment_text_changed(self, idx: int, new_text: str):
         if 0 <= idx - 1 < len(self.current_segments):
