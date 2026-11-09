@@ -52,8 +52,20 @@ def adjust_subtitle_bounds(
     modified_segs = []
     for i, s in enumerate(segs):
         sc = dict(s)
-        st = max(0, time_str_to_ms(sc.get("start", 0)) + delta_start_ms)
-        en = max(st + 200, time_str_to_ms(sc.get("end", 0)) + delta_end_ms)
+        orig_st = time_str_to_ms(sc.get("start", 0))
+        orig_en = max(orig_st + 200, time_str_to_ms(sc.get("end", 0)))
+        raw_st = max(0, orig_st + delta_start_ms)
+        raw_en = orig_en + delta_end_ms
+
+        # Chốt chặn nghịch đảo biên (Boundary Inversion Guard: raw_st > raw_en - 200)
+        if raw_st > raw_en - 200:
+            mid = max(100, (orig_st + orig_en) // 2)
+            st = max(0, mid - 100)
+            en = st + 200
+        else:
+            st = raw_st
+            en = max(st + 200, raw_en)
+
         sc["start"] = ms_to_time_str(st)
         sc["end"] = ms_to_time_str(en)
         modified_segs.append(sc)
@@ -89,13 +101,21 @@ def shift_subtitles(
     """Dịch chuyển toàn bộ phụ đề tiến hoặc lùi theo millisecond."""
     from ui.SubEditor import ms_to_time_str, time_str_to_ms
     segs = segments or []
+    prev_end = 0
     shifted = []
     for s in segs:
         sc = dict(s)
-        st = max(0, time_str_to_ms(sc.get("start", 0)) + offset_ms)
-        en = max(st + 200, time_str_to_ms(sc.get("end", 0)) + offset_ms)
+        orig_st = time_str_to_ms(sc.get("start", 0))
+        orig_en = max(orig_st + 200, time_str_to_ms(sc.get("end", 0)))
+        orig_dur = max(200, orig_en - orig_st)
+        raw_st = orig_st + offset_ms
+        raw_en = orig_en + offset_ms
+
+        st = max(0, prev_end, raw_st)
+        en = max(st + 200, raw_en)
         sc["start"] = ms_to_time_str(st)
         sc["end"] = ms_to_time_str(en)
+        prev_end = en
         shifted.append(sc)
 
     return {

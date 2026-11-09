@@ -2799,16 +2799,9 @@ class MainWindow(QMainWindow):
     def switch_page(self, original_index):
         prev_nav_index = getattr(self, "_active_nav_index", None)
 
-        # Cầu nối Dữ liệu (Data Sync Bridge): Khi rời khỏi trang AI Agent (tab 9) sang Workspace (tab 1)
-        if prev_nav_index == 9 and original_index == 1:
-            if hasattr(self, "page_ai_agent") and hasattr(self, "sub_editor"):
-                agent_segs = self.page_ai_agent.get_current_segments()
-                if agent_segs:
-                    import copy
-                    self.sub_editor.all_segments = copy.deepcopy(agent_segs)
-                    self.sub_editor.render_page()
-                    if hasattr(self, "video_player"):
-                        self.video_player.refresh_current_subtitle()
+        # Cầu nối Dữ liệu (Data Sync Bridge): Khi rời khỏi trang AI Agent (tab 9) sang bất kỳ tab nào
+        if prev_nav_index == 9 and original_index != 9:
+            self._sync_from_ai_agent_page()
 
         # Cầu nối Dữ liệu (Data Sync Bridge): Khi rời khỏi trang Dịch thuật
         if prev_nav_index == 8 and original_index != 8:
@@ -3432,6 +3425,18 @@ class MainWindow(QMainWindow):
             if getattr(self, "quality_inspector_panel", None):
                 self.quality_inspector_panel.set_segments([])
 
+    def _sync_from_ai_agent_page(self):
+        """Live Sync: Đồng bộ danh sách phụ đề từ AI Agent (Tab 9) sang SubEditor."""
+        if hasattr(self, "page_ai_agent") and hasattr(self, "sub_editor"):
+            agent_segs = self.page_ai_agent.get_current_segments()
+            if agent_segs:
+                import copy
+                self.sub_editor.all_segments = copy.deepcopy(agent_segs)
+                if hasattr(self.sub_editor, "render_page"):
+                    self.sub_editor.render_page()
+                if hasattr(self, "video_player") and hasattr(self.video_player, "refresh_current_subtitle"):
+                    self.video_player.refresh_current_subtitle()
+
     @Slot(int, object, dict)
     def _on_agent_step_completed(self, step_idx: int, step: object, result: dict):
         tool_name = getattr(step, "tool_name", "")
@@ -3439,6 +3444,7 @@ class MainWindow(QMainWindow):
             style_data = result.get("style", {})
             if style_data and hasattr(self, "_on_subtitle_style_changed"):
                 self._on_subtitle_style_changed(style_data)
+        self._sync_from_ai_agent_page()
 
     def _sync_agent_video_context(self, vid_path: str):
         if not hasattr(self, "page_ai_agent") or not self.page_ai_agent:
@@ -5270,6 +5276,9 @@ class MainWindow(QMainWindow):
 
     def _flush_canonical_save_before_transition(self):
         sub_editor = getattr(self, "sub_editor", None)
+        if getattr(self, "_active_nav_index", None) == 9:
+            self._sync_from_ai_agent_page()
+
         commit_pending_edit = getattr(sub_editor, "commit_pending_edit", None)
         if commit_pending_edit:
             commit_pending_edit()
@@ -5417,6 +5426,10 @@ class MainWindow(QMainWindow):
         sub_editor = getattr(self, "sub_editor", None)
         if reason == "autosave" and bool(getattr(getattr(self, "subtitle_generation_service", None), "is_running", False)):
             return True
+
+        if getattr(self, "_active_nav_index", None) == 9:
+            self._sync_from_ai_agent_page()
+
         commit_pending_edit = getattr(sub_editor, "commit_pending_edit", None)
         if commit_pending_edit:
             commit_pending_edit()

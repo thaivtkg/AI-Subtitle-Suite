@@ -113,32 +113,44 @@ class AgentCopilotController(QObject):
         steps: List[AgentStep] = []
 
         # 1. Check Subtitle Timing Bounds (Micro-editing duration: đầu / cuối)
-        is_duration = ("thời lượng" in lower or "mốc" in lower) and any(k in lower for k in ["đầu", "cuối"])
-        if is_duration:
+        is_duration = ("thời lượng" in lower or "mốc" in lower or "đầu" in lower) and any(k in lower for k in ["mốc đầu", "mốc cuối", "đầu câu", "cuối câu", "mốc"])
+        if is_duration and any(k in lower for k in ["đầu", "cuối"]):
             d_start = 0
             d_end = 0
-            m_s1 = re.search(r"(?:giảm|lùi|trừ|sớm)\s+(\d+)\s*ms\s*(?:ở\s+)?mốc\s*đầu", lower) or re.search(r"mốc\s*đầu\s*(?:giảm|lùi|trừ|sớm)\s+(\d+)\s*ms", lower)
-            if m_s1:
-                d_start = -int(m_s1.group(1))
-            m_s2 = re.search(r"(?:tăng|tiến|cộng|muộn)\s+(\d+)\s*ms\s*(?:ở\s+)?mốc\s*đầu", lower) or re.search(r"mốc\s*đầu\s*(?:tăng|tiến|cộng|muộn)\s+(\d+)\s*ms", lower)
-            if m_s2:
-                d_start = int(m_s2.group(1))
 
-            m_e1 = re.search(r"(?:tăng|tiến|cộng|thêm)\s+(\d+)\s*ms\s*(?:ở\s+)?mốc\s*cuối", lower) or re.search(r"mốc\s*cuối\s*(?:tăng|tiến|cộng|thêm)\s+(\d+)\s*ms", lower)
-            if m_e1:
-                d_end = int(m_e1.group(1))
-            m_e2 = re.search(r"(?:giảm|lùi|trừ|bớt)\s+(\d+)\s*ms\s*(?:ở\s+)?mốc\s*cuối", lower) or re.search(r"mốc\s*cuối\s*(?:giảm|lùi|trừ|bớt)\s+(\d+)\s*ms", lower)
-            if m_e2:
-                d_end = -int(m_e2.group(1))
+            def _parse_delta(text: str, pos_key: str, dir_mult: int, words: list) -> int:
+                w_pat = "|".join(words)
+                # Form 1: (tăng|giảm) [val] [unit] (ở|cho)? (mốc đầu|đầu câu)
+                p1 = rf"(?:{w_pat})\s+(?:thêm\s+)?(\d+(?:\.\d+)?)\s*(s|giây|ms)?\s*(?:ở|cho)?\s*(?:mốc\s*{pos_key}|{pos_key}\s*câu|{pos_key})"
+                # Form 2: (mốc đầu|đầu câu) (tăng|giảm) (thêm)? [val] [unit]
+                p2 = rf"(?:mốc\s*{pos_key}|{pos_key}\s*câu|{pos_key})\s*(?:{w_pat})\s*(?:thêm\s+)?(\d+(?:\.\d+)?)\s*(s|giây|ms)?"
+                m = re.search(p1, text) or re.search(p2, text)
+                if m:
+                    val_str, unit = m.group(1), m.group(2)
+                    val = float(val_str)
+                    ms = int(val * 1000) if unit in ("s", "giây") else int(val)
+                    return ms * dir_mult
+                return 0
 
-            steps.append(
-                AgentStep(
-                    id=f"step_{len(steps)+1}",
-                    title=f"Điều chỉnh thời lượng phụ đề (Đầu: {d_start:+d}ms, Cuối: {d_end:+d}ms)",
-                    tool_name="adjust_subtitle_bounds",
-                    tool_args={"delta_start_ms": d_start, "delta_end_ms": d_end, "scope": "all"},
+            # Mốc đầu: giảm/lùi/trừ/sớm (-1) vs tăng/tiến/cộng/thêm/muộn (+1)
+            ds_neg = _parse_delta(lower, "đầu", -1, ["giảm", "lùi", "trừ", "sớm", "bớt"])
+            ds_pos = _parse_delta(lower, "đầu", 1, ["tăng", "tiến", "cộng", "thêm", "muộn"])
+            d_start = ds_neg if ds_neg != 0 else ds_pos
+
+            # Mốc cuối: tăng/tiến/cộng/thêm (+1) vs giảm/lùi/trừ/bớt/sớm (-1)
+            de_pos = _parse_delta(lower, "cuối", 1, ["tăng", "tiến", "cộng", "thêm", "muộn"])
+            de_neg = _parse_delta(lower, "cuối", -1, ["giảm", "lùi", "trừ", "bớt", "sớm"])
+            d_end = de_pos if de_pos != 0 else de_neg
+
+            if d_start != 0 or d_end != 0 or "thời lượng" in lower:
+                steps.append(
+                    AgentStep(
+                        id=f"step_{len(steps)+1}",
+                        title=f"Điều chỉnh thời lượng phụ đề (Đầu: {d_start:+d}ms, Cuối: {d_end:+d}ms)",
+                        tool_name="adjust_subtitle_bounds",
+                        tool_args={"delta_start_ms": d_start, "delta_end_ms": d_end, "scope": "all"},
+                    )
                 )
-            )
 
         # 2. Check Subtitle Time Shift (Micro-editing offset: lên / lùi)
         is_shift = any(k in lower for k in ["đưa", "dịch chuyển", "đẩy", "dời", "lùi", "tiến"]) and any(k in lower for k in ["sub", "phụ đề", "đoạn"])
@@ -223,8 +235,9 @@ class AgentCopilotController(QObject):
             m_single = re.search(r"câu\s+(?:số\s+|thứ\s+)?(\d+)", lower)
 
             if m_rng:
-                st_idx = int(m_rng.group(1))
-                en_idx = int(m_rng.group(2))
+                raw_a = int(m_rng.group(1))
+                raw_b = int(m_rng.group(2))
+                st_idx, en_idx = min(raw_a, raw_b), max(raw_a, raw_b)
                 indices = list(range(st_idx, en_idx + 1))
                 steps.append(
                     AgentStep(
@@ -235,12 +248,15 @@ class AgentCopilotController(QObject):
                     )
                 )
             elif m_time:
-                s_sec = float(m_time.group(1))
-                e_sec = float(m_time.group(2))
+                raw_s = float(m_time.group(1))
+                raw_e = float(m_time.group(2))
+                s_sec, e_sec = min(raw_s, raw_e), max(raw_s, raw_e)
+                s_title = int(s_sec) if s_sec.is_integer() else s_sec
+                e_title = int(e_sec) if e_sec.is_integer() else e_sec
                 steps.append(
                     AgentStep(
                         id=f"step_{len(steps)+1}",
-                        title=f"Quét lại phụ đề từ giây {s_sec} đến giây {e_sec}",
+                        title=f"Quét lại phụ đề từ giây {s_title} đến giây {e_title}",
                         tool_name="rescan_subtitles",
                         tool_args={"scope": "time_interval", "start_ms": int(s_sec * 1000), "end_ms": int(e_sec * 1000)},
                     )
@@ -273,8 +289,9 @@ class AgentCopilotController(QObject):
 
             args = {"language": self.context_ledger.source_lang or "auto"}
             if m_rng:
-                st_idx = int(m_rng.group(1))
-                en_idx = int(m_rng.group(2))
+                raw_a = int(m_rng.group(1))
+                raw_b = int(m_rng.group(2))
+                st_idx, en_idx = min(raw_a, raw_b), max(raw_a, raw_b)
                 indices = list(range(st_idx, en_idx + 1))
                 args["indices"] = indices
                 title = f"ASR Gen Sub từ câu {st_idx} đến câu {en_idx} (Faster-Whisper)"
