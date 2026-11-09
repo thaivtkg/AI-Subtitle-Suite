@@ -108,6 +108,37 @@ class EditableResultReportWidget(QScrollArea):
         self.layout.addWidget(lbl)
         self.layout.addStretch()
 
+    def show_error_report(self, step_title: str, error_message: str):
+        self.clear()
+        box = QWidget(self.container)
+        box.setStyleSheet("""
+            QWidget {
+                background: rgba(239, 68, 68, 0.1);
+                border: 1px solid #ef4444;
+                border-radius: 4px;
+            }
+        """)
+        box_l = QVBoxLayout(box)
+        box_l.setContentsMargins(10, 10, 10, 10)
+        box_l.setSpacing(6)
+
+        lbl_err_title = QLabel(f"❌ <strong>Lỗi thực thi:</strong> {step_title}", box)
+        lbl_err_title.setStyleSheet("color: #ef4444; font-size: 11px; background: transparent; border: none;")
+        box_l.addWidget(lbl_err_title)
+
+        lbl_err_desc = QLabel(f"Chi tiết: {error_message}", box)
+        lbl_err_desc.setStyleSheet("color: #fca5a5; font-size: 10px; background: transparent; border: none;")
+        lbl_err_desc.setWordWrap(True)
+        box_l.addWidget(lbl_err_desc)
+
+        hint = QLabel("💡 Gợi ý: Bạn có thể bấm nút 'Yêu cầu làm lại task này' bên dưới hoặc gửi yêu cầu mới trong khung chat.", box)
+        hint.setStyleSheet("color: #94a3b8; font-size: 9px; background: transparent; border: none;")
+        hint.setWordWrap(True)
+        box_l.addWidget(hint)
+
+        self.layout.addWidget(box)
+        self.layout.addStretch()
+
     def clear(self):
         self._rows.clear()
         while self.layout.count() > 0:
@@ -293,6 +324,19 @@ class AgentReportInspectorWidget(QWidget):
                     border-radius: 4px;
                 }
             """)
+        elif mode in ("failed", "error"):
+            self.status_badge.setText("THẤT BẠI")
+            self.status_badge.setStyleSheet("""
+                QLabel#status_badge {
+                    background: rgba(239, 68, 68, 0.15);
+                    color: #ef4444;
+                    border: 1px solid #dc2626;
+                    font-size: 10px;
+                    font-weight: 700;
+                    padding: 2px 6px;
+                    border-radius: 4px;
+                }
+            """)
         elif mode == "done":
             self.status_badge.setText("HOÀN TẤT")
             self.status_badge.setStyleSheet("""
@@ -325,6 +369,13 @@ class AgentReportInspectorWidget(QWidget):
         self.set_badge_status("waiting")
         self.inspection_card.render_result(step.title, result)
         self.btn_approve_next.setEnabled(True)
+
+    def show_error(self, step_idx: int, step: AgentStep, error: str):
+        self.lbl_report_title.setText(f"❌ TASK #{step_idx + 1} THẤT BẠI")
+        self.set_badge_status("failed")
+        self.inspection_card.show_error_report(step.title, error)
+        self.btn_approve_next.setEnabled(False)
+        self.btn_redo_task.setEnabled(True)
 
     def _on_approve_clicked(self):
         # Anti-rapid double click protection

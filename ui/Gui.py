@@ -1327,6 +1327,8 @@ class MainWindow(QMainWindow):
 
         # Page 9 (Index 8): AI Agent Mission Control Page
         self.page_ai_agent = AIAgentMissionControlPage(parent=self)
+        if hasattr(self.page_ai_agent, "controller") and self.page_ai_agent.controller:
+            self.page_ai_agent.controller.step_completed.connect(self._on_agent_step_completed)
         self.stack.addWidget(self.page_ai_agent)
 
         right_layout.addWidget(self.stack, stretch=1)
@@ -3429,6 +3431,14 @@ class MainWindow(QMainWindow):
             self.video_player.sub_controller.load_srt(None)
             if getattr(self, "quality_inspector_panel", None):
                 self.quality_inspector_panel.set_segments([])
+
+    @Slot(int, object, dict)
+    def _on_agent_step_completed(self, step_idx: int, step: object, result: dict):
+        tool_name = getattr(step, "tool_name", "")
+        if tool_name == "apply_subtitle_style":
+            style_data = result.get("style", {})
+            if style_data and hasattr(self, "_on_subtitle_style_changed"):
+                self._on_subtitle_style_changed(style_data)
 
     def _sync_agent_video_context(self, vid_path: str):
         if not hasattr(self, "page_ai_agent") or not self.page_ai_agent:

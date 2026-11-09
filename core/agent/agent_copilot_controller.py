@@ -212,14 +212,79 @@ class AgentCopilotController(QObject):
                 )
             )
 
-        # 4. Check ASR Gen Sub (support N segments limit)
+        # 4. Check Subtitle Rescan ("quét lại", "rescan", "scan lại")
+        elif any(w in lower for w in ["quét lại", "rescan", "scan lại"]):
+            m_rng = re.search(r"từ\s+câu\s+(\d+)\s+đến\s+(?:câu\s+)?(\d+)", lower)
+            m_time = re.search(r"từ\s+(?:giây\s+)?(\d+(?:\.\d+)?)(?:\s*s|\s*giây)?\s+đến\s+(?:giây\s+)?(\d+(?:\.\d+)?)(?:\s*s|\s*giây)?", lower)
+            m_single = re.search(r"câu\s+(?:số\s+|thứ\s+)?(\d+)", lower)
+
+            if m_rng:
+                st_idx = int(m_rng.group(1))
+                en_idx = int(m_rng.group(2))
+                indices = list(range(st_idx, en_idx + 1))
+                steps.append(
+                    AgentStep(
+                        id=f"step_{len(steps)+1}",
+                        title=f"Quét lại phụ đề từ câu {st_idx} đến câu {en_idx}",
+                        tool_name="rescan_subtitles",
+                        tool_args={"scope": "range", "segment_indices": indices},
+                    )
+                )
+            elif m_time:
+                s_sec = float(m_time.group(1))
+                e_sec = float(m_time.group(2))
+                steps.append(
+                    AgentStep(
+                        id=f"step_{len(steps)+1}",
+                        title=f"Quét lại phụ đề từ giây {s_sec} đến giây {e_sec}",
+                        tool_name="rescan_subtitles",
+                        tool_args={"scope": "time_interval", "start_ms": int(s_sec * 1000), "end_ms": int(e_sec * 1000)},
+                    )
+                )
+            elif m_single:
+                s_idx = int(m_single.group(1))
+                steps.append(
+                    AgentStep(
+                        id=f"step_{len(steps)+1}",
+                        title=f"Quét lại phụ đề câu #{s_idx}",
+                        tool_name="rescan_subtitles",
+                        tool_args={"scope": "selected", "segment_indices": [s_idx]},
+                    )
+                )
+            else:
+                steps.append(
+                    AgentStep(
+                        id=f"step_{len(steps)+1}",
+                        title="Quét lại toàn bộ âm thanh phụ đề",
+                        tool_name="rescan_subtitles",
+                        tool_args={"scope": "all", "segment_indices": []},
+                    )
+                )
+
+        # 5. Check ASR Gen Sub (odd sentence, range, or limit)
         elif any(w in lower for w in ["nhận diện", "gen sub", "asr", "whisper", "tạo sub"]):
-            m_lim = re.search(r"(\d+)\s*câu", lower)
-            limit = int(m_lim.group(1)) if m_lim else None
-            title = f"ASR Gen Sub {limit} câu đầu (Faster-Whisper)" if limit else "ASR Gen Sub (Faster-Whisper)"
+            m_rng = re.search(r"từ\s+câu\s+(\d+)\s+đến\s+(?:câu\s+)?(\d+)", lower)
+            m_idx = re.search(r"câu\s+(?:số\s+|thứ\s+)?(\d+)", lower)
+            m_lim = re.search(r"(\d+)\s*câu(?:\s*đầu)?", lower)
+
             args = {"language": self.context_ledger.source_lang or "auto"}
-            if limit:
+            if m_rng:
+                st_idx = int(m_rng.group(1))
+                en_idx = int(m_rng.group(2))
+                indices = list(range(st_idx, en_idx + 1))
+                args["indices"] = indices
+                title = f"ASR Gen Sub từ câu {st_idx} đến câu {en_idx} (Faster-Whisper)"
+            elif m_idx:
+                idx = int(m_idx.group(1))
+                args["indices"] = [idx]
+                title = f"ASR Gen Sub câu #{idx} (Faster-Whisper)"
+            elif m_lim:
+                limit = int(m_lim.group(1))
                 args["limit"] = limit
+                title = f"ASR Gen Sub {limit} câu đầu (Faster-Whisper)"
+            else:
+                title = "ASR Gen Sub (Faster-Whisper)"
+
             steps.append(
                 AgentStep(
                     id=f"step_{len(steps)+1}",
@@ -247,13 +312,82 @@ class AgentCopilotController(QObject):
                 )
             )
 
-        if any(w in lower for w in ["style", "font", "màu", "viền", "vàng", "bóng đổ", "hiệu ứng"]):
+        if any(w in lower for w in ["style", "font", "cỡ", "size", "màu", "viền", "bóng đổ", "shadow", "hiệu ứng"]) and not is_duration and not is_shift:
+            color_map = {
+                "vàng": "#FFFF00",
+                "đỏ": "#FF0000",
+                "trắng": "#FFFFFF",
+                "đen": "#000000",
+                "xanh lá": "#22C55E",
+                "xanh dương": "#38BDF8",
+                "xanh": "#38BDF8",
+                "cam": "#F97316",
+                "tím": "#A855F7",
+                "hồng": "#EC4899",
+                "xám": "#94A3B8",
+            }
+            font_name = None
+            m_f = re.search(r"font\s+([A-Za-z0-9_-]+)", lower)
+            if m_f:
+                raw_font = m_f.group(1)
+                font_name = "Roboto" if raw_font.lower() == "roboto" else raw_font.capitalize()
+            elif "roboto" in lower:
+                font_name = "Roboto"
+            elif "arial" in lower:
+                font_name = "Arial"
+            else:
+                font_name = "Arial"
+
+            font_size = None
+            m_sz = re.search(r"(?:cỡ(?:\s*chữ)?|size)\s*[:=]?\s*(\d+)", lower)
+            if m_sz:
+                font_size = int(m_sz.group(1))
+
+            font_color = None
+            m_hx = re.search(r"#([0-9a-fA-F]{6})", lower)
+            if m_hx:
+                font_color = f"#{m_hx.group(1).upper()}"
+            else:
+                for c_name, c_hex in color_map.items():
+                    if f"chữ {c_name}" in lower or f"màu {c_name}" in lower:
+                        font_color = c_hex
+                        break
+            if not font_color and "vàng" in lower:
+                font_color = "#FFFF00"
+
+            outline_color = None
+            for c_name, c_hex in color_map.items():
+                if f"viền {c_name}" in lower:
+                    outline_color = c_hex
+                    break
+
+            outline_width = None
+            m_ow = re.search(r"viền\s+(?:dày\s+)?(\d+)(?:\s*px)?", lower)
+            if m_ow:
+                outline_width = int(m_ow.group(1))
+
+            shadow = None
+            if "bóng đổ" in lower or "shadow" in lower:
+                shadow = True
+
+            style_args = {"font_name": font_name}
+            if font_size is not None:
+                style_args["font_size"] = font_size
+            if font_color:
+                style_args["font_color"] = font_color
+            if outline_color:
+                style_args["outline_color"] = outline_color
+            if outline_width is not None:
+                style_args["outline_width"] = outline_width
+            if shadow is not None:
+                style_args["shadow"] = shadow
+
             steps.append(
                 AgentStep(
                     id=f"step_{len(steps)+1}",
-                    title="Tinh Chỉnh Subtitle Style & Formatting",
+                    title=f"Tinh Chỉnh Subtitle Style (Font: {font_name}, Cỡ: {font_size or 24})",
                     tool_name="apply_subtitle_style",
-                    tool_args={"font_name": "Arial", "primary_color": "#FFFF00"},
+                    tool_args=style_args,
                 )
             )
 
@@ -310,7 +444,7 @@ class AgentCopilotController(QObject):
         args = dict(step.tool_args)
         if step.tool_name == "create_timing" and "video_path" not in args and self.context_ledger.video_path:
             args["video_path"] = self.context_ledger.video_path
-        if step.tool_name in ("adjust_subtitle_bounds", "shift_subtitles") and "segments" not in args:
+        if step.tool_name in ("adjust_subtitle_bounds", "shift_subtitles", "rescan_subtitles", "run_asr") and "segments" not in args:
             if not self._active_segments:
                 from core.agent.agent_tool_registry import create_timing
                 init_res = create_timing(count=5)

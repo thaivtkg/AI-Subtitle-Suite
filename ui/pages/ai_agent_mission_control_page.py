@@ -128,9 +128,7 @@ class AIAgentMissionControlPage(QWidget):
     @Slot(int, object, str)
     def _on_step_failed(self, step_idx: int, step: AgentStep, error: str):
         self.col_inspect.step_stepper.set_plan(self.controller.active_plan)
-        self.col_inspect.set_badge_status("waiting")
-        self.col_inspect.lbl_report_title.setText(f"❌ TASK #{step_idx+1} THẤT BẠI")
-        self.col_inspect.btn_approve_next.setEnabled(False)
+        self.col_inspect.show_error(step_idx, step, error)
 
     @Slot(object)
     def _on_plan_completed(self, plan: AgentTaskPlan):
