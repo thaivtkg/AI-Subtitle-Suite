@@ -249,7 +249,7 @@ class EditableResultReportWidget(QScrollArea):
             lbl_segs.setStyleSheet("color: #94a3b8; font-size: 10px; margin-top: 4px; margin-bottom: 2px; background: transparent;")
             self.layout.addWidget(lbl_segs)
 
-            for i, seg in enumerate(segments[:30]):
+            for i, seg in enumerate(segments):
                 t_in = seg.get("start", "00:00.000")
                 t_out = seg.get("end", "00:00.000")
                 if isinstance(t_in, (int, float)):
@@ -257,7 +257,7 @@ class EditableResultReportWidget(QScrollArea):
                 if isinstance(t_out, (int, float)):
                     t_out = f"{int(t_out)//60:02d}:{int(t_out)%60:02d}.{int((t_out*1000)%1000):03d}"
                 time_str = f"{t_in} → {t_out}"
-                text = seg.get("text", "")
+                text = seg.get("text") or seg.get("translation", "")
                 row = EditableSegmentRow(i + 1, time_str, text, is_active=False, parent=self.container)
                 row.text_changed.connect(self._on_segment_text_changed)
                 row.focused.connect(self._on_row_focused)

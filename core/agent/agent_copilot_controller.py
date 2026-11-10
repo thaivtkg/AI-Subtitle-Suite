@@ -114,6 +114,21 @@ class AgentCopilotController(QObject):
         lower = prompt.lower()
         steps: List[AgentStep] = []
 
+        def _extract_sentence_indices(text: str) -> Optional[List[int]]:
+            m_rng = re.search(r"từ\s+câu\s+(\d+)\s+đến\s+(?:câu\s+)?(\d+)", text) or re.search(r"câu\s+(\d+)\s+đến\s+(?:câu\s+)?(\d+)", text)
+            if m_rng:
+                raw_a, raw_b = int(m_rng.group(1)), int(m_rng.group(2))
+                return list(range(min(raw_a, raw_b), max(raw_a, raw_b) + 1))
+            m_first_n = re.search(r"(\d+)\s*câu\s*đầu", text)
+            if m_first_n:
+                return list(range(1, int(m_first_n.group(1)) + 1))
+            m_multi = re.search(r"câu\s+(?:số\s+|thứ\s+)?((?:\d+(?:\s*,\s*|\s+và\s+|\s+hoặc\s+|\s+)?)+)", text)
+            if m_multi:
+                nums = [int(x) for x in re.findall(r"\d+", m_multi.group(1))]
+                if nums:
+                    return sorted(list(set(nums)))
+            return None
+
         # 1. Check Subtitle Timing Bounds (Micro-editing duration: đầu / cuối)
         is_duration = ("thời lượng" in lower or "mốc" in lower or "đầu" in lower or "cuối" in lower) and any(k in lower for k in ["mốc đầu", "mốc cuối", "đầu câu", "cuối câu", "mốc", "đầu", "cuối"])
         is_duration_action = False
@@ -122,13 +137,16 @@ class AgentCopilotController(QObject):
             d_end = 0
 
             def _parse_delta(text: str, pos_key: str, dir_mult: int, words: list) -> int:
+                if re.search(r"\d+\s*câu\s+đầu", text) and pos_key == "đầu" and not any(k in text for k in ["mốc đầu", "đầu câu"]):
+                    return 0
                 w_pat = "|".join(words)
                 # Form 1: (tăng|giảm) [val] [unit] (ở|cho)? (mốc đầu|đầu câu)
                 p1 = rf"(?:{w_pat})\s+(?:thêm\s+)?([+-]?\d+(?:\.\d+)?)\s*(s|giây|ms)?\s*(?:ở|cho)?\s*(?:mốc\s*{pos_key}|{pos_key}\s*câu|{pos_key})"
                 # Form 2: (mốc đầu|đầu câu) (tăng|giảm) (thêm)? [val] [unit]
                 p2 = rf"(?:mốc\s*{pos_key}|{pos_key}\s*câu|{pos_key})\s*(?:{w_pat})\s*(?:thêm\s+)?([+-]?\d+(?:\.\d+)?)\s*(s|giây|ms)?"
-                # Form 3 (Vietnamese natural order): (giảm|tăng) [mốc đầu|mốc cuối] (câu X)? (thêm|đi)? [val] [unit]
-                p3 = rf"(?:{w_pat})\s+(?:ở\s+|cho\s+)?(?:mốc\s*{pos_key}|{pos_key}\s*câu|{pos_key})(?:\s+câu\s+(?:số\s+|thứ\s+)?\d+)?\s*(?:thêm\s+|đi\s+|bớt\s+|lên\s+|xuống\s+)?([+-]?\d+(?:\.\d+)?)\s*(s|giây|ms)?"
+                # Form 3 (Vietnamese natural order): (giảm|tăng) [mốc đầu|mốc cuối] (dải câu / câu X)? (thêm|đi)? [val] [unit]
+                sent_spec = r"(?:\s+(?:từ\s+câu\s+\d+\s+đến\s+(?:câu\s+)?\d+|câu\s+\d+\s+đến\s+(?:câu\s+)?\d+|câu\s+(?:số\s+|thứ\s+)?(?:\d+(?:\s*,\s*|\s+và\s+|\s+hoặc\s+)?)+|\d+\s*câu\s*đầu))?"
+                p3 = rf"(?:{w_pat})\s+(?:ở\s+|cho\s+)?(?:mốc\s*{pos_key}|{pos_key}\s*câu|{pos_key}){sent_spec}\s*(?:thêm\s+|đi\s+|bớt\s+|lên\s+|xuống\s+)?([+-]?\d+(?:\.\d+)?)\s*(s|giây|ms)?"
                 m = re.search(p1, text) or re.search(p2, text) or re.search(p3, text)
                 if m:
                     val_str, unit = m.group(1), m.group(2)
@@ -149,8 +167,7 @@ class AgentCopilotController(QObject):
 
             if d_start != 0 or d_end != 0 or "thời lượng" in lower:
                 is_duration_action = True
-                m_target = re.search(r"câu\s+(?:số\s+|thứ\s+)?(\d+)", lower)
-                bound_indices = [int(m_target.group(1))] if m_target else None
+                bound_indices = _extract_sentence_indices(lower)
                 bound_args: Dict[str, Any] = {
                     "delta_start_ms": d_start,
                     "delta_end_ms": d_end,
@@ -158,7 +175,7 @@ class AgentCopilotController(QObject):
                 }
                 if bound_indices:
                     bound_args["segment_indices"] = bound_indices
-                    title = f"Điều chỉnh thời lượng câu #{bound_indices[0]} (Đầu: {d_start:+d}ms, Cuối: {d_end:+d}ms)"
+                    title = f"Điều chỉnh thời lượng các câu {bound_indices} (Đầu: {d_start:+d}ms, Cuối: {d_end:+d}ms)"
                 else:
                     title = f"Điều chỉnh thời lượng phụ đề (Đầu: {d_start:+d}ms, Cuối: {d_end:+d}ms)"
 
@@ -178,7 +195,8 @@ class AgentCopilotController(QObject):
         ) and any(k in lower for k in ["sub", "phụ đề", "đoạn", "câu", "timing"])
         if is_shift and not is_duration_action:
             direction = -1 if any(k in lower for k in ["lùi", "xuống", "giảm", "trừ", "sớm"]) else 1
-            m_num = re.search(r"([+-]?\d+(?:\.\d+)?)\s*(s|giây|ms)", lower)
+            matches = list(re.finditer(r"([+-]?\d+(?:\.\d+)?)\s*(s|giây|ms)", lower))
+            m_num = matches[-1] if matches else None
             if m_num:
                 val_s, unit = m_num.groups()
                 val = float(val_s)
@@ -188,15 +206,14 @@ class AgentCopilotController(QObject):
                 ms = int(val * 1000) if unit in ("s", "giây") else int(val)
                 offset = ms * direction
 
-                m_target = re.search(r"câu\s+(?:số\s+|thứ\s+)?(\d+)", lower)
-                shift_indices = [int(m_target.group(1))] if m_target else None
+                shift_indices = _extract_sentence_indices(lower)
                 shift_args: Dict[str, Any] = {
                     "offset_ms": offset,
                     "scope": "selected" if shift_indices else "all",
                 }
                 if shift_indices:
                     shift_args["segment_indices"] = shift_indices
-                    title = f"Dịch chuyển câu #{shift_indices[0]} ({offset:+d}ms)"
+                    title = f"Dịch chuyển các câu {shift_indices} ({offset:+d}ms)"
                 else:
                     title = f"Dịch chuyển thời gian phụ đề ({offset:+d}ms)"
 
@@ -386,7 +403,7 @@ class AgentCopilotController(QObject):
                 )
             )
 
-        if any(w in lower for w in ["style", "font", "cỡ", "size", "màu", "viền", "bóng đổ", "shadow", "hiệu ứng"]) and not is_duration and not is_shift:
+        if any(w in lower for w in ["style", "font", "cỡ", "size", "màu", "viền", "bóng đổ", "shadow", "hiệu ứng"]) and not is_duration_action and not is_shift:
             color_map = {
                 "vàng": "#FFFF00",
                 "đỏ": "#FF0000",

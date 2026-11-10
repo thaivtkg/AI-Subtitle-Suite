@@ -136,6 +136,22 @@ def shift_subtitles(
 
         shifted.append(sc)
 
+    # Sắp xếp lại danh sách phụ đề theo mốc start để bảo toàn thứ tự thời gian trên Timeline
+    shifted.sort(key=lambda x: time_str_to_ms(x.get("start", 0)))
+    # Chống đè chồng và nghịch đảo biên (Sequential Overlap Resolution)
+    for i in range(len(shifted) - 1):
+        c_st = time_str_to_ms(shifted[i]["start"])
+        c_en = time_str_to_ms(shifted[i]["end"])
+        n_st = time_str_to_ms(shifted[i + 1]["start"])
+        if c_en > n_st:
+            if n_st - c_st >= 200:
+                shifted[i]["end"] = ms_to_time_str(n_st)
+            else:
+                shifted[i + 1]["start"] = ms_to_time_str(c_en)
+                n_en = time_str_to_ms(shifted[i + 1]["end"])
+                if n_en < c_en + 200:
+                    shifted[i + 1]["end"] = ms_to_time_str(c_en + 200)
+
     return {
         "segments": shifted,
         "count": len(shifted),
@@ -300,7 +316,11 @@ def translate_subtitles(
     translated = []
     for s in segs:
         sc = dict(s)
-        sc["translation"] = f"[{target_lang.upper()}] {sc.get('text', '')}".strip()
+        orig_src = sc.get("source_text") or sc.get("text", "")
+        sc["source_text"] = orig_src
+        translated_text = f"[{target_lang.upper()}] {orig_src}".strip()
+        sc["translation"] = translated_text
+        sc["text"] = translated_text
         translated.append(sc)
     return {
         "status": "ok",

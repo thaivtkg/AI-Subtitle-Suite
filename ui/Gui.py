@@ -2812,12 +2812,11 @@ class MainWindow(QMainWindow):
                     synced = copy.deepcopy(self.sub_editor.all_segments)
                     self.page_ai_agent.controller._active_segments = synced
                     if hasattr(self.page_ai_agent, "col_inspect") and hasattr(self.page_ai_agent.col_inspect, "inspection_card"):
-                        self.page_ai_agent.col_inspect.inspection_card.current_segments = copy.deepcopy(synced)
-                        rows = getattr(self.page_ai_agent.col_inspect.inspection_card, "_rows", None)
-                        if rows:
-                            for i, seg in enumerate(synced):
-                                if i < len(rows) and hasattr(rows[i], "editor"):
-                                    rows[i].editor.setText(seg.get("text", ""))
+                        card = self.page_ai_agent.col_inspect.inspection_card
+                        card.current_segments = copy.deepcopy(synced)
+                        rows = getattr(card, "_rows", None)
+                        if isinstance(rows, list) and rows:
+                            card.render_result("Cập nhật từ Workspace", {"segments": synced})
             if hasattr(self, "video_player") and getattr(self.video_player, "video_path", None):
                 self._sync_agent_video_context(self.video_player.video_path)
 
