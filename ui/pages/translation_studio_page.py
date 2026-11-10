@@ -50,6 +50,7 @@ class TranslationStudioPage(QWidget):
         self.project_controller = ProjectController(
             self.subtitle_model, settings=self.app_settings, parent=self
         )
+        self._has_loaded_from_studio = False
 
         self.translation_controller.bind_intelligence(
             glossary=self.project_controller.glossary,
@@ -149,8 +150,8 @@ class TranslationStudioPage(QWidget):
                 status = trans_status
             else:
                 status = "TRANSLATED" if str(s.get("translation", "")).strip() else "PENDING" 
-            # CAT Queue Invariant: Khi nap chu dong tu Timeline (selected_indices is None),
-            # chi nap cac cau chua duyet. Bo qua cac cau da duyet (ACCEPTED).
+            # CAT Queue Invariant: Khi nạp chủ động từ Timeline (selected_indices is None),
+            # chỉ nạp các câu chưa duyệt. Bỏ qua các câu đã duyệt (ACCEPTED).
             if selected_indices is None and str(status).upper() == "ACCEPTED":
                 continue
             seg_id = str(s.get("id") or s.get("stt") or (idx + 1))
@@ -165,6 +166,7 @@ class TranslationStudioPage(QWidget):
                 "translation": s.get("translation", ""),
                 "status": status,
             })
+        self._has_loaded_from_studio = True
         self.subtitle_model.load_data(cat_data)
         from core.translation.core.context_analyzer import ContextAnalyzer
         sample_text = " ".join([seg.get("original_text") or seg.get("text", "") for seg in studio_segments[:20]])
@@ -261,37 +263,111 @@ class TranslationStudioPage(QWidget):
         if not studio_segments:
             return
 
-        # 1. Nếu SubtitleModel đang trống hoàn toàn, nạp toàn bộ danh sách câu từ Studio vào
-        if self.subtitle_model.rowCount() == 0:
+        # 1. Nếu SubtitleModel chưa từng được nạp lần nào và đang trống hoàn toàn
+        if not getattr(self, "_has_loaded_from_studio", False) and self.subtitle_model.rowCount() == 0:
             self.load_subtitles_from_studio(studio_segments)
             return
+        self._has_loaded_from_studio = True
 
-        # 2. Nếu đã có câu, duyệt qua các câu của studio_segments và cập nhật bản dịch
+        # 2. Xây dựng bản đồ tra cứu nhanh studio_segments
+        by_id = {}
+        by_stt = {}
+        by_idx = {}
+        by_orig = {}
+        for s_idx, seg in enumerate(studio_segments):
+            sid = str(seg.get("id") or seg.get("segment_id") or "").strip()
+            if sid:
+                by_id[sid] = seg
+            stt = str(seg.get("stt") or (s_idx + 1)).strip()
+            by_stt[stt] = seg
+            by_idx[s_idx] = seg
+            orig = str(seg.get("original_text") or seg.get("source_text") or "").strip()
+            if orig:
+                by_orig[orig] = seg
+
+        # 3. Duyệt qua danh sách câu hiện tại của CAT Studio (từ dưới lên để xóa an toàn)
+        data = self.subtitle_model.get_all_data()
+        pruned_any = False
         first_trans_cat_idx = -1
-        for idx, seg in enumerate(studio_segments):
-            trans = str(seg.get("translation", "") or "").strip()
-            orig = seg.get("original_text") or seg.get("source_text")
-            status = seg.get("translation_status", "TRANSLATED")
-            if trans and not trans.startswith("[VI]"):
-                sid = str(seg.get("id") or seg.get("segment_id") or seg.get("stt") or (idx + 1))
-                matched_idx = self._find_cat_index(sid)
-                if matched_idx < 0 and 0 <= idx < self.subtitle_model.rowCount():
-                    matched_idx = idx
-                if matched_idx >= 0:
-                    self.subtitle_model.update_translation(
-                        matched_idx, trans, status, original_text=orig
-                    )
-                    if first_trans_cat_idx < 0:
-                        first_trans_cat_idx = matched_idx
-                    if matched_idx == getattr(self.translation_controller, "_current_index", -1):
-                        self.translation_controller.loadSubtitle(matched_idx)
 
-        # 3. Nếu hiện tại workspace đang ở vị trí chưa có bản dịch mà có câu vừa được dịch, tự động nạp câu dịch đầu tiên
+        for cat_idx in range(len(data) - 1, -1, -1):
+            cat_item = data[cat_idx]
+            cat_orig = str(cat_item.get("original") or "").strip()
+            seg = None
+            cat_sid = str(cat_item.get("segment_id") or "").strip()
+            if cat_sid and cat_sid in by_id:
+                seg = by_id[cat_sid]
+
+            if not seg:
+                cat_stt = str(cat_item.get("index") or "").strip()
+                if cat_stt and cat_stt in by_stt:
+                    seg = by_stt[cat_stt]
+
+            if not seg:
+                cat_sidx = cat_item.get("studio_index")
+                if cat_sidx is not None and cat_sidx in by_idx:
+                    seg = by_idx[cat_sidx]
+
+            if not seg and cat_orig and cat_orig in by_orig:
+                seg = by_orig[cat_orig]
+
+            if not seg:
+                continue
+
+            trans = str(seg.get("translation", "") or "").strip()
+            orig = str(seg.get("original_text") or seg.get("source_text") or cat_item.get("original") or "").strip()
+            status = str(seg.get("translation_status", "") or seg.get("status", "")).strip().upper()
+
+            # Kiểm tra xem câu này đã được DUYỆT (ACCEPTED) trên Studio/AI Agent hoặc đã nằm trong TM
+            tm = getattr(self.translation_controller, "translation_memory", None) if hasattr(self, "translation_controller") else None
+            tm_entry = tm.get(orig) if (tm and orig) else None
+            tm_target = getattr(tm_entry, "target_text", tm_entry) if tm_entry else ""
+
+            is_accepted = (
+                status == "ACCEPTED"
+                or (bool(tm_target) and tm_target == seg.get("text"))
+            )
+
+            if is_accepted:
+                # CAT Queue Invariant: Xóa câu đã duyệt khỏi hàng đợi CAT Studio
+                if hasattr(self, "translation_controller") and getattr(self.translation_controller, "translation_memory", None):
+                    if orig and trans and not trans.startswith("[VI]"):
+                        self.translation_controller.translation_memory.add(orig, trans)
+                self.subtitle_model.remove_subtitle(cat_idx)
+                pruned_any = True
+            elif trans and not trans.startswith("[VI]"):
+                # Cập nhật bản dịch nháp đang chờ duyệt
+                stat = status if status in {"PENDING", "TRANSLATING", "TRANSLATED", "EDITED", "ERROR"} else "TRANSLATED"
+                self.subtitle_model.update_translation(cat_idx, trans, stat, original_text=orig)
+                if first_trans_cat_idx < 0:
+                    first_trans_cat_idx = cat_idx
+
+        # 4. Điều chỉnh con trỏ và tự động nạp câu thích hợp
+        rem = self.subtitle_model.rowCount()
         curr_idx = getattr(self.translation_controller, "_current_index", -1)
-        if first_trans_cat_idx >= 0 and curr_idx >= 0:
+        if rem == 0:
+            if hasattr(self.translation_controller, "loadSubtitle"):
+                self.translation_controller.loadSubtitle(-1)
+        elif pruned_any or curr_idx >= rem:
+            target_load = max(0, min(curr_idx if curr_idx >= 0 else 0, rem - 1))
+            if hasattr(self.translation_controller, "loadSubtitle"):
+                self.translation_controller.loadSubtitle(target_load)
+        elif first_trans_cat_idx >= 0 and curr_idx >= 0:
             curr_item = self.subtitle_model.get_item(curr_idx)
             if not curr_item or not str(curr_item.get("translation", "")).strip():
-                self.translation_controller.loadSubtitle(first_trans_cat_idx)
+                if hasattr(self.translation_controller, "loadSubtitle"):
+                    self.translation_controller.loadSubtitle(first_trans_cat_idx)
+
+        # 5. Tự động lưu cập nhật project.aisrt trên đĩa nếu có thay đổi lược bỏ câu đã duyệt
+        if pruned_any:
+            parent = self.parent()
+            proj_dir = getattr(getattr(self, "project_service", None), "project_dir", None)
+            if not proj_dir and parent and hasattr(parent, "project_service"):
+                proj_dir = getattr(parent.project_service, "project_dir", None)
+            if proj_dir:
+                aisrt_path = os.path.join(str(proj_dir), "artifacts", "translation", "project.aisrt")
+                if os.path.exists(os.path.dirname(aisrt_path)):
+                    self.save_translation_project(aisrt_path)
 
     def handle_segment_split(self, original_id: str, seg1: dict, seg2: dict):
         """Đồng bộ thời gian thực khi 1 câu trên Video Workspace bị cắt làm đôi."""
@@ -439,7 +515,11 @@ class TranslationStudioPage(QWidget):
                 cat_orig = str(item.get("original", "")).strip()
                 trans = str(item.get("translation", "")).strip()
                 
-                # Overwrite Guard: If timeline segment has a new speech and its original_text
+                # Overwrite Guard 1: Do not overwrite if timeline segment is already ACCEPTED
+                if str(timeline_seg.get("translation_status", "")).upper() == "ACCEPTED" and item.get("status") != "ACCEPTED":
+                    continue
+
+                # Overwrite Guard 2: If timeline segment has a new speech and its original_text
                 # doesn't match cat_orig, do not overwrite with old translation!
                 if timeline_orig and cat_orig and timeline_orig != cat_orig:
                     continue
@@ -478,4 +558,5 @@ class TranslationStudioPage(QWidget):
     def load_translation_project(self, file_path: str):
         """Nạp tệp .aisrt bảo toàn 100% Glossary, TM và tiến độ dịch."""
         if os.path.exists(file_path):
+            self._has_loaded_from_studio = True
             self.project_controller.loadProject(file_path)

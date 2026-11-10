@@ -157,3 +157,53 @@ def test_jmsz_video_transcode_detection_and_cache():
     cache_path = get_transcode_cache_path(VIDEO_PATH)
     assert cache_path.endswith("_fastseek.mp4")
     assert "JMSZ38_02" in cache_path
+
+
+def test_jmsz_cat_studio_approved_subtitles_pruned(timeline_driver, qtbot):
+    """
+    BUG-TAB8-APPROVED-AI-PROMPT-RESIDUE-001:
+    Kiểm tra các câu phụ đề đã được dịch/duyệt trên Timeline hoặc qua AI Agent
+    (ví dụ câu #6, #7 của dự án JMSZ) được tự động loại bỏ khỏi hàng đợi CAT Studio,
+    không bị lưu tồn đọng với trạng thái "CHỜ DUYỆT".
+    """
+    win, driver, timeline_page, sub_page = timeline_driver
+    win.switch_page(1)
+    qtbot.wait(100)
+
+    # 1. Nạp phụ đề của dự án JMSZ
+    win._load_context_subtitles(SRT_PATH)
+    qtbot.wait(100)
+
+    # Đảm bảo câu #6 và #7 đã có bản dịch tiếng Việt trên Timeline
+    seg6 = win.sub_editor.all_segments[5]
+    seg7 = win.sub_editor.all_segments[6]
+    assert seg6["text"] == "Rốt cuộc ngươi tìm ta có chuyện gì?"
+    assert seg7["text"] == "Chuyện đó còn phải hỏi sao!"
+
+    # 2. Giả lập nạp project.aisrt cũ (có 2 câu #6, #7 ở trạng thái TRANSLATED)
+    aisrt_path = os.path.join(PROJECT_DIR, "artifacts", "translation", "project.aisrt")
+    assert os.path.exists(aisrt_path)
+    win.page_translation.load_translation_project(aisrt_path)
+    qtbot.wait(50)
+
+    # 3. Kích hoạt đồng bộ từ Studio sang CAT Studio
+    win.page_translation.sync_translations_from_studio(win.sub_editor.all_segments)
+    qtbot.wait(100)
+
+    # 4. Xác minh: Hàng đợi CAT Studio đã loại bỏ sạch các câu đã duyệt/khớp bản dịch!
+    cat_items = win.page_translation.subtitle_model.get_all_data()
+    # Không còn câu nào tồn đọng ở trạng thái chờ duyệt
+    assert len(cat_items) == 0, f"Kỳ vọng hàng đợi trống nhưng vẫn còn {len(cat_items)} câu: {cat_items}"
+
+    # 5. Kiểm tra Translation Memory đã được cập nhật bản dịch
+    tm = getattr(win.page_translation.translation_controller, "translation_memory", None)
+    if tm is not None:
+        entry1 = tm.get("この俺様に一体何の")
+        assert entry1 and getattr(entry1, "target_text", entry1) == "Rốt cuộc ngươi tìm ta có chuyện gì?"
+        entry2 = tm.get("そんなの決まってるわ。")
+        assert entry2 and getattr(entry2, "target_text", entry2) == "Chuyện đó còn phải hỏi sao!"
+
+    # 6. Kiểm tra chuyển sang Tab 8 (CAT Studio) hiển thị workspace trống (tất cả đã duyệt)
+    win.switch_page(8)
+    qtbot.wait(100)
+    assert win.page_translation.subtitle_model.rowCount() == 0

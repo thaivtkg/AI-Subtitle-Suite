@@ -638,6 +638,8 @@ def translate_subtitles(
         if translated_text and not translated_text.startswith(f"[{target_lang.upper()}]"):
             sc["translation"] = translated_text
             sc["text"] = translated_text
+            sc["translation_status"] = "ACCEPTED"
+            sc["status"] = "ACCEPTED"
             translated_count += 1
             translated_indices.append(matched_target_id)
         else:

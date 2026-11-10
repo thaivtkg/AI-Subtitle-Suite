@@ -1330,6 +1330,7 @@ class MainWindow(QMainWindow):
         if hasattr(self.page_ai_agent, "controller") and self.page_ai_agent.controller:
             self.page_ai_agent.controller.step_completed.connect(self._on_agent_step_completed)
             self.page_ai_agent.controller.step_reverted.connect(self._on_agent_step_reverted)
+            self.page_ai_agent.controller.plan_completed.connect(self._on_agent_plan_completed)
         self.stack.addWidget(self.page_ai_agent)
 
         right_layout.addWidget(self.stack, stretch=1)
@@ -2858,7 +2859,7 @@ class MainWindow(QMainWindow):
                     self._pending_translation_indices = []
                 if target_indices is not None:
                     self.page_translation.load_subtitles_from_studio(self.sub_editor.all_segments, selected_indices=target_indices)
-                elif prev_nav_index == 9:
+                else:
                     self.page_translation.sync_translations_from_studio(self.sub_editor.all_segments)
         self._active_nav_index = original_index
         if original_index == 0 and hasattr(self, "page_dashboard") and hasattr(self.page_dashboard, "refresh_recent_projects"):
@@ -3498,6 +3499,12 @@ class MainWindow(QMainWindow):
         if tool_name == "translate_subtitles":
             if hasattr(self, "page_translation") and self.page_translation and hasattr(self, "sub_editor"):
                 self.page_translation.sync_translations_from_studio(self.sub_editor.all_segments)
+
+    @Slot(object)
+    def _on_agent_plan_completed(self, plan: object):
+        self._sync_from_ai_agent_page()
+        if hasattr(self, "page_translation") and self.page_translation and hasattr(self, "sub_editor"):
+            self.page_translation.sync_translations_from_studio(self.sub_editor.all_segments)
 
     def _sync_agent_video_context(self, vid_path: str):
         if not hasattr(self, "page_ai_agent") or not self.page_ai_agent:
@@ -5963,6 +5970,7 @@ class MainWindow(QMainWindow):
                 self.page_translation.load_translation_project(aisrt_path)
                 if hasattr(self, "sub_editor") and self.sub_editor:
                     self.page_translation.export_subtitles_to_studio(self.sub_editor.all_segments)
+                    self.page_translation.sync_translations_from_studio(self.sub_editor.all_segments)
 
             # --- NẠP DỮ LIỆU ---
             self.timeline_data_provider.load_runtime_data(self.sub_editor.all_segments, dur_ms)

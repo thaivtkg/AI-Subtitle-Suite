@@ -633,6 +633,12 @@ class AgentCopilotController(QObject):
 
         self._waiting_task_approval = False
         curr_step = self.active_plan.current_step()
+        if curr_step and curr_step.tool_name == "translate_subtitles":
+            for seg in self._active_segments:
+                if seg.get("translation") and seg.get("text") == seg.get("translation"):
+                    seg["translation_status"] = "ACCEPTED"
+                    seg["status"] = "ACCEPTED"
+
         if curr_step and curr_step.status == StepStatus.PENDING:
             self._run_current_step()
             return
