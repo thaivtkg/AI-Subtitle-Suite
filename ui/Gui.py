@@ -2850,6 +2850,8 @@ class MainWindow(QMainWindow):
                     self._pending_translation_indices = []
                 if target_indices is not None:
                     self.page_translation.load_subtitles_from_studio(self.sub_editor.all_segments, selected_indices=target_indices)
+                elif prev_nav_index == 9 or (hasattr(self.page_translation, "subtitle_model") and self.page_translation.subtitle_model.rowCount() == 0):
+                    self.page_translation.sync_translations_from_studio(self.sub_editor.all_segments)
         self._active_nav_index = original_index
         if original_index == 0 and hasattr(self, "page_dashboard") and hasattr(self.page_dashboard, "refresh_recent_projects"):
             self.page_dashboard.refresh_recent_projects()
@@ -3485,6 +3487,9 @@ class MainWindow(QMainWindow):
             if style_data and hasattr(self, "_on_subtitle_style_changed"):
                 self._on_subtitle_style_changed(style_data)
         self._sync_from_ai_agent_page()
+        if tool_name == "translate_subtitles":
+            if hasattr(self, "page_translation") and self.page_translation and hasattr(self, "sub_editor"):
+                self.page_translation.sync_translations_from_studio(self.sub_editor.all_segments)
 
     def _sync_agent_video_context(self, vid_path: str):
         if not hasattr(self, "page_ai_agent") or not self.page_ai_agent:

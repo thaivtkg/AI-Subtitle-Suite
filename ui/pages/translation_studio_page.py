@@ -236,6 +236,63 @@ class TranslationStudioPage(QWidget):
             if matched_idx == getattr(self.translation_controller, "_current_index", -1):
                 self.translation_controller.loadSubtitle(matched_idx)
 
+    def update_segment_translation(
+        self,
+        segment_id: str,
+        translation_text: str,
+        status: str = "TRANSLATED",
+        original_text: str = None,
+    ):
+        """Đồng bộ bản dịch từ Studio / AI Agent vào CAT Studio SubtitleModel."""
+        matched_idx = self._find_cat_index(segment_id)
+        if matched_idx >= 0:
+            clean_trans = str(translation_text or "").strip()
+            if not clean_trans:
+                return
+            stat = status or "TRANSLATED"
+            self.subtitle_model.update_translation(
+                matched_idx, clean_trans, stat, original_text=original_text
+            )
+            if matched_idx == getattr(self.translation_controller, "_current_index", -1):
+                self.translation_controller.loadSubtitle(matched_idx)
+
+    def sync_translations_from_studio(self, studio_segments: list):
+        """Đồng bộ toàn diện danh sách câu hoặc các bản dịch mới từ Studio/AI Agent sang CAT Studio."""
+        if not studio_segments:
+            return
+
+        # 1. Nếu SubtitleModel đang trống hoàn toàn, nạp toàn bộ danh sách câu từ Studio vào
+        if self.subtitle_model.rowCount() == 0:
+            self.load_subtitles_from_studio(studio_segments)
+            return
+
+        # 2. Nếu đã có câu, duyệt qua các câu của studio_segments và cập nhật bản dịch
+        first_trans_cat_idx = -1
+        for idx, seg in enumerate(studio_segments):
+            trans = str(seg.get("translation", "") or "").strip()
+            orig = seg.get("original_text") or seg.get("source_text")
+            status = seg.get("translation_status", "TRANSLATED")
+            if trans and not trans.startswith("[VI]"):
+                sid = str(seg.get("id") or seg.get("segment_id") or seg.get("stt") or (idx + 1))
+                matched_idx = self._find_cat_index(sid)
+                if matched_idx < 0 and 0 <= idx < self.subtitle_model.rowCount():
+                    matched_idx = idx
+                if matched_idx >= 0:
+                    self.subtitle_model.update_translation(
+                        matched_idx, trans, status, original_text=orig
+                    )
+                    if first_trans_cat_idx < 0:
+                        first_trans_cat_idx = matched_idx
+                    if matched_idx == getattr(self.translation_controller, "_current_index", -1):
+                        self.translation_controller.loadSubtitle(matched_idx)
+
+        # 3. Nếu hiện tại workspace đang ở vị trí chưa có bản dịch mà có câu vừa được dịch, tự động nạp câu dịch đầu tiên
+        curr_idx = getattr(self.translation_controller, "_current_index", -1)
+        if first_trans_cat_idx >= 0 and curr_idx >= 0:
+            curr_item = self.subtitle_model.get_item(curr_idx)
+            if not curr_item or not str(curr_item.get("translation", "")).strip():
+                self.translation_controller.loadSubtitle(first_trans_cat_idx)
+
     def handle_segment_split(self, original_id: str, seg1: dict, seg2: dict):
         """Đồng bộ thời gian thực khi 1 câu trên Video Workspace bị cắt làm đôi."""
         matched_idx = self._find_cat_index(original_id)
