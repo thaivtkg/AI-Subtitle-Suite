@@ -303,28 +303,103 @@ def run_asr(
     }
 
 
+def _perform_single_translation(text: str, target_lang: str, llm_client: Optional[Any] = None) -> str:
+    """Thực thi dịch thuật một câu qua LLM client, ModelManager hoặc fallback an toàn."""
+    if not text or not text.strip():
+        return text
+
+    # 1. Thử gọi LLM Client (Online Provider) nếu có
+    if llm_client and hasattr(llm_client, "generate_with_fallback"):
+        lang_names = {
+            "vi": "Vietnamese", "en": "English", "ja": "Japanese",
+            "ko": "Korean", "zh": "Chinese", "fr": "French", "de": "German"
+        }
+        tgt_name = lang_names.get(target_lang.lower(), target_lang)
+        prompt = (
+            f"Translate the following subtitle sentence into natural, fluent {tgt_name}. "
+            f"Output ONLY the translated sentence, without any explanations, notes, quotes, or markdown formatting:\n\n{text}"
+        )
+        try:
+            res = llm_client.generate_with_fallback(
+                messages=[
+                    {"role": "system", "content": "You are a professional subtitle translator. Output only the translated text directly."},
+                    {"role": "user", "content": prompt},
+                ],
+                allow_local_fallback=False,
+            )
+            content = res.get("content", "").strip()
+            if content and not content.startswith("Đã nhận lệnh từ Local LLM"):
+                return content
+        except Exception:
+            pass
+
+    # 2. Thử gọi Local GGUF Model qua ModelManager nếu có model đang tải
+    try:
+        from core.translation.llm.model_manager import ModelManager
+        mm = ModelManager.get_instance()
+        if mm and getattr(mm, "current_model_name", ""):
+            res = mm.generate(prompt=text, system_prompt=f"Dịch câu sau sang tiếng {target_lang}. Chỉ xuất câu dịch:")
+            if res and res.strip():
+                return res.strip()
+    except Exception:
+        pass
+
+    # 3. Fallback khi chạy offline hoặc môi trường kiểm thử chưa tải model
+    return f"[{target_lang.upper()}] {text}".strip()
+
+
 def translate_subtitles(
     target_lang: str = "vi",
+    scope: str = "all",
+    segment_indices: Optional[List[int]] = None,
     segments: Optional[List[Dict[str, Any]]] = None,
+    llm_client: Optional[Any] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
-    """Dịch phụ đề sang ngôn ngữ đích trong CAT Studio."""
+    """Dịch phụ đề sang ngôn ngữ đích trong CAT Studio với hỗ trợ chọn lọc câu chỉ định."""
     segs = segments or []
+    target_indices = set(segment_indices) if segment_indices else None
     translated = []
-    for s in segs:
+    translated_count = 0
+
+    for i, s in enumerate(segs):
         sc = dict(s)
+        seg_id = None
+        if isinstance(sc.get("id"), int):
+            seg_id = sc["id"]
+        elif str(sc.get("id", "")).isdigit():
+            seg_id = int(sc["id"])
+        elif isinstance(sc.get("stt"), int):
+            seg_id = sc["stt"]
+        elif str(sc.get("stt", "")).isdigit():
+            seg_id = int(sc["stt"])
+        else:
+            seg_id = i + 1
+
+        # Chỉ xử lý các câu nằm trong segment_indices (hoặc toàn bộ nếu scope == "all")
+        if target_indices is not None and seg_id not in target_indices:
+            # BẢO TOÀN NGUYÊN VẸN 100% CÁC CÂU KHÔNG ĐƯỢC CHỌN
+            translated.append(sc)
+            continue
+
         orig_src = sc.get("original_text") or sc.get("source_text") or sc.get("text", "")
         sc["original_text"] = orig_src
         sc["source_text"] = orig_src
-        translated_text = f"[{target_lang.upper()}] {orig_src}".strip()
+
+        translated_text = _perform_single_translation(orig_src, target_lang, llm_client)
         sc["translation"] = translated_text
         sc["text"] = translated_text
+        translated_count += 1
         translated.append(sc)
+
     return {
         "status": "ok",
         "target_lang": target_lang,
+        "scope": scope,
+        "segment_indices": segment_indices,
         "segments": translated,
         "count": len(translated),
+        "translated_count": translated_count,
     }
 
 

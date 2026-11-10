@@ -115,14 +115,15 @@ class AgentCopilotController(QObject):
         steps: List[AgentStep] = []
 
         def _extract_sentence_indices(text: str) -> Optional[List[int]]:
-            m_rng = re.search(r"từ\s+câu\s+(\d+)\s+đến\s+(?:câu\s+)?(\d+)", text) or re.search(r"câu\s+(\d+)\s+đến\s+(?:câu\s+)?(\d+)", text)
+            m_rng = re.search(r"từ\s+(?:câu|sub|phụ\s+đề)\s+(\d+)\s+đến\s+(?:(?:câu|sub|phụ\s+đề)\s+)?(\d+)", text) or re.search(r"(?:câu|sub|phụ\s+đề)\s+(\d+)\s+đến\s+(?:(?:câu|sub|phụ\s+đề)\s+)?(\d+)", text)
             if m_rng:
                 raw_a, raw_b = int(m_rng.group(1)), int(m_rng.group(2))
                 return list(range(min(raw_a, raw_b), max(raw_a, raw_b) + 1))
-            m_first_n = re.search(r"(\d+)\s*câu\s*đầu", text)
+            m_first_n = re.search(r"(\d+)\s*(?:câu|sub|phụ\s+đề)\s*đầu", text)
             if m_first_n:
                 return list(range(1, int(m_first_n.group(1)) + 1))
-            m_multi = re.search(r"câu\s+(?:số\s+|thứ\s+)?(\d+(?:\s*(?:,|và|hoặc)\s*(?:câu\s+)?(?:số\s+|thứ\s+)?\d+)*)", text)
+            pat = r"(?:câu|sub|phụ\s+đề)\s+(?:sub\s+|phụ\s+đề\s+|số\s+|thứ\s+)?(\d+(?:\s*(?:,|và|hoặc)\s*(?:(?:câu|sub|phụ\s+đề)\s+)?(?:số\s+|thứ\s+)?\d+)*)"
+            m_multi = re.search(pat, text)
             if m_multi:
                 nums = [int(x) for x in re.findall(r"\d+", m_multi.group(1))]
                 if nums:
@@ -189,13 +190,16 @@ class AgentCopilotController(QObject):
                 )
 
         # 2. Check Subtitle Time Shift (Micro-editing offset: lên / lùi)
+        time_unit_pattern = r"(?:[+-]?\d+(?:\.\d+)?\s*(?:giây|ms|miligiây|s\b)|\b(?:giây|ms|miligiây)\b)"
+        has_time_unit = bool(re.search(time_unit_pattern, lower))
+        has_shift_verb = any(k in lower for k in ["đưa", "dịch chuyển", "đẩy", "dời", "lùi", "tiến"])
         is_shift = (
-            any(k in lower for k in ["đưa", "dịch chuyển", "đẩy", "dời", "lùi", "tiến"])
-            or ("dịch" in lower and any(u in lower for u in ["s", "giây", "ms"]))
+            has_shift_verb
+            or ("dịch" in lower and has_time_unit)
         ) and any(k in lower for k in ["sub", "phụ đề", "đoạn", "câu", "timing"])
         if is_shift and not is_duration_action:
             direction = -1 if any(k in lower for k in ["lùi", "xuống", "giảm", "trừ", "sớm"]) else 1
-            matches = list(re.finditer(r"([+-]?\d+(?:\.\d+)?)\s*(s|giây|ms)", lower))
+            matches = list(re.finditer(r"([+-]?\d+(?:\.\d+)?)\s*(giây|ms|miligiây|s\b)", lower))
             m_num = matches[-1] if matches else None
             if m_num:
                 val_s, unit = m_num.groups()
@@ -386,9 +390,9 @@ class AgentCopilotController(QObject):
         is_trans = False
         if any(w in lower for w in ["translate", "cat", "tiếng việt", "tiếng hàn", "tiếng anh", "tiếng nhật", "sang tiếng"]):
             is_trans = True
-        elif "dịch" in lower and not is_shift and not any(u in lower for u in ["ms", "s", "giây"]):
+        elif "dịch" in lower and not is_shift and not has_time_unit:
             is_trans = True
-        elif ("dịch phụ đề" in lower or "dịch sub" in lower) and not any(u in lower for u in ["ms", "s", "giây"]):
+        elif ("dịch phụ đề" in lower or "dịch sub" in lower) and not has_time_unit:
             is_trans = True
 
         if is_trans:
@@ -400,12 +404,23 @@ class AgentCopilotController(QObject):
             elif "nhật" in lower or "japanese" in lower:
                 target = "ja"
             self.context_ledger.target_lang = target
+            trans_indices = _extract_sentence_indices(lower)
+            trans_args: Dict[str, Any] = {
+                "target_lang": target,
+                "scope": "selected" if trans_indices else "all",
+            }
+            if trans_indices:
+                trans_args["segment_indices"] = trans_indices
+                idx_str = f"các câu: {', '.join(str(x) for x in trans_indices)}"
+                title = f"Dịch Phụ Đề {idx_str} Sang Tiếng {target.upper()} (CAT Studio)"
+            else:
+                title = f"Dịch Phụ Đề Sang Tiếng {target.upper()} (CAT Studio)"
             steps.append(
                 AgentStep(
                     id=f"step_{len(steps)+1}",
-                    title=f"Dịch Phụ Đề Sang Tiếng {target.upper()} (CAT Studio)",
+                    title=title,
                     tool_name="translate_subtitles",
-                    tool_args={"target_lang": target},
+                    tool_args=trans_args,
                 )
             )
 
@@ -543,6 +558,8 @@ class AgentCopilotController(QObject):
         args = dict(step.tool_args)
         if step.tool_name == "create_timing" and "video_path" not in args and self.context_ledger.video_path:
             args["video_path"] = self.context_ledger.video_path
+        if step.tool_name == "translate_subtitles" and "llm_client" not in args and getattr(self, "llm_client", None):
+            args["llm_client"] = self.llm_client
         if step.tool_name in ("adjust_subtitle_bounds", "shift_subtitles", "rescan_subtitles", "run_asr", "apply_subtitle_style", "translate_subtitles", "render_hardsub") and "segments" not in args:
             if not self._active_segments:
                 if step.tool_name != "apply_subtitle_style":
@@ -577,7 +594,10 @@ class AgentCopilotController(QObject):
             self.chat_message_added.emit(chat_reply)
 
             self.step_completed.emit(idx, step, exec_res.get("result", {}))
-            self.notification_requested.emit(f"Task #{idx+1} ({step.title}) hoàn tất! Đang chờ bạn duyệt.")
+            if step.tool_name != "process_general_task":
+                self.notification_requested.emit(f"Task #{idx+1} ({step.title}) hoàn tất! Đang chờ bạn duyệt.")
+            else:
+                self.notification_requested.emit(f"Task #{idx+1}: Đã tiếp nhận yêu cầu.")
         else:
             step.status = StepStatus.FAILED
             err = exec_res.get("error", "Lỗi không xác định")

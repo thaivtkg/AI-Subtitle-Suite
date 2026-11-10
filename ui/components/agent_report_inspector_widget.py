@@ -249,6 +249,8 @@ class EditableResultReportWidget(QScrollArea):
             lbl_segs.setStyleSheet("color: #94a3b8; font-size: 10px; margin-top: 4px; margin-bottom: 2px; background: transparent;")
             self.layout.addWidget(lbl_segs)
 
+            target_indices = set(result_dict.get("segment_indices", [])) if (isinstance(result_dict, dict) and result_dict.get("segment_indices")) else None
+
             for i, seg in enumerate(segments):
                 t_in = seg.get("start", "00:00.000")
                 t_out = seg.get("end", "00:00.000")
@@ -258,7 +260,19 @@ class EditableResultReportWidget(QScrollArea):
                     t_out = f"{int(t_out)//60:02d}:{int(t_out)%60:02d}.{int((t_out*1000)%1000):03d}"
                 time_str = f"{t_in} → {t_out}"
                 text = seg.get("text") or seg.get("translation", "")
-                row = EditableSegmentRow(i + 1, time_str, text, is_active=False, parent=self.container)
+                seg_id = None
+                if isinstance(seg.get("id"), int):
+                    seg_id = seg["id"]
+                elif str(seg.get("id", "")).isdigit():
+                    seg_id = int(seg["id"])
+                elif isinstance(seg.get("stt"), int):
+                    seg_id = seg["stt"]
+                elif str(seg.get("stt", "")).isdigit():
+                    seg_id = int(seg["stt"])
+                else:
+                    seg_id = i + 1
+                is_active = (target_indices is not None and seg_id in target_indices)
+                row = EditableSegmentRow(i + 1, time_str, text, is_active=is_active, parent=self.container)
                 row.text_changed.connect(self._on_segment_text_changed)
                 row.focused.connect(self._on_row_focused)
                 self._rows.append(row)
@@ -268,6 +282,34 @@ class EditableResultReportWidget(QScrollArea):
             if "segments" in result_dict and not segments and not non_seg_keys:
                 self.show_placeholder()
                 return
+
+            if "prompt" in result_dict or "message" in result_dict:
+                info_box = QFrame(self.container)
+                info_box.setStyleSheet("""
+                    QFrame {
+                        background: #0f172a;
+                        border: 1px solid #334155;
+                        border-radius: 4px;
+                    }
+                """)
+                info_layout = QVBoxLayout(info_box)
+                info_layout.setContentsMargins(10, 10, 10, 10)
+                info_layout.setSpacing(6)
+
+                lbl_h = QLabel("ℹ️ <strong>Thông Tin Tác Vụ</strong>", info_box)
+                lbl_h.setStyleSheet("color: #38bdf8; font-size: 11px; background: transparent;")
+                info_layout.addWidget(lbl_h)
+
+                msg_text = result_dict.get("message") or f"Đã tiếp nhận yêu cầu: {result_dict.get('prompt', '')}"
+                lbl_msg = QLabel(msg_text, info_box)
+                lbl_msg.setWordWrap(True)
+                lbl_msg.setStyleSheet("color: #cbd5e1; font-size: 10px; line-height: 1.4; background: transparent;")
+                info_layout.addWidget(lbl_msg)
+
+                self.layout.addWidget(info_box)
+                self.layout.addStretch()
+                return
+
             # Fallback only when neither style nor segments exist
             hint = QLabel("Dữ liệu kết quả:", self.container)
             hint.setStyleSheet("color: #64748b; font-size: 9px; margin-bottom: 2px;")

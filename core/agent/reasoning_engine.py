@@ -110,10 +110,17 @@ class DynamicReasoningEngine:
 
         elif tool_name == "translate_subtitles":
             tgt = tool_args.get("target_lang", "vi").upper()
+            indices = tool_args.get("segment_indices", [])
             action_name = f"dịch phụ đề sang tiếng {tgt}"
-            reasoning_points.append(
-                f"Chuyển đổi phụ đề sang {tgt} qua Translation CAT Studio, bảo tồn văn phong bản địa và thuật ngữ ngữ cảnh."
-            )
+            if indices:
+                reasoning_points.append(
+                    f"Chuyển đổi {len(indices)} câu phụ đề (#{', #'.join(map(str, indices))}) sang {tgt} qua Translation CAT Studio. "
+                    f"Toàn bộ các câu khác trong dự án được bảo toàn nguyên vẹn 100%."
+                )
+            else:
+                reasoning_points.append(
+                    f"Chuyển đổi phụ đề sang {tgt} qua Translation CAT Studio, bảo tồn văn phong bản địa và thuật ngữ ngữ cảnh."
+                )
 
         else:
             # Fallback safe reasoning for custom/generic tasks
@@ -251,6 +258,37 @@ class DynamicReasoningEngine:
                 f"Nhận diện giọng nói tự động hoàn tất cho {count} phân đoạn. Toàn bộ từ khóa và nhịp ngắt đã được chuyển đổi sang text.",
             ]
             summary_body = templates[(self._last_completion_idx + 1) % len(templates)]
+
+        elif tool_name == "translate_subtitles":
+            tgt = (result.get("target_lang") or args.get("target_lang", "vi")).upper()
+            indices = result.get("segment_indices") or args.get("segment_indices", [])
+            segs = result.get("segments", [])
+            total_count = len(segs) or active_segments_count
+            if indices:
+                count_done = len(indices)
+                idx_str = f"câu #{', #'.join(map(str, indices))}"
+                other_count = max(0, total_count - count_done)
+                templates = [
+                    f"Đã hoàn thành dịch {idx_str} sang tiếng {tgt} qua CAT Studio. {other_count} câu khác trong dự án được giữ nguyên vẹn 100%.",
+                    f"Quá trình chuyển ngữ tiếng {tgt} cho {idx_str} đã hoàn tất thành công. Dữ liệu các phân đoạn còn lại được bảo toàn tuyệt đối.",
+                    f"Hệ thống đã cập nhật bản dịch tiếng {tgt} cho {idx_str} vào bảng kiểm tra. Toàn bộ các câu khác không bị ảnh hưởng.",
+                ]
+            else:
+                templates = [
+                    f"Đã hoàn thành dịch toàn bộ {total_count} câu phụ đề sang tiếng {tgt} qua CAT Studio, đảm bảo tính mạch lạc của câu chuyện.",
+                    f"Hệ thống đã chuyển ngữ thành công toàn bộ {total_count} phân đoạn sang tiếng {tgt}. Văn phong bản địa hóa đã được áp dụng mượt mà.",
+                ]
+            summary_body = templates[(self._last_completion_idx + 1) % len(templates)]
+
+        elif tool_name == "process_general_task":
+            user_prompt = result.get("prompt") or args.get("prompt") or step.title
+            clean_prompt = user_prompt.strip().rstrip(".,!?")
+            return (
+                f"ℹ️ **Thông báo tiếp nhận yêu cầu:**\n"
+                f"Yêu cầu *\"{clean_prompt}\"* đã được tiếp nhận. Hệ thống chưa tìm thấy thao tác phụ đề tương ứng cần thực thi.\n"
+                f"Dữ liệu phụ đề hiện tại được bảo toàn nguyên vẹn 100%.\n\n"
+                f"👉 Bạn có thể gửi câu lệnh cụ thể như: *'Dịch các câu 6,7,13'*, *'Tạo 5 câu timing'*, *'Dịch chuyển phụ đề tiến 500ms'*, v.v."
+            )
 
         else:
             clean_title = step.title.strip().rstrip(".,!?")
