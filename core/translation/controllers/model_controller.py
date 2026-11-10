@@ -94,7 +94,7 @@ class ModelController(QObject):
             if meta.filename == target_name:
                 return m_id
 
-        return "qwen2.5-7b-instruct-q4_k_m"
+        return "translategemma-9b-q4_k_m"
 
     def _apply_active_model_profile(self) -> None:
         """Cập nhật hardware_profile trong TranslationController khi đổi active model."""

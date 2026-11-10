@@ -567,6 +567,8 @@ class AgentCopilotController(QObject):
         if step.tool_name == "create_timing" and "video_path" not in args and self.context_ledger.video_path:
             args["video_path"] = self.context_ledger.video_path
         if step.tool_name == "translate_subtitles":
+            if "auto_load_model" not in args:
+                args["auto_load_model"] = True
             if "llm_client" not in args and getattr(self, "llm_client", None):
                 args["llm_client"] = self.llm_client
             if "project_dir" not in args and getattr(self.context_ledger, "project_dir", None):

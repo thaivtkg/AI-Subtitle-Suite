@@ -7,7 +7,7 @@ from core.translation.core.backends.ollama_backend import OllamaBackend
 class ModelManager:
     _instance = None
 
-    def __init__(self, backend_type: str = "ollama"):
+    def __init__(self, backend_type: str = "llama_cpp"):
         self.backend: BaseInferenceBackend
         if backend_type == "ollama":
             self.backend = OllamaBackend()
@@ -22,7 +22,7 @@ class ModelManager:
         self._lock = threading.RLock()
 
     @classmethod
-    def get_instance(cls, backend_type: str = "ollama"):
+    def get_instance(cls, backend_type: str = "llama_cpp"):
         if cls._instance is None or cls._instance.backend_type != backend_type:
             cls._instance = cls(backend_type)
         return cls._instance

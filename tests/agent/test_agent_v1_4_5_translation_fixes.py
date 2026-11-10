@@ -380,3 +380,58 @@ def test_tc_trans_13_end_to_end_forensic_bug_scenario():
     assert "câu #6, #7" in report
     assert "câu #13" in report
     assert "Chưa thể dịch" in report
+
+
+
+def test_tc_trans_14_translategemma_auto_load_cuda_hybrid_and_prompt_template(monkeypatch):
+    """Kiểm tra AI Agent tự động kết nối llama_cpp, nạp TranslateGemma với CUDA Hybrid cho RTX 3050 và prompt template Gemma 2."""
+    from unittest.mock import MagicMock
+    from core.agent.agent_tool_registry import _perform_single_translation
+    from core.translation.llm.model_manager import ModelManager
+    from core.translation.core.hardware_detector import HardwareDetector
+
+    # 1. Giả lập phần cứng RTX 3050 4GB VRAM
+    fake_gpu = {"has_gpu_hardware": True, "name": "NVIDIA GeForce RTX 3050 Laptop GPU", "vram_gb": 4.0}
+    monkeypatch.setattr(HardwareDetector, "get_gpu_info", lambda: fake_gpu)
+    monkeypatch.setattr(HardwareDetector, "check_llama_cuda_backend", lambda: True)
+
+    mock_mm = MagicMock()
+    mock_mm.current_model_name = ""
+    def fake_load(path, **kwargs):
+        mock_mm.current_model_name = path
+        return True
+    mock_mm.load_model.side_effect = fake_load
+
+    # Giả lập model sinh ra câu dịch kèm khối [TỪ GỐC]
+    captured_prompts = []
+    def fake_generate(prompt="", **kwargs):
+        captured_prompts.append(prompt)
+        return "Xin chào, đây là bản dịch chuẩn xác.\n[TỪ GỐC]\n- hello -> xin chào"
+
+    mock_mm.generate = fake_generate
+    monkeypatch.setattr(ModelManager, "get_instance", lambda backend="llama_cpp": mock_mm)
+
+    # 2. Gọi _perform_single_translation với auto_load_model=True
+    res = _perform_single_translation(
+        text="Hello world",
+        target_lang="vi",
+        auto_load_model=True,
+    )
+
+    # 3. Kiểm tra load_model được gọi với số layer tối ưu cho RTX 3050 (16-20 layers)
+    assert mock_mm.load_model.called
+    call_kwargs = mock_mm.load_model.call_args[1]
+    n_gpu_layers = call_kwargs.get("n_gpu_layers", 0)
+    assert 16 <= n_gpu_layers <= 20, f"n_gpu_layers {n_gpu_layers} nằm ngoài dải 16-20 tối ưu cho RTX 3050"
+
+    # 4. Kiểm tra Prompt áp dụng đúng chuẩn Gemma 2 (<start_of_turn>user ... <start_of_turn>model)
+    assert len(captured_prompts) == 1
+    prompt_used = captured_prompts[0]
+    assert "<start_of_turn>user" in prompt_used
+    assert "<start_of_turn>model" in prompt_used
+    assert "VIETNAMESE LOCALIZATION RULES (MUST FOLLOW)" in prompt_used
+
+    # 5. Kiểm tra kết quả trả về đã lọc sạch các thẻ [TỪ GỐC] và không dính nhãn giả
+    assert res == "Xin chào, đây là bản dịch chuẩn xác."
+    assert "[TỪ GỐC]" not in res
+    assert not res.startswith("[VI]")

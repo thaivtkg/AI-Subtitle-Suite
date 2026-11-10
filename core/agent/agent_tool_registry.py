@@ -303,13 +303,73 @@ def run_asr(
     }
 
 
+def _ensure_gemma_model_loaded(mm: Any) -> bool:
+    """Tự động kiểm tra và nạp file gemma-2-9b-it-Q4_K_M.gguf vào ModelManager với cấu hình CUDA Hybrid."""
+    import os
+    target_filename = "gemma-2-9b-it-Q4_K_M.gguf"
+
+    # 1. Nếu model hiện tại đã đúng file Gemma, sẵn sàng dịch
+    curr = getattr(mm, "current_model_name", "")
+    if curr and target_filename in curr:
+        return True
+
+    # 2. Định vị file model trên đĩa
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    candidate_paths = [
+        os.path.join(base_dir, "models", target_filename),
+        os.path.join("models", target_filename),
+        os.path.join(r"E:\AI-Subtitle-Translator\models", target_filename),
+    ]
+    model_path = None
+    for p in candidate_paths:
+        if os.path.exists(p) and os.path.getsize(p) > 0:
+            model_path = p
+            break
+
+    # Nếu chưa có gemma, tìm model .gguf khác có sẵn trong thư mục models/
+    if not model_path:
+        models_dir = os.path.join(base_dir, "models")
+        if os.path.exists(models_dir):
+            for f in os.listdir(models_dir):
+                if f.endswith(".gguf") and os.path.getsize(os.path.join(models_dir, f)) > 0:
+                    model_path = os.path.join(models_dir, f)
+                    break
+
+    if not model_path:
+        return False
+
+    # 3. Tính toán cấu hình CUDA Hybrid tối ưu cho card RTX 3050 (16-20 layers trên GPU, còn lại RAM)
+    try:
+        from core.translation.core.hardware_detector import HardwareDetector
+        gpu_info = HardwareDetector.get_gpu_info()
+        llama_has_cuda = HardwareDetector.check_llama_cuda_backend()
+        has_gpu = bool(gpu_info.get("has_gpu_hardware")) and llama_has_cuda
+        vram_gb = float(gpu_info.get("vram_gb", 0.0))
+
+        if not has_gpu:
+            n_gpu_layers = 0
+        elif vram_gb >= 7.5:
+            n_gpu_layers = -1
+        else:
+            # RTX 3050 (4GB VRAM): 16-20 layers trên GPU, phần còn lại trên RAM hệ thống
+            safe_vram = max(0.5, vram_gb - 0.8)
+            ratio = min(1.0, safe_vram / 5.42)
+            n_gpu_layers = max(16, min(20, int(ratio * 36)))
+
+        return mm.load_model(model_path, n_ctx=4096, n_gpu_layers=n_gpu_layers)
+    except Exception as e:
+        print(f"[AI Agent Warning] Không thể nạp model {model_path}: {e}")
+        return False
+
+
 def _perform_single_translation(
     text: str,
     target_lang: str,
     llm_client: Optional[Any] = None,
     online_configs: Optional[List[Any]] = None,
+    auto_load_model: bool = False,
 ) -> Optional[str]:
-    """Thực thi dịch thuật một câu qua LLM client hoặc ModelManager.
+    """Thực thi dịch thuật một câu qua LLM client hoặc ModelManager (ưu tiên TranslateGemma).
     Nếu không có mô hình khả dụng, trả về None (tuyệt đối không dán nhãn giả [VI]).
     """
     if not text or not text.strip():
@@ -342,16 +402,51 @@ def _perform_single_translation(
         except Exception:
             pass
 
-    # 2. Thử gọi Local GGUF Model qua ModelManager nếu có model đang tải
-    try:
-        from core.translation.llm.model_manager import ModelManager
-        mm = ModelManager.get_instance()
-        if mm and getattr(mm, "current_model_name", ""):
-            res = mm.generate(prompt=text, system_prompt=f"Dịch câu sau sang tiếng {target_lang}. Chỉ xuất câu dịch:")
-            if res and res.strip():
-                return res.strip()
-    except Exception:
-        pass
+    # 2. Thử gọi Local GGUF Model (ưu tiên TranslateGemma qua ModelManager backend llama_cpp)
+    if auto_load_model:
+        try:
+            from core.translation.llm.model_manager import ModelManager
+            from core.translation.core.prompt_builder import build_translation_prompt
+            from core.translation.llm.worker import TranslationWorker
+
+            mm = ModelManager.get_instance("llama_cpp")
+            # Tự động nạp model TranslateGemma nếu chưa có model sẵn sàng trong VRAM/RAM
+            if not getattr(mm, "current_model_name", ""):
+                _ensure_gemma_model_loaded(mm)
+
+            if mm and getattr(mm, "current_model_name", ""):
+                lang_names = {
+                    "vi": "Vietnamese", "en": "English", "ja": "Japanese",
+                    "ko": "Korean", "zh": "Chinese", "fr": "French", "de": "German"
+                }
+                tgt_name = lang_names.get(target_lang.lower(), "Vietnamese")
+                is_ja = any('\u3040' <= c <= '\u30ff' for c in text)
+                source_lang = "Japanese" if is_ja else "English"
+
+                # Áp dụng mẫu Prompt chuẩn chỉnh của Gemma 2 (<start_of_turn>user ... <start_of_turn>model)
+                model_name = getattr(mm, "current_model_name", "").lower()
+                model_family = "gemma" if "gemma" in model_name or "translategemma" in model_name else "qwen"
+                prompt = build_translation_prompt(
+                    current_sub=text,
+                    source_lang=source_lang,
+                    target_lang=tgt_name,
+                    is_ja_origin=is_ja,
+                    model_family=model_family,
+                )
+
+                res = mm.generate(prompt=prompt)
+                if res and res.strip():
+                    clean_text = TranslationWorker._visible_translation(res)
+                    if not clean_text:
+                        for line in res.strip().splitlines():
+                            line = line.strip().strip('"\'')
+                            if line and not line.startswith("[") and not line.startswith("<"):
+                                clean_text = line
+                                break
+                    if clean_text:
+                        return clean_text.strip().strip('"\'')
+        except Exception as e:
+            print(f"[AI Agent Translation Error] {e}")
 
     # 3. Tuyệt đối không tự ý ghép tag [VI]! Trả về None khi chưa có mô hình dịch.
     return None
@@ -368,6 +463,7 @@ def translate_subtitles(
     aisrt_path: Optional[str] = None,
     project_subs: Optional[List[Dict[str, Any]]] = None,
     online_configs: Optional[List[Any]] = None,
+    auto_load_model: bool = False,
     **kwargs: Any,
 ) -> Dict[str, Any]:
     """Dịch phụ đề sang ngôn ngữ đích trong CAT Studio với hỗ trợ chọn lọc câu chỉ định và tích hợp Translation Memory / project.aisrt."""
@@ -527,6 +623,7 @@ def translate_subtitles(
                 target_lang=target_lang,
                 llm_client=llm_client,
                 online_configs=online_configs,
+                auto_load_model=auto_load_model,
             )
 
         # Xác định số thứ tự định danh hiển thị của câu (ưu tiên theo target_indices khớp được)

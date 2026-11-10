@@ -44,31 +44,75 @@ class DownloadWorker(QThread):
                 self.error.emit(self.model_id, f"Không thể tạo thư mục lưu trữ: {e}")
                 return
 
-        # Xóa file .part cũ nếu có
-        if os.path.exists(self.part_path):
+        # Tự động tiếp nhận file .crdownload nếu chưa có .part (hỗ trợ chuyển đổi tải dở dang từ trình duyệt)
+        crdownload_path = self.target_path + ".crdownload"
+        if not os.path.exists(self.part_path) and os.path.exists(crdownload_path):
             try:
-                os.remove(self.part_path)
+                os.replace(crdownload_path, self.part_path)
             except OSError:
                 pass
 
-        bytes_downloaded = 0
+        # Kiểm tra file .part hiện có để hỗ trợ Resume (Tải tiếp)
+        existing_bytes = 0
+        if os.path.exists(self.part_path):
+            try:
+                existing_bytes = os.path.getsize(self.part_path)
+            except OSError:
+                existing_bytes = 0
+
+        # Nếu file .part đã đủ kích thước kỳ vọng, hoàn tất luôn
+        if self.expected_size_bytes > 0 and existing_bytes == self.expected_size_bytes:
+            try:
+                os.replace(self.part_path, self.target_path)
+                self.progress.emit(self.model_id, 100, "Hoàn tất", "0s")
+                self.finished.emit(self.model_id, self.target_path)
+                return
+            except OSError as e:
+                self.error.emit(self.model_id, f"Lỗi hoàn tất file: {e}")
+                return
+
+        bytes_downloaded = existing_bytes
         total_bytes = self.expected_size_bytes
         start_time = time.time()
         last_update_time = start_time
-        last_bytes = 0
+        last_bytes = bytes_downloaded
+        open_mode = "ab" if existing_bytes > 0 else "wb"
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Accept-Encoding": "identity",
+        }
+        if existing_bytes > 0:
+            headers["Range"] = f"bytes={existing_bytes}-"
 
         try:
-            req = urllib.request.Request(
-                self.download_url,
-                headers={"User-Agent": "AISubtitleTranslator/1.0"},
-            )
+            req = urllib.request.Request(self.download_url, headers=headers)
             with urllib.request.urlopen(req, timeout=30) as response:
-                content_length = response.headers.get("Content-Length")
-                if content_length and int(content_length) > 0:
-                    total_bytes = int(content_length)
+                resp_status = getattr(response, "status", getattr(response, "code", 200))
+                # Nếu server trả về 200 OK thay vì 206 Partial Content khi có Range, bắt đầu lại từ 0
+                if existing_bytes > 0 and resp_status == 200:
+                    open_mode = "wb"
+                    bytes_downloaded = 0
+                    last_bytes = 0
 
-                chunk_size = 64 * 1024  # 64 KB
-                with open(self.part_path, "wb") as f:
+                content_range = response.headers.get("Content-Range")
+                if content_range and "/" in content_range:
+                    try:
+                        total_part = content_range.split("/")[-1].strip()
+                        if total_part != "*" and int(total_part) > 0:
+                            total_bytes = int(total_part)
+                    except (ValueError, TypeError):
+                        pass
+                else:
+                    content_length = response.headers.get("Content-Length")
+                    if content_length and int(content_length) > 0:
+                        if resp_status == 206:
+                            total_bytes = existing_bytes + int(content_length)
+                        else:
+                            total_bytes = int(content_length)
+
+                chunk_size = 1024 * 1024  # 1 MB buffer tối ưu throughput TCP
+                with open(self.part_path, open_mode) as f:
                     while True:
                         if self._is_cancelled or self.isInterruptionRequested():
                             break
@@ -90,7 +134,7 @@ class DownloadWorker(QThread):
 
                             if total_bytes > 0:
                                 percent = int((bytes_downloaded / total_bytes) * 100)
-                                remaining_bytes = total_bytes - bytes_downloaded
+                                remaining_bytes = max(0, total_bytes - bytes_downloaded)
                                 eta_sec = int(remaining_bytes / speed_bps) if speed_bps > 0 else 0
                                 eta_str = f"{eta_sec}s" if eta_sec < 60 else f"{eta_sec // 60}m {eta_sec % 60}s"
                             else:
@@ -102,13 +146,15 @@ class DownloadWorker(QThread):
                             last_bytes = bytes_downloaded
 
         except Exception as e:
-            self._cleanup_part_file()
+            # Nếu lỗi xảy ra khi chưa ghi được byte nào (hoặc file 0 byte), dọn dẹp file rỗng
+            if os.path.exists(self.part_path) and os.path.getsize(self.part_path) == 0:
+                self._cleanup_part_file()
             if not self._is_cancelled:
                 self.error.emit(self.model_id, f"Lỗi tải file: {str(e)}")
             return
 
         if self._is_cancelled or self.isInterruptionRequested():
-            self._cleanup_part_file()
+            # Người dùng bấm Hủy hoặc ngắt kết nối: KHÔNG xóa file .part để hỗ trợ Resume lần sau
             return
 
         # Xác thực dung lượng file khi hoàn tất 100%

@@ -1,4 +1,4 @@
-﻿import json
+import json
 import os
 import tempfile
 import time
@@ -554,6 +554,81 @@ def test_tc_mm_20_select_model_guard_against_missing_file(tmp_path):
     # Sau khi có file trên đĩa -> Kích hoạt thành công
     (tmp_path / "qwen2.5-3b-instruct-q4_k_m.gguf").write_bytes(b"dummy")
     assert controller.selectActiveModel("qwen2.5-3b-instruct-q4_k_m") is True
+
+
+# ==========================================
+# TC-MM-21: DOWNLOAD RESUME & RANGE SUPPORT
+# ==========================================
+def test_tc_mm_21_download_resume_range_support(qapp, tmp_path, monkeypatch):
+    """Kiểm tra hỗ trợ Range header, Resume tải tiếp khi có file .part dở dang và không xóa .part khi hủy."""
+    import urllib.request
+    from core.translation.services.download_manager import DownloadWorker
+
+    target_file = str(tmp_path / "resume_model.gguf")
+    part_file = target_file + ".part"
+
+    # Tạo sẵn 50 bytes trong file .part
+    with open(part_file, "wb") as f:
+        f.write(b"X" * 50)
+
+    sent_headers = {}
+
+    class MockRangeResponse:
+        def __init__(self, req):
+            nonlocal sent_headers
+            sent_headers = req.headers
+            self.status = 206
+            self.headers = {
+                "Content-Length": "50",
+                "Content-Range": "bytes 50-99/100",
+            }
+        def read(self, size):
+            if not hasattr(self, "_done"):
+                self._done = True
+                return b"Y" * 50
+            return b""
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=30: MockRangeResponse(req))
+
+    worker = DownloadWorker(
+        model_id="resume_model",
+        download_url="http://mock.test/resume.gguf",
+        target_path=target_file,
+        expected_size_bytes=100,
+    )
+
+    worker.start()
+    worker.wait(2000)
+
+    # 1. Kiểm tra header Range được gửi đi chuẩn xác
+    assert "Range" in sent_headers
+    assert sent_headers["Range"] == "bytes=50-"
+    # 2. Kiểm tra User-Agent là Mozilla/5.0 chuẩn trình duyệt (chống Hugging Face bóp băng thông)
+    assert "Mozilla/5.0" in sent_headers.get("User-agent", sent_headers.get("User-Agent", ""))
+
+    # 3. Sau khi tải xong, file hoàn tất đủ 100 bytes (50 bytes X + 50 bytes Y)
+    assert os.path.exists(target_file)
+    assert os.path.getsize(target_file) == 100
+    assert not os.path.exists(part_file)
+
+    # 4. Kiểm tra khi cancel tải dở, file .part KHÔNG bị xóa
+    test_cancel_target = str(tmp_path / "cancel_preserve.gguf")
+    test_cancel_part = test_cancel_target + ".part"
+    with open(test_cancel_part, "wb") as f:
+        f.write(b"preserved bytes")
+
+    cancel_worker = DownloadWorker(
+        model_id="cancel_preserve",
+        download_url="http://mock.test/slow.gguf",
+        target_path=test_cancel_target,
+        expected_size_bytes=1000,
+    )
+    cancel_worker.cancel()
+    # Khi user bấm Hủy, file .part phải được bảo lưu 100% để Resume lần sau
+    assert os.path.exists(test_cancel_part)
+
 
 
 

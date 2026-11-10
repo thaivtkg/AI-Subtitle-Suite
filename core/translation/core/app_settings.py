@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 class AppSettings:
     DEFAULT_SETTINGS = {
-        "active_model_id": "qwen2.5-7b-instruct-q4_k_m",
+        "active_model_id": "translategemma-9b-q4_k_m",
         "custom_n_ctx": 4096,
         "custom_n_gpu_layers": -1,
         "recent_files": [],
