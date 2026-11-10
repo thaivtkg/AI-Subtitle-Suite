@@ -3,7 +3,7 @@ from PySide6.QtWidgets import QLabel
 from core.agent.agent_copilot_controller import AgentCopilotController
 from core.agent.agent_tool_registry import translate_subtitles
 from core.agent.reasoning_engine import DynamicReasoningEngine
-from core.agent.models import AgentStep, AgentContextLedger
+from core.agent.models import AgentStep, AgentContextLedger, StepStatus
 
 
 def test_tc_trans_01_prompt_with_sub_word_triggers_translation_not_shift():
@@ -41,16 +41,33 @@ def test_tc_trans_03_prompt_with_sang_does_not_hijack_shift():
 
 
 def test_tc_trans_04_translate_subtitles_preserves_untargeted_segments():
-    """BUG-TRANS-TAG-ALL-001: Chỉ dịch câu trong segment_indices, giữ nguyên 100% các câu khác."""
+    """BUG-TRANS-TAG-ALL-001: Chỉ dịch câu trong segment_indices, dùng bản dịch thật và giữ nguyên 100% các câu khác."""
+    from unittest.mock import MagicMock
+
+    mock_llm = MagicMock()
+    mock_llm.generate_with_fallback.side_effect = [
+        {"content": "Bản dịch câu 2 hoàn chỉnh"},
+        {"content": "Bản dịch câu 4 hoàn chỉnh"},
+    ]
+
     segs = [
         {"id": 1, "start": "00:01.000", "end": "00:03.000", "text": "Câu 1 gốc", "translation": ""},
         {"id": 2, "start": "00:03.500", "end": "00:05.500", "text": "Câu 2 gốc", "translation": ""},
         {"id": 3, "start": "00:06.000", "end": "00:08.000", "text": "Câu 3 gốc", "translation": ""},
         {"id": 4, "start": "00:08.500", "end": "00:10.500", "text": "Câu 4 gốc", "translation": ""},
     ]
-    res = translate_subtitles(target_lang="vi", scope="selected", segment_indices=[2, 4], segments=segs)
+    res = translate_subtitles(
+        target_lang="vi",
+        scope="selected",
+        segment_indices=[2, 4],
+        segments=segs,
+        llm_client=mock_llm,
+    )
     res_segs = res["segments"]
     assert len(res_segs) == 4
+    assert res["status"] == "ok"
+    assert res["translated_count"] == 2
+    assert res["failed_indices"] == []
 
     # Câu 1 và 3 không được chọn -> Phải giữ nguyên 100% không bị dán [VI]
     assert res_segs[0]["text"] == "Câu 1 gốc"
@@ -58,14 +75,42 @@ def test_tc_trans_04_translate_subtitles_preserves_untargeted_segments():
     assert res_segs[2]["text"] == "Câu 3 gốc"
     assert res_segs[2]["translation"] == ""
 
-    # Câu 2 và 4 được chọn -> Được dịch
-    assert res_segs[1]["text"] != "Câu 2 gốc"
-    assert res_segs[1]["translation"] != ""
+    # Câu 2 và 4 được chọn -> Được dịch thành tiếng Việt có nghĩa thật sự (CẤM dán nhãn giả [VI])
+    assert res_segs[1]["text"] == "Bản dịch câu 2 hoàn chỉnh"
+    assert res_segs[1]["translation"] == "Bản dịch câu 2 hoàn chỉnh"
     assert res_segs[1]["original_text"] == "Câu 2 gốc"
+    assert not res_segs[1]["text"].startswith("[VI]")
 
-    assert res_segs[3]["text"] != "Câu 4 gốc"
-    assert res_segs[3]["translation"] != ""
+    assert res_segs[3]["text"] == "Bản dịch câu 4 hoàn chỉnh"
+    assert res_segs[3]["translation"] == "Bản dịch câu 4 hoàn chỉnh"
     assert res_segs[3]["original_text"] == "Câu 4 gốc"
+    assert not res_segs[3]["text"].startswith("[VI]")
+
+
+def test_tc_trans_04b_offline_no_model_preserves_original_and_returns_warning():
+    """CRIT-FAKE-TRANS-FALLBACK-001: Khi offline không có mô hình và không có TM, CẤM dán [VI], giữ nguyên bản gốc."""
+    segs = [
+        {"id": 1, "text": "この俺様に一体何の", "translation": ""},
+        {"id": 2, "text": "そんなの決まってるわ。", "translation": ""},
+    ]
+    res = translate_subtitles(
+        target_lang="vi",
+        scope="selected",
+        segment_indices=[1, 2],
+        segments=segs,
+        project_dir=r"C:\nonexistent_project_folder",
+        llm_client=None,
+    )
+    assert res["status"] == "warning"
+    assert res["translated_count"] == 0
+    assert res["failed_indices"] == [1, 2]
+
+    # Cả 2 câu phải giữ nguyên văn bản gốc tiếng Nhật 100%, tuyệt đối CẤM dán [VI]
+    for s in res["segments"]:
+        assert not s["text"].startswith("[VI]"), f"Phát hiện nhãn giả [VI] trong: {s['text']}"
+        assert not str(s.get("translation", "")).startswith("[VI]")
+    assert res["segments"][0]["text"] == "この俺様に一体何の"
+    assert res["segments"][1]["text"] == "そんなの決まってるわ。"
 
 
 def test_tc_trans_05_reasoning_engine_process_general_task_honest_reporting():
@@ -108,10 +153,11 @@ def test_tc_trans_06_reasoning_engine_translate_subtitles_selective_reporting():
 
 
 def test_tc_trans_07_real_project_jmsz_24_segments_selective_translation():
-    """Kiểm thử thực chiến trên 24 câu phụ đề dự án JMSZ.ai-subtitle."""
+    """Kiểm thử thực chiến trên 24 câu phụ đề dự án JMSZ.ai-subtitle và đối chiếu project.aisrt."""
     import os, json
     proj_file = r"D:\Projects\JMSZ.ai-subtitle\artifacts\subtitle\ccecdae5-f64c-41d1-b998-0a5ec1d423e4.sub.json"
-    if not os.path.exists(proj_file):
+    proj_dir = r"D:\Projects\JMSZ.ai-subtitle"
+    if not os.path.exists(proj_file) or not os.path.exists(proj_dir):
         pytest.skip("File dự án JMSZ.ai-subtitle không tồn tại trên máy")
 
     with open(proj_file, "r", encoding="utf-8") as f:
@@ -121,11 +167,20 @@ def test_tc_trans_07_real_project_jmsz_24_segments_selective_translation():
 
     orig_texts = [s["text"] for s in segments]
 
-    # Chạy dịch chọn lọc câu [6, 7, 13]
-    res = translate_subtitles(target_lang="vi", scope="selected", segment_indices=[6, 7, 13], segments=segments)
+    # Chạy dịch chọn lọc câu [6, 7, 13] với project_dir thực tế
+    res = translate_subtitles(
+        target_lang="vi",
+        scope="selected",
+        segment_indices=[6, 7, 13],
+        segments=segments,
+        project_dir=proj_dir,
+    )
     res_segs = res["segments"]
     assert len(res_segs) == 24
-    assert res["translated_count"] == 3
+    assert res["status"] == "warning"  # 6, 7 dịch từ project.aisrt, 13 chưa dịch được do chưa có model
+    assert res["translated_count"] == 2
+    assert res["translated_indices"] == [6, 7]
+    assert res["failed_indices"] == [13]
 
     # Kiểm tra 21 câu không chọn: 100% giữ nguyên text cũ, không bị dán [VI]
     for idx, seg in enumerate(res_segs):
@@ -133,9 +188,21 @@ def test_tc_trans_07_real_project_jmsz_24_segments_selective_translation():
         if stt not in [6, 7, 13]:
             assert seg["text"] == orig_texts[idx], f"Câu #{stt} bị thay đổi dữ liệu trái phép!"
             assert not str(seg.get("translation", "")).startswith("[VI]"), f"Câu #{stt} bị dán nhãn translation!"
-        else:
-            assert seg["text"] != orig_texts[idx] or seg.get("translation") != ""
-            assert seg.get("original_text") == orig_texts[idx]
+            assert not str(seg.get("text", "")).startswith("[VI]")
+
+    # Câu #6 và #7: Lấy bản dịch tiếng Việt chuẩn xác từ project.aisrt (CAT Studio)
+    assert res_segs[5]["text"] == "Đến tớ đây thì làm cái gì"
+    assert res_segs[5]["translation"] == "Đến tớ đây thì làm cái gì"
+    assert not res_segs[5]["text"].startswith("[VI]")
+
+    assert res_segs[6]["text"] == "Đó là điều đương nhiên rồi."
+    assert res_segs[6]["translation"] == "Đó là điều đương nhiên rồi."
+    assert not res_segs[6]["text"].startswith("[VI]")
+
+    # Câu #13: Không có model -> Giữ nguyên text gốc, tuyệt đối CẤM dán [VI]
+    assert res_segs[12]["text"] == orig_texts[12]
+    assert not res_segs[12]["text"].startswith("[VI]")
+    assert not str(res_segs[12].get("translation", "")).startswith("[VI]")
 
 
 def test_tc_trans_08_inspector_renders_styled_info_box_for_general_task(qtbot):
@@ -201,6 +268,11 @@ def test_tc_trans_10_translate_with_duration_phrase_not_split_to_shift():
 
 def test_tc_trans_11_translate_discontinuous_stt_matched_by_1based_index():
     """ADV-TRANS-DISCONTINUOUS-STT-INDEX-003: Phân giải số câu đa chiều (stt, id, 1-based index) khi stt bị đứt đoạn."""
+    from unittest.mock import MagicMock
+
+    mock_llm = MagicMock()
+    mock_llm.generate_with_fallback.return_value = {"content": "Nội dung câu 24 đã dịch thành công"}
+
     # Giả lập 24 câu giống JMSZ: câu #16 có stt=None, câu #24 có stt="23"
     segs = []
     for i in range(1, 25):
@@ -213,15 +285,24 @@ def test_tc_trans_11_translate_discontinuous_stt_matched_by_1based_index():
         })
 
     # Người dùng gõ 'Dịch câu 24' -> target_indices = [24]
-    res = translate_subtitles(target_lang="vi", scope="selected", segment_indices=[24], segments=segs)
+    res = translate_subtitles(
+        target_lang="vi",
+        scope="selected",
+        segment_indices=[24],
+        segments=segs,
+        llm_client=mock_llm,
+    )
     res_segs = res["segments"]
     assert len(res_segs) == 24
+    assert res["status"] == "ok"
     assert res["translated_count"] == 1
+    assert res["translated_indices"] == [24]
 
     # Câu #24 (index 23 trong mảng) phải được dịch dù stt là '23'
-    assert res_segs[23]["text"] != "Nội dung câu 24"
-    assert res_segs[23]["translation"] != ""
+    assert res_segs[23]["text"] == "Nội dung câu 24 đã dịch thành công"
+    assert res_segs[23]["translation"] == "Nội dung câu 24 đã dịch thành công"
     assert res_segs[23]["original_text"] == "Nội dung câu 24"
+    assert not res_segs[23]["text"].startswith("[VI]")
 
     # Câu #23 (index 22 trong mảng, stt '22') không được dịch
     assert res_segs[22]["text"] == "Nội dung câu 23"
@@ -236,3 +317,66 @@ def test_tc_trans_12_doan_keyword_extracts_indices():
     assert p.steps[0].tool_name == "translate_subtitles"
     assert p.steps[0].tool_args.get("segment_indices") == [6, 7, 13]
     assert p.steps[0].tool_args.get("scope") == "selected"
+
+
+def test_tc_trans_13_end_to_end_forensic_bug_scenario():
+    """CRIT-FAKE-TRANS-FALLBACK-001: Tái hiện 100% kịch bản User trên JMSZ - Không chúc mừng giả, lấy đúng bản dịch #6,#7 và giữ nguyên #13."""
+    import os, json
+
+    proj_file = r"D:\Projects\JMSZ.ai-subtitle\artifacts\subtitle\ccecdae5-f64c-41d1-b998-0a5ec1d423e4.sub.json"
+    proj_dir = r"D:\Projects\JMSZ.ai-subtitle"
+    if not os.path.exists(proj_file) or not os.path.exists(proj_dir):
+        pytest.skip("File dự án JMSZ.ai-subtitle không tồn tại trên máy")
+
+    with open(proj_file, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    segments = data.get("segments", [])
+
+    ctrl = AgentCopilotController()
+    ctrl.context_ledger.project_dir = proj_dir
+    ctrl._active_segments = segments
+
+    plan = ctrl._synthesize_plan("Dịch các câu 6,7,13")
+    assert len(plan.steps) == 1
+    step = plan.steps[0]
+    assert step.tool_name == "translate_subtitles"
+
+    # Thực thi tool với cấu hình thực tế của desktop (không có API Key, chưa nạp GGUF)
+    args = dict(step.tool_args)
+    args["segments"] = segments
+    args["project_dir"] = proj_dir
+    args["llm_client"] = ctrl.llm_client
+
+    exec_res = ctrl.tool_registry.safe_execute_tool("translate_subtitles", args)
+    assert exec_res["success"] is True
+    res_dict = exec_res["result"]
+
+    assert res_dict["status"] == "warning"
+    assert res_dict["translated_count"] == 2
+    assert res_dict["translated_indices"] == [6, 7]
+    assert res_dict["failed_indices"] == [13]
+
+    res_segs = res_dict["segments"]
+    # Câu 6 và 7 lấy đúng bản dịch tiếng Việt từ project.aisrt
+    assert res_segs[5]["text"] == "Đến tớ đây thì làm cái gì"
+    assert not res_segs[5]["text"].startswith("[VI]")
+    assert res_segs[6]["text"] == "Đó là điều đương nhiên rồi."
+    assert not res_segs[6]["text"].startswith("[VI]")
+
+    # Câu 13 giữ nguyên văn bản tiếng Nhật gốc, CẤM dán [VI]
+    assert res_segs[12]["text"] == segments[12]["text"]
+    assert not res_segs[12]["text"].startswith("[VI]")
+
+    # DynamicReasoningEngine: Báo cáo trung thực, CẤM icon 🎉 và CẤM chúc mừng giả
+    step.status = StepStatus.COMPLETED
+    report = ctrl.reasoning_engine.synthesize_completion(
+        step=step,
+        result=res_dict,
+        context_ledger=ctrl.context_ledger,
+        active_segments_count=len(segments),
+    )
+    assert "🎉" not in report
+    assert "Hoàn thành tác vụ thành công" not in report
+    assert "câu #6, #7" in report
+    assert "câu #13" in report
+    assert "Chưa thể dịch" in report

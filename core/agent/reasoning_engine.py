@@ -264,6 +264,36 @@ class DynamicReasoningEngine:
             indices = result.get("segment_indices") or args.get("segment_indices", [])
             segs = result.get("segments", [])
             total_count = len(segs) or active_segments_count
+            failed = result.get("failed_indices", [])
+            trans_count = result.get("translated_count", 0)
+            trans_idxs = result.get("translated_indices", [])
+
+            # Kịch bản A: Toàn bộ câu yêu cầu đều thất bại hoặc chưa dịch được câu nào
+            if trans_count == 0:
+                targets = failed or indices
+                fail_str = f"câu #{', #'.join(map(str, targets))}" if targets else "phụ đề"
+                return (
+                    f"⚠️ **Chưa thể dịch {fail_str} do chưa nạp mô hình AI:**\n\n"
+                    f"Hệ thống chưa tìm thấy mô hình dịch thuật khả dụng (Local GGUF hoặc Online API) "
+                    f"và chưa có bản dịch sẵn trong CAT Studio / Bộ nhớ dịch.\n\n"
+                    f"👉 *Vui lòng nạp model trong Tab 2 (CAT Studio) hoặc cấu hình API Key trong Cài đặt.*\n"
+                    f"Toàn bộ dữ liệu phụ đề gốc được bảo toàn nguyên vẹn 100%."
+                )
+
+            # Kịch bản B: Dịch được một phần (từ CAT Studio/TM), còn lại một số câu chưa dịch được
+            if failed and trans_count > 0:
+                done_str = f"câu #{', #'.join(map(str, trans_idxs))}" if trans_idxs else f"{trans_count} câu"
+                fail_str = f"câu #{', #'.join(map(str, failed))}"
+                other_count = max(0, total_count - len(indices)) if indices else 0
+                return (
+                    f"⚠️ **Báo cáo tiến độ dịch thuật từ CAT Studio & Bộ nhớ dịch (Cần lưu ý):**\n\n"
+                    f"• **Đã cập nhật bản dịch:** {done_str} sang tiếng {tgt} từ CAT Studio / Bộ nhớ dịch.\n"
+                    f"• **Chưa thể dịch:** {fail_str} do chưa nạp mô hình AI (Local GGUF hoặc Online API) và chưa có sẵn trong bộ nhớ dịch.\n\n"
+                    f"👉 *Vui lòng nạp model trong Tab 2 hoặc cài đặt API Key để hoàn tất các câu còn lại.*\n"
+                    f"Toàn bộ các câu chưa dịch và {other_count} câu khác trong dự án được bảo toàn nguyên vẹn 100%."
+                )
+
+            # Kịch bản C: Dịch thành công 100% các câu được yêu cầu
             if indices:
                 count_done = len(indices)
                 idx_str = f"câu #{', #'.join(map(str, indices))}"

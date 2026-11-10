@@ -79,6 +79,7 @@ class AgentCopilotController(QObject):
         prompt: str,
         online_configs: Optional[List[ProviderConfig]] = None,
     ) -> AgentTaskPlan:
+        self._online_configs = online_configs
         # 1. Record user message
         user_msg = ChatMessage(role="user", content=prompt, timestamp=time.time())
         self.chat_history.append(user_msg)
@@ -565,8 +566,13 @@ class AgentCopilotController(QObject):
         args = dict(step.tool_args)
         if step.tool_name == "create_timing" and "video_path" not in args and self.context_ledger.video_path:
             args["video_path"] = self.context_ledger.video_path
-        if step.tool_name == "translate_subtitles" and "llm_client" not in args and getattr(self, "llm_client", None):
-            args["llm_client"] = self.llm_client
+        if step.tool_name == "translate_subtitles":
+            if "llm_client" not in args and getattr(self, "llm_client", None):
+                args["llm_client"] = self.llm_client
+            if "project_dir" not in args and getattr(self.context_ledger, "project_dir", None):
+                args["project_dir"] = self.context_ledger.project_dir
+            if "online_configs" not in args and getattr(self, "_online_configs", None):
+                args["online_configs"] = self._online_configs
         if step.tool_name in ("adjust_subtitle_bounds", "shift_subtitles", "rescan_subtitles", "run_asr", "apply_subtitle_style", "translate_subtitles", "render_hardsub") and "segments" not in args:
             if not self._active_segments:
                 if step.tool_name != "apply_subtitle_style":
@@ -601,10 +607,12 @@ class AgentCopilotController(QObject):
             self.chat_message_added.emit(chat_reply)
 
             self.step_completed.emit(idx, step, exec_res.get("result", {}))
-            if step.tool_name != "process_general_task":
-                self.notification_requested.emit(f"Task #{idx+1} ({step.title}) hoàn tất! Đang chờ bạn duyệt.")
-            else:
+            if step.tool_name == "process_general_task":
                 self.notification_requested.emit(f"Task #{idx+1}: Đã tiếp nhận yêu cầu.")
+            elif step.tool_name == "translate_subtitles" and (res_dict.get("failed_indices") or res_dict.get("status") == "warning"):
+                self.notification_requested.emit(f"Task #{idx+1} ({step.title}): Cảnh báo chưa nạp mô hình dịch thuật.")
+            else:
+                self.notification_requested.emit(f"Task #{idx+1} ({step.title}) hoàn tất! Đang chờ bạn duyệt.")
         else:
             step.status = StepStatus.FAILED
             err = exec_res.get("error", "Lỗi không xác định")

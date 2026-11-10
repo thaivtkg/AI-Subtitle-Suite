@@ -2806,6 +2806,10 @@ class MainWindow(QMainWindow):
 
         # Cầu nối Dữ liệu 2 chiều (Bi-directional Data Sync Bridge): Khi chuyển sang trang AI Agent (tab 9)
         if original_index == 9:
+            if hasattr(self, "page_ai_agent") and self.page_ai_agent:
+                proj_dir = getattr(self.project_service, "project_dir", None)
+                if proj_dir and hasattr(self.page_ai_agent, "controller") and hasattr(self.page_ai_agent.controller, "context_ledger"):
+                    self.page_ai_agent.controller.context_ledger.project_dir = str(proj_dir)
             if hasattr(self, "page_ai_agent") and self.page_ai_agent and hasattr(self, "sub_editor"):
                 if hasattr(self.sub_editor, "all_segments") and self.sub_editor.all_segments is not None:
                     import copy
@@ -3491,6 +3495,9 @@ class MainWindow(QMainWindow):
         if not controller:
             return
         controller.context_ledger.video_path = vid_path
+        proj_dir = getattr(self.project_service, "project_dir", None)
+        if proj_dir:
+            controller.context_ledger.project_dir = str(proj_dir)
         dur_func = getattr(self, "_queue_video_duration_ms", None)
         if callable(dur_func):
             controller.context_ledger.duration_ms = dur_func(vid_path)

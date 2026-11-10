@@ -303,8 +303,15 @@ def run_asr(
     }
 
 
-def _perform_single_translation(text: str, target_lang: str, llm_client: Optional[Any] = None) -> str:
-    """Thực thi dịch thuật một câu qua LLM client, ModelManager hoặc fallback an toàn."""
+def _perform_single_translation(
+    text: str,
+    target_lang: str,
+    llm_client: Optional[Any] = None,
+    online_configs: Optional[List[Any]] = None,
+) -> Optional[str]:
+    """Thực thi dịch thuật một câu qua LLM client hoặc ModelManager.
+    Nếu không có mô hình khả dụng, trả về None (tuyệt đối không dán nhãn giả [VI]).
+    """
     if not text or not text.strip():
         return text
 
@@ -320,11 +327,13 @@ def _perform_single_translation(text: str, target_lang: str, llm_client: Optiona
             f"Output ONLY the translated sentence, without any explanations, notes, quotes, or markdown formatting:\n\n{text}"
         )
         try:
+            configs = online_configs or getattr(llm_client, "online_configs", None)
             res = llm_client.generate_with_fallback(
                 messages=[
                     {"role": "system", "content": "You are a professional subtitle translator. Output only the translated text directly."},
                     {"role": "user", "content": prompt},
                 ],
+                online_configs=configs,
                 allow_local_fallback=False,
             )
             content = res.get("content", "").strip()
@@ -344,8 +353,8 @@ def _perform_single_translation(text: str, target_lang: str, llm_client: Optiona
     except Exception:
         pass
 
-    # 3. Fallback khi chạy offline hoặc môi trường kiểm thử chưa tải model
-    return f"[{target_lang.upper()}] {text}".strip()
+    # 3. Tuyệt đối không tự ý ghép tag [VI]! Trả về None khi chưa có mô hình dịch.
+    return None
 
 
 def translate_subtitles(
@@ -354,29 +363,105 @@ def translate_subtitles(
     segment_indices: Optional[List[int]] = None,
     segments: Optional[List[Dict[str, Any]]] = None,
     llm_client: Optional[Any] = None,
+    project_dir: Optional[str] = None,
+    translation_memory: Optional[Any] = None,
+    aisrt_path: Optional[str] = None,
+    project_subs: Optional[List[Dict[str, Any]]] = None,
+    online_configs: Optional[List[Any]] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
-    """Dịch phụ đề sang ngôn ngữ đích trong CAT Studio với hỗ trợ chọn lọc câu chỉ định."""
+    """Dịch phụ đề sang ngôn ngữ đích trong CAT Studio với hỗ trợ chọn lọc câu chỉ định và tích hợp Translation Memory / project.aisrt."""
+    import os
+    import json
+
     segs = segments or []
     target_indices = set(segment_indices) if segment_indices else None
     translated = []
     translated_count = 0
+    translated_indices: List[int] = []
+    failed_indices: List[int] = []
 
+    # 1. Nạp cơ sở dữ liệu dịch thuật từ project.aisrt (nếu có)
+    aisrt_subtitles_by_id: Dict[str, str] = {}
+    aisrt_subtitles_by_idx: Dict[int, str] = {}
+    aisrt_subtitles_by_text: Dict[str, str] = {}
+    tm_dict: Dict[str, str] = {}
+
+    target_aisrt_file = aisrt_path
+    if not target_aisrt_file and project_dir:
+        cand1 = os.path.join(project_dir, "artifacts", "translation", "project.aisrt")
+        cand2 = os.path.join(project_dir, "project.aisrt")
+        if os.path.exists(cand1):
+            target_aisrt_file = cand1
+        elif os.path.exists(cand2):
+            target_aisrt_file = cand2
+
+    # Chỉ nạp project.aisrt từ aisrt_path hoặc project_dir hợp lệ
+    # Tuyệt đối không tự ý nạp file từ dự án khác để tránh rò rỉ dữ liệu
+
+    if target_aisrt_file and os.path.exists(target_aisrt_file):
+        try:
+            with open(target_aisrt_file, "r", encoding="utf-8") as f:
+                aisrt_data = json.load(f)
+            for s in aisrt_data.get("subtitles", []):
+                trans = str(s.get("translation", "")).strip()
+                if not trans or trans.startswith(f"[{target_lang.upper()}]"):
+                    continue
+                if s.get("segment_id"):
+                    aisrt_subtitles_by_id[str(s["segment_id"])] = trans
+                if s.get("id"):
+                    aisrt_subtitles_by_id[str(s["id"])] = trans
+                if s.get("index") is not None:
+                    try:
+                        aisrt_subtitles_by_idx[int(s["index"])] = trans
+                    except (ValueError, TypeError):
+                        pass
+                if s.get("studio_index") is not None:
+                    try:
+                        aisrt_subtitles_by_idx[int(s["studio_index"]) + 1] = trans
+                    except (ValueError, TypeError):
+                        pass
+                orig = str(s.get("original", "")).strip()
+                if orig:
+                    aisrt_subtitles_by_text[orig] = trans
+
+            intelligence_tm = aisrt_data.get("intelligence", {}).get("translation_memory", {})
+            if isinstance(intelligence_tm, dict):
+                for src_k, val in intelligence_tm.items():
+                    if isinstance(val, dict) and val.get("target_text"):
+                        tm_dict[src_k.strip()] = str(val["target_text"]).strip()
+                    elif isinstance(val, str) and val.strip():
+                        tm_dict[src_k.strip()] = val.strip()
+        except Exception:
+            pass
+
+    # 2. Nạp thêm từ translation_memory tham số (nếu có)
+    if isinstance(translation_memory, dict):
+        for k, v in translation_memory.items():
+            if isinstance(v, dict) and v.get("target_text"):
+                tm_dict[k.strip()] = str(v["target_text"]).strip()
+            elif isinstance(v, str) and v.strip():
+                tm_dict[k.strip()] = v.strip()
+
+    # Nếu không có danh sách phân đoạn nào được cung cấp
+    if not segs and segment_indices:
+        failed_indices = list(segment_indices)
+
+    # 3. Duyệt từng phân đoạn
     for i, s in enumerate(segs):
         sc = dict(s)
         idx_1based = i + 1
 
-        # Resolve all possible identifiers for this segment (multi-dimensional resolution)
+        # Resolve all possible identifiers for this segment
         candidate_ids = {idx_1based}
-        if isinstance(sc.get("id"), int):
-            candidate_ids.add(sc["id"])
-        elif str(sc.get("id", "")).isdigit():
-            candidate_ids.add(int(sc["id"]))
-
-        if isinstance(sc.get("stt"), int):
-            candidate_ids.add(sc["stt"])
-        elif str(sc.get("stt", "")).isdigit():
-            candidate_ids.add(int(sc["stt"]))
+        for key in ("id", "stt", "segment_id", "index"):
+            val = sc.get(key)
+            if isinstance(val, int):
+                candidate_ids.add(val)
+            elif str(val or "").isdigit():
+                candidate_ids.add(int(val))
+            elif val:
+                candidate_ids.add(str(val))
 
         # Chỉ xử lý các câu nằm trong segment_indices (hoặc toàn bộ nếu scope == "all")
         if target_indices is not None and not (candidate_ids & target_indices):
@@ -387,21 +472,112 @@ def translate_subtitles(
         orig_src = sc.get("original_text") or sc.get("source_text") or sc.get("text", "")
         sc["original_text"] = orig_src
         sc["source_text"] = orig_src
+        clean_orig = str(orig_src).strip()
 
-        translated_text = _perform_single_translation(orig_src, target_lang, llm_client)
-        sc["translation"] = translated_text
-        sc["text"] = translated_text
-        translated_count += 1
+        translated_text: Optional[str] = None
+
+        # Bước A: Khai thác bản dịch sẵn có trong segment (nếu đã có bản dịch hợp lệ)
+        existing_trans = str(sc.get("translation", "")).strip()
+        if existing_trans and existing_trans != clean_orig and not existing_trans.startswith(f"[{target_lang.upper()}]"):
+            translated_text = existing_trans
+
+        # Bước B: Khai thác từ project.aisrt theo ID hoặc Index (CAT Studio)
+        if not translated_text:
+            for cid in candidate_ids:
+                if str(cid) in aisrt_subtitles_by_id:
+                    translated_text = aisrt_subtitles_by_id[str(cid)]
+                    break
+                if isinstance(cid, int) and cid in aisrt_subtitles_by_idx:
+                    translated_text = aisrt_subtitles_by_idx[cid]
+                    break
+
+        # Bước C: Khai thác từ project.aisrt theo Original Text
+        if not translated_text and clean_orig in aisrt_subtitles_by_text:
+            translated_text = aisrt_subtitles_by_text[clean_orig]
+
+        # Bước D: Khai thác từ Translation Memory (dict hoặc đối tượng TranslationMemory)
+        if not translated_text and clean_orig in tm_dict:
+            translated_text = tm_dict[clean_orig]
+
+        if not translated_text and translation_memory and hasattr(translation_memory, "lookup"):
+            try:
+                tm_entry = translation_memory.lookup(clean_orig)
+                if tm_entry and getattr(tm_entry, "target_text", None):
+                    translated_text = str(tm_entry.target_text).strip()
+            except Exception:
+                pass
+
+        # Bước E: Khai thác từ TranslationMemoryManager (SQLite TM Database)
+        if not translated_text:
+            try:
+                from core.database.tm_manager import TranslationMemoryManager
+                tmm = TranslationMemoryManager()
+                matches = tmm.find_matches(clean_orig)
+                for m in matches:
+                    if m.score >= 0.99 and m.target_text:
+                        translated_text = m.target_text.strip()
+                        break
+            except Exception:
+                pass
+
+        # Bước F: Gọi AI Model (Online LLM hoặc Local GGUF qua ModelManager)
+        if not translated_text:
+            translated_text = _perform_single_translation(
+                clean_orig,
+                target_lang=target_lang,
+                llm_client=llm_client,
+                online_configs=online_configs,
+            )
+
+        # Xác định số thứ tự định danh hiển thị của câu (ưu tiên theo target_indices khớp được)
+        matched_target_id = idx_1based
+        if target_indices and (candidate_ids & target_indices):
+            # Lấy số ID/STT khớp trong target_indices
+            target_matches = sorted([cid for cid in (candidate_ids & target_indices) if isinstance(cid, int)])
+            if target_matches:
+                matched_target_id = target_matches[0]
+
+        # Đánh giá kết quả dịch
+        if translated_text and not translated_text.startswith(f"[{target_lang.upper()}]"):
+            sc["translation"] = translated_text
+            sc["text"] = translated_text
+            translated_count += 1
+            translated_indices.append(matched_target_id)
+        else:
+            # CHƯA THỂ DỊCH (KHÔNG CÓ MÔ HÌNH VÀ KHÔNG CÓ TRONG TM):
+            # TUYỆT ĐỐI BẢO TOÀN NGUYÊN VĂN BẢN GỐC, KHÔNG DÁN NHÃN GIẢ [VI]!
+            sc["text"] = orig_src
+            sc["translation"] = sc.get("translation") or ""
+            failed_indices.append(matched_target_id)
+
         translated.append(sc)
 
+    is_warning = bool(failed_indices)
+    status = "warning" if is_warning else "ok"
+    if not failed_indices:
+        msg = f"Đã hoàn thành dịch {translated_count} phân đoạn sang tiếng {target_lang.upper()}."
+    elif translated_count > 0:
+        msg = (
+            f"Đã cập nhật {translated_count} câu từ CAT Studio / Bộ nhớ dịch. "
+            f"Các câu #{', #'.join(map(str, failed_indices))} chưa thể dịch do chưa nạp mô hình AI."
+        )
+    else:
+        msg = (
+            "Chưa có mô hình dịch thuật nào khả dụng (Cần cấu hình API Key trong Cài đặt "
+            "hoặc nạp model Local GGUF trong Tab 2) và chưa có bản dịch sẵn trong CAT Studio."
+        )
+
     return {
-        "status": "ok",
+        "status": status,
         "target_lang": target_lang,
         "scope": scope,
         "segment_indices": segment_indices,
         "segments": translated,
         "count": len(translated),
         "translated_count": translated_count,
+        "translated_indices": translated_indices,
+        "failed_indices": failed_indices,
+        "message": msg,
     }
 
 

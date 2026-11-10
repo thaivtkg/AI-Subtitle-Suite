@@ -33,24 +33,29 @@ def test_tc_v144_01_selective_shift_overlap_and_order_preservation():
 
 
 def test_tc_v144_02_translate_updates_text_and_preserves_source_text(qtbot):
-    """TC-V144-02: BUG-TRANSLATE-INVISIBLE-AND-WIPED-001 - translate_subtitles cập nhật cả text & translation, lưu source_text."""
+    """TC-V144-02: BUG-TRANSLATE-INVISIBLE-AND-WIPED-001 - translate_subtitles cập nhật cả text & translation, lưu source_text (văn bản dịch thật, CẤM dán [VI])."""
+    from unittest.mock import MagicMock
+    mock_llm = MagicMock()
+    mock_llm.generate_with_fallback.return_value = {"content": "Xin chào thế giới"}
+
     segs = [
         {"id": 1, "start": "00:00:01,000", "end": "00:00:03,000", "text": "Hello world"},
     ]
-    res = translate_subtitles(target_lang="vi", segments=segs)
+    res = translate_subtitles(target_lang="vi", segments=segs, llm_client=mock_llm)
     assert res["status"] == "ok"
     out = res["segments"]
     assert len(out) == 1
     assert out[0]["source_text"] == "Hello world"
-    assert out[0]["translation"] == "[VI] Hello world"
-    assert out[0]["text"] == "[VI] Hello world"
+    assert out[0]["translation"] == "Xin chào thế giới"
+    assert out[0]["text"] == "Xin chào thế giới"
+    assert not out[0]["text"].startswith("[VI]")
 
     # Kiểm tra UI Cổng 2 hiển thị ngay văn bản dịch
     card = EditableResultReportWidget()
     qtbot.addWidget(card)
     card.render_result("Dịch phụ đề", res)
     assert len(card._rows) == 1
-    assert card._rows[0].editor.text() == "[VI] Hello world"
+    assert card._rows[0].editor.text() == "Xin chào thế giới"
 
 
 def test_tc_v144_03_style_not_blocked_by_dau_cuoi_or_compound_prompt():
@@ -272,14 +277,19 @@ def test_tc_v144_09_tab9_switch_preserves_style_card_gate1_isolation_and_empty_p
 
 def test_tc_v144_10_translate_preserves_original_text_key_for_cat_studio():
     """TC-V144-10: BUG-CAT-STUDIO-ORIGINAL-TEXT-OVERWRITTEN-003 - Lưu câu gốc vào 'original_text' chuẩn của CAT Studio."""
+    from unittest.mock import MagicMock
+    mock_llm = MagicMock()
+    mock_llm.generate_with_fallback.return_value = {"content": "Xin chào thế giới"}
+
     orig_segs = [
         {"id": 1, "stt": 1, "start": "00:00:01,000", "end": "00:00:03,000", "text": "こんにちは、世界"},
     ]
-    res = translate_subtitles(target_lang="vi", segments=orig_segs)
+    res = translate_subtitles(target_lang="vi", segments=orig_segs, llm_client=mock_llm)
     out = res["segments"][0]
     assert out.get("original_text") == "こんにちは、世界"
     assert out.get("source_text") == "こんにちは、世界"
-    assert out.get("text") == "[VI] こんにちは、世界"
+    assert out.get("text") == "Xin chào thế giới"
+    assert not out.get("text").startswith("[VI]")
 
 
 def test_tc_v144_11_nlp_repeated_cau_keyword_across_all_tools():

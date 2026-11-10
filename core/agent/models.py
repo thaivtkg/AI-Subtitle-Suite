@@ -144,6 +144,7 @@ class ChatMessage:
 @dataclass
 class AgentContextLedger:
     project_id: str = ""
+    project_dir: str = ""
     video_path: str = ""
     duration_ms: int = 0
     source_lang: str = "auto"
@@ -170,6 +171,7 @@ class AgentContextLedger:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "project_id": self.project_id,
+            "project_dir": self.project_dir,
             "video_path": self.video_path,
             "duration_ms": self.duration_ms,
             "source_lang": self.source_lang,
@@ -182,6 +184,7 @@ class AgentContextLedger:
     def from_dict(cls, data: Dict[str, Any]) -> "AgentContextLedger":
         return cls(
             project_id=data.get("project_id", ""),
+            project_dir=data.get("project_dir", ""),
             video_path=data.get("video_path", ""),
             duration_ms=data.get("duration_ms", 0),
             source_lang=data.get("source_lang", "auto"),
