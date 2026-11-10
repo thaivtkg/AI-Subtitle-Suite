@@ -2850,7 +2850,7 @@ class MainWindow(QMainWindow):
                     self._pending_translation_indices = []
                 if target_indices is not None:
                     self.page_translation.load_subtitles_from_studio(self.sub_editor.all_segments, selected_indices=target_indices)
-                elif prev_nav_index == 9 or (hasattr(self.page_translation, "subtitle_model") and self.page_translation.subtitle_model.rowCount() == 0):
+                elif prev_nav_index == 9:
                     self.page_translation.sync_translations_from_studio(self.sub_editor.all_segments)
         self._active_nav_index = original_index
         if original_index == 0 and hasattr(self, "page_dashboard") and hasattr(self.page_dashboard, "refresh_recent_projects"):
