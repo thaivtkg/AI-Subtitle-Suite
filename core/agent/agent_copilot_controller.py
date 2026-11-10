@@ -115,15 +115,20 @@ class AgentCopilotController(QObject):
         steps: List[AgentStep] = []
 
         def _extract_sentence_indices(text: str) -> Optional[List[int]]:
-            m_rng = re.search(r"từ\s+(?:câu|sub|phụ\s+đề)\s+(\d+)\s+đến\s+(?:(?:câu|sub|phụ\s+đề)\s+)?(\d+)", text) or re.search(r"(?:câu|sub|phụ\s+đề)\s+(\d+)\s+đến\s+(?:(?:câu|sub|phụ\s+đề)\s+)?(\d+)", text)
+            # Strip time measurements (e.g. 500ms, 2s, 1.5 giây, 300 miligiây) so they are not hijacked as sentence numbers
+            clean_text = re.sub(r"[+-]?\d+(?:\.\d+)?\s*(?:ms|giây|miligiây|s\b)", "", text)
+            m_rng = (
+                re.search(r"từ\s+(?:câu|sub|phụ\s+đề|đoạn)\s+(\d+)\s+đến\s+(?:(?:câu|sub|phụ\s+đề|đoạn)\s+)?(\d+)", clean_text)
+                or re.search(r"(?:câu|sub|phụ\s+đề|đoạn)\s+(\d+)\s+đến\s+(?:(?:câu|sub|phụ\s+đề|đoạn)\s+)?(\d+)", clean_text)
+            )
             if m_rng:
                 raw_a, raw_b = int(m_rng.group(1)), int(m_rng.group(2))
                 return list(range(min(raw_a, raw_b), max(raw_a, raw_b) + 1))
-            m_first_n = re.search(r"(\d+)\s*(?:câu|sub|phụ\s+đề)\s*đầu", text)
+            m_first_n = re.search(r"(\d+)\s*(?:câu|sub|phụ\s+đề|đoạn)\s*đầu", clean_text)
             if m_first_n:
                 return list(range(1, int(m_first_n.group(1)) + 1))
-            pat = r"(?:câu|sub|phụ\s+đề)\s+(?:sub\s+|phụ\s+đề\s+|số\s+|thứ\s+)?(\d+(?:\s*(?:,|và|hoặc)\s*(?:(?:câu|sub|phụ\s+đề)\s+)?(?:số\s+|thứ\s+)?\d+)*)"
-            m_multi = re.search(pat, text)
+            pat = r"(?:câu|sub|phụ\s+đề|đoạn)\s+(?:sub\s+|phụ\s+đề\s+|đoạn\s+|số\s+|thứ\s+)?(\d+(?:\s*(?:,|và|hoặc)\s*(?:(?:câu|sub|phụ\s+đề|đoạn)\s+)?(?:số\s+|thứ\s+)?\d+)*)"
+            m_multi = re.search(pat, clean_text)
             if m_multi:
                 nums = [int(x) for x in re.findall(r"\d+", m_multi.group(1))]
                 if nums:
@@ -192,10 +197,12 @@ class AgentCopilotController(QObject):
         # 2. Check Subtitle Time Shift (Micro-editing offset: lên / lùi)
         time_unit_pattern = r"(?:[+-]?\d+(?:\.\d+)?\s*(?:giây|ms|miligiây|s\b)|\b(?:giây|ms|miligiây)\b)"
         has_time_unit = bool(re.search(time_unit_pattern, lower))
-        has_shift_verb = any(k in lower for k in ["đưa", "dịch chuyển", "đẩy", "dời", "lùi", "tiến"])
+        shift_verbs_pattern = r"\b(?:đưa|dịch chuyển|đẩy|dời|lùi|tiến)\b"
+        has_shift_verb = bool(re.search(shift_verbs_pattern, lower))
+        has_trans_intent = any(w in lower for w in ["translate", "cat", "tiếng việt", "tiếng hàn", "tiếng anh", "tiếng nhật", "sang tiếng"])
         is_shift = (
-            has_shift_verb
-            or ("dịch" in lower and has_time_unit)
+            (has_shift_verb and not (has_trans_intent and not any(k in lower for k in ["lùi", "tiến", "dời", "dịch chuyển"])))
+            or ("dịch" in lower and has_time_unit and not has_trans_intent)
         ) and any(k in lower for k in ["sub", "phụ đề", "đoạn", "câu", "timing"])
         if is_shift and not is_duration_action:
             direction = -1 if any(k in lower for k in ["lùi", "xuống", "giảm", "trừ", "sớm"]) else 1

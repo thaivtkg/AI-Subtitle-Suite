@@ -260,18 +260,17 @@ class EditableResultReportWidget(QScrollArea):
                     t_out = f"{int(t_out)//60:02d}:{int(t_out)%60:02d}.{int((t_out*1000)%1000):03d}"
                 time_str = f"{t_in} → {t_out}"
                 text = seg.get("text") or seg.get("translation", "")
-                seg_id = None
+                idx_1based = i + 1
+                candidate_ids = {idx_1based}
                 if isinstance(seg.get("id"), int):
-                    seg_id = seg["id"]
+                    candidate_ids.add(seg["id"])
                 elif str(seg.get("id", "")).isdigit():
-                    seg_id = int(seg["id"])
-                elif isinstance(seg.get("stt"), int):
-                    seg_id = seg["stt"]
+                    candidate_ids.add(int(seg["id"]))
+                if isinstance(seg.get("stt"), int):
+                    candidate_ids.add(seg["stt"])
                 elif str(seg.get("stt", "")).isdigit():
-                    seg_id = int(seg["stt"])
-                else:
-                    seg_id = i + 1
-                is_active = (target_indices is not None and seg_id in target_indices)
+                    candidate_ids.add(int(seg["stt"]))
+                is_active = (target_indices is not None and bool(candidate_ids & target_indices))
                 row = EditableSegmentRow(i + 1, time_str, text, is_active=is_active, parent=self.container)
                 row.text_changed.connect(self._on_segment_text_changed)
                 row.focused.connect(self._on_row_focused)

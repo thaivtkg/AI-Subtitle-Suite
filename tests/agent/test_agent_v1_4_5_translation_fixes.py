@@ -163,3 +163,76 @@ def test_tc_trans_08_inspector_renders_styled_info_box_for_general_task(qtbot):
     assert len(frames) > 0
     labels = [lbl.text() for lbl in widget.findChildren(QLabel)]
     assert any("Thông Tin Tác Vụ" in t for t in labels)
+
+
+def test_tc_trans_09_shift_time_quantity_not_hijacked_as_sentence_index():
+    """ADV-NLP-SHIFT-NUMBER-HIJACK-001: Số đo thời gian trong 'Tiến sub 2s', 'Dịch chuyển sub 500ms' không được nuốt thành segment_indices."""
+    ctrl = AgentCopilotController()
+
+    p1 = ctrl._synthesize_plan("Tiến sub 2s")
+    assert len(p1.steps) == 1
+    assert p1.steps[0].tool_name == "shift_subtitles"
+    assert p1.steps[0].tool_args.get("offset_ms") == 2000
+    assert p1.steps[0].tool_args.get("segment_indices") is None
+    assert p1.steps[0].tool_args.get("scope") == "all"
+
+    p2 = ctrl._synthesize_plan("Dịch chuyển sub 500ms")
+    assert len(p2.steps) == 1
+    assert p2.steps[0].tool_name == "shift_subtitles"
+    assert p2.steps[0].tool_args.get("offset_ms") == 500
+    assert p2.steps[0].tool_args.get("segment_indices") is None
+
+    p3 = ctrl._synthesize_plan("Lùi phụ đề 300ms")
+    assert len(p3.steps) == 1
+    assert p3.steps[0].tool_name == "shift_subtitles"
+    assert p3.steps[0].tool_args.get("offset_ms") == -300
+    assert p3.steps[0].tool_args.get("segment_indices") is None
+
+
+def test_tc_trans_10_translate_with_duration_phrase_not_split_to_shift():
+    """ADV-NLP-SHIFT-COMBINED-TRANSLATE-002: Lệnh dịch kèm thời lượng 'trong vòng 5s' không được sinh thêm bước shift."""
+    ctrl = AgentCopilotController()
+    p = ctrl._synthesize_plan("Dịch câu 6 sang tiếng Việt trong vòng 5s")
+    assert len(p.steps) == 1
+    assert p.steps[0].tool_name == "translate_subtitles"
+    assert p.steps[0].tool_args.get("segment_indices") == [6]
+    assert p.steps[0].tool_args.get("target_lang") == "vi"
+
+
+def test_tc_trans_11_translate_discontinuous_stt_matched_by_1based_index():
+    """ADV-TRANS-DISCONTINUOUS-STT-INDEX-003: Phân giải số câu đa chiều (stt, id, 1-based index) khi stt bị đứt đoạn."""
+    # Giả lập 24 câu giống JMSZ: câu #16 có stt=None, câu #24 có stt="23"
+    segs = []
+    for i in range(1, 25):
+        stt_val = None if i == 16 else (str(i) if i < 16 else str(i - 1))
+        segs.append({
+            "id": f"uuid-{i}",
+            "stt": stt_val,
+            "text": f"Nội dung câu {i}",
+            "translation": "",
+        })
+
+    # Người dùng gõ 'Dịch câu 24' -> target_indices = [24]
+    res = translate_subtitles(target_lang="vi", scope="selected", segment_indices=[24], segments=segs)
+    res_segs = res["segments"]
+    assert len(res_segs) == 24
+    assert res["translated_count"] == 1
+
+    # Câu #24 (index 23 trong mảng) phải được dịch dù stt là '23'
+    assert res_segs[23]["text"] != "Nội dung câu 24"
+    assert res_segs[23]["translation"] != ""
+    assert res_segs[23]["original_text"] == "Nội dung câu 24"
+
+    # Câu #23 (index 22 trong mảng, stt '22') không được dịch
+    assert res_segs[22]["text"] == "Nội dung câu 23"
+    assert res_segs[22]["translation"] == ""
+
+
+def test_tc_trans_12_doan_keyword_extracts_indices():
+    """ADV-NLP-DOAN-KEYWORD-MISSING-004: Từ khóa 'đoạn' trích xuất đúng segment_indices."""
+    ctrl = AgentCopilotController()
+    p = ctrl._synthesize_plan("Dịch đoạn 6, 7, 13")
+    assert len(p.steps) == 1
+    assert p.steps[0].tool_name == "translate_subtitles"
+    assert p.steps[0].tool_args.get("segment_indices") == [6, 7, 13]
+    assert p.steps[0].tool_args.get("scope") == "selected"

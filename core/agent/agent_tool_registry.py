@@ -364,20 +364,22 @@ def translate_subtitles(
 
     for i, s in enumerate(segs):
         sc = dict(s)
-        seg_id = None
+        idx_1based = i + 1
+
+        # Resolve all possible identifiers for this segment (multi-dimensional resolution)
+        candidate_ids = {idx_1based}
         if isinstance(sc.get("id"), int):
-            seg_id = sc["id"]
+            candidate_ids.add(sc["id"])
         elif str(sc.get("id", "")).isdigit():
-            seg_id = int(sc["id"])
-        elif isinstance(sc.get("stt"), int):
-            seg_id = sc["stt"]
+            candidate_ids.add(int(sc["id"]))
+
+        if isinstance(sc.get("stt"), int):
+            candidate_ids.add(sc["stt"])
         elif str(sc.get("stt", "")).isdigit():
-            seg_id = int(sc["stt"])
-        else:
-            seg_id = i + 1
+            candidate_ids.add(int(sc["stt"]))
 
         # Chỉ xử lý các câu nằm trong segment_indices (hoặc toàn bộ nếu scope == "all")
-        if target_indices is not None and seg_id not in target_indices:
+        if target_indices is not None and not (candidate_ids & target_indices):
             # BẢO TOÀN NGUYÊN VẸN 100% CÁC CÂU KHÔNG ĐƯỢC CHỌN
             translated.append(sc)
             continue
