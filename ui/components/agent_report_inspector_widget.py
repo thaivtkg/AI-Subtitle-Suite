@@ -264,6 +264,10 @@ class EditableResultReportWidget(QScrollArea):
                 self._rows.append(row)
                 self.layout.addWidget(row)
         elif not has_style:
+            non_seg_keys = [k for k in result_dict.keys() if k not in ("segments", "count", "status")]
+            if "segments" in result_dict and not segments and not non_seg_keys:
+                self.show_placeholder()
+                return
             # Fallback only when neither style nor segments exist
             hint = QLabel("Dữ liệu kết quả:", self.container)
             hint.setStyleSheet("color: #64748b; font-size: 9px; margin-bottom: 2px;")

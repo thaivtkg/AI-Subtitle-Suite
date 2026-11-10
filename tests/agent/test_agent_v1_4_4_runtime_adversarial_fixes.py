@@ -176,3 +176,125 @@ def test_tc_v144_07_gate2_no_30_row_truncation(qtbot):
     ]
     card.render_result("Tạo 50 câu", {"segments": segs_50})
     assert len(card._rows) == 50, f"Kỳ vọng hiển thị đủ 50 dòng nhưng bị cắt còn {len(card._rows)} dòng"
+
+
+def test_tc_v144_08_shift_no_dialogue_swap_no_duration_crush_and_backward_selective():
+    """TC-V144-08: BUG-SHIFT-DIALOGUE-SWAP-AND-DURATION-CRUSH-001 - Không đảo thứ tự thoại/ID, không ép thời lượng xuống 200ms, cho phép lùi câu lẻ."""
+    segs = [
+        {"id": 1, "start": "00:01.000", "end": "00:03.000", "text": "Lời thoại câu 1 (Xin chào)"},
+        {"id": 2, "start": "00:03.500", "end": "00:05.500", "text": "Lời thoại câu 2 (Bạn khỏe không?)"},
+        {"id": 3, "start": "00:06.000", "end": "00:08.000", "text": "Lời thoại câu 3 (Tạm biệt)"},
+    ]
+    # 1A: Tiến câu 1 thêm 2400ms -> câu 2 giữ nguyên thời lượng 2000ms (không bị ép xuống 200ms)
+    res_1a = shift_subtitles(offset_ms=2400, scope="selected", segment_indices=[1], segments=segs)
+    s2 = res_1a["segments"][1]
+    dur_s2 = time_str_to_ms(s2["end"]) - time_str_to_ms(s2["start"])
+    assert dur_s2 == 2000, f"Thời lượng câu 2 phải giữ nguyên 2000ms nhưng bị ép còn {dur_s2}ms"
+
+    # 1B: Tiến câu 1 thêm 3000ms -> thứ tự câu 1 và câu 2 không bị đảo ngược
+    res_1b = shift_subtitles(offset_ms=3000, scope="selected", segment_indices=[1], segments=segs)
+    assert res_1b["segments"][0]["id"] == 1
+    assert "Xin chào" in res_1b["segments"][0]["text"]
+    assert res_1b["segments"][1]["id"] == 2
+    assert "Bạn khỏe không" in res_1b["segments"][1]["text"]
+    assert time_str_to_ms(res_1b["segments"][0]["end"]) <= time_str_to_ms(res_1b["segments"][1]["start"])
+
+    # 1C: Lùi câu 2 đi 800ms khi câu 1 (1s..3s) và câu 2 (3s..5s) chạm nhau
+    segs_touching = [
+        {"id": 1, "start": "00:01.000", "end": "00:03.000", "text": "Câu 1"},
+        {"id": 2, "start": "00:03.000", "end": "00:05.000", "text": "Câu 2"},
+    ]
+    res_1c = shift_subtitles(offset_ms=-800, scope="selected", segment_indices=[2], segments=segs_touching)
+    st_c2 = time_str_to_ms(res_1c["segments"][1]["start"])
+    en_c1 = time_str_to_ms(res_1c["segments"][0]["end"])
+    assert st_c2 == 2200, f"Câu 2 phải lùi về 2200ms nhưng thực tế ở {st_c2}ms"
+    assert en_c1 <= st_c2, "Câu 1 phải thu ngắn end để không đè chồng lên câu 2"
+
+
+def test_tc_v144_09_tab9_switch_preserves_style_card_gate1_isolation_and_empty_placeholder(qtbot):
+    """TC-V144-09: BUG-TAB9-SWITCH-WIPES-STYLE-AND-CORRUPTS-GATE1-002 - Bảo toàn Style Card, cô lập Cổng 1 và không dump raw text khi rỗng."""
+    from PySide6.QtWidgets import QTextEdit
+    from ui.Gui import MainWindow
+    from ui.pages.ai_agent_mission_control_page import AIAgentMissionControlPage
+    from ui.components.agent_report_inspector_widget import SubtitleStyleCardWidget
+
+    class Harness:
+        _sync_from_ai_agent_page = MainWindow._sync_from_ai_agent_page
+        _on_agent_step_completed = MainWindow._on_agent_step_completed
+        _on_agent_step_reverted = MainWindow._on_agent_step_reverted
+        _sync_agent_video_context = MainWindow._sync_agent_video_context
+        switch_page = MainWindow.switch_page
+
+        def __getattr__(self, name):
+            return MagicMock()
+
+        def __init__(self):
+            self._active_nav_index = 1
+            self.sub_editor = MagicMock()
+            self.sub_editor.all_segments = [
+                {"id": 1, "start": "00:00:01,000", "end": "00:00:03,000", "text": "Câu 1"},
+            ]
+            self.video_player = MagicMock()
+            self.video_player.video_path = ""
+            self.stack = MagicMock()
+            self.page_ai_agent = AIAgentMissionControlPage()
+
+    win = Harness()
+    qtbot.addWidget(win.page_ai_agent)
+    card = win.page_ai_agent.col_inspect.inspection_card
+
+    # 2A: Đổi style ở Cổng 2 -> chuyển tab 0 -> quay lại tab 9 -> giữ nguyên SubtitleStyleCardWidget
+    win.switch_page(9)
+    win.page_ai_agent.col_chat.prompt_input.setText("Đổi style chữ vàng viền đen cỡ 26")
+    win.page_ai_agent.col_chat.btn_send_prompt.click()
+    win.page_ai_agent.col_inspect.btn_approve_next.click()
+    assert len(card.findChildren(SubtitleStyleCardWidget)) == 1
+    win.switch_page(0)
+    win.switch_page(9)
+    assert len(card.findChildren(SubtitleStyleCardWidget)) == 1, "Không được xóa mất SubtitleStyleCardWidget khi chuyển tab"
+
+    # 2B: Đang ở Cổng 1 -> chuyển tab 0 -> quay lại tab 9 -> current_segments phải vẫn là []
+    win.page_ai_agent.col_chat.prompt_input.setText("Dịch phụ đề sang tiếng Việt")
+    win.page_ai_agent.col_chat.btn_send_prompt.click()
+    assert win.page_ai_agent.controller.is_waiting_plan_approval() is True
+    assert len(card.get_current_segments()) == 0
+    win.switch_page(0)
+    win.switch_page(9)
+    assert len(card.get_current_segments()) == 0, "Cổng 1 không được rò rỉ current_segments khi chuyển tab"
+
+    # 2C: Dự án rỗng [] -> quay lại tab 9 không được hiện QTextEdit raw dump
+    win.page_ai_agent.col_inspect.btn_approve_next.click()  # Chạy sang Cổng 2
+    win.switch_page(0)
+    win.sub_editor.all_segments = []
+    win.switch_page(9)
+    assert len(card.findChildren(QTextEdit)) == 0, "Không được hiện QTextEdit raw dump khi segments rỗng"
+
+
+def test_tc_v144_10_translate_preserves_original_text_key_for_cat_studio():
+    """TC-V144-10: BUG-CAT-STUDIO-ORIGINAL-TEXT-OVERWRITTEN-003 - Lưu câu gốc vào 'original_text' chuẩn của CAT Studio."""
+    orig_segs = [
+        {"id": 1, "stt": 1, "start": "00:00:01,000", "end": "00:00:03,000", "text": "こんにちは、世界"},
+    ]
+    res = translate_subtitles(target_lang="vi", segments=orig_segs)
+    out = res["segments"][0]
+    assert out.get("original_text") == "こんにちは、世界"
+    assert out.get("source_text") == "こんにちは、世界"
+    assert out.get("text") == "[VI] こんにちは、世界"
+
+
+def test_tc_v144_11_nlp_repeated_cau_keyword_across_all_tools():
+    """TC-V144-11: BUG-NLP-REPEATED-CAU-KEYWORD-DROPPED-004 - Hỗ trợ lặp lại từ 'câu' trong danh sách câu trên cả 4 công cụ."""
+    controller = AgentCopilotController()
+    cases = [
+        ("Tăng mốc đầu câu 1 và câu 2 thêm 200ms", "adjust_subtitle_bounds", [1, 2]),
+        ("Giảm mốc cuối câu 1, câu 2 và câu 3 đi 300ms", "adjust_subtitle_bounds", [1, 2, 3]),
+        ("Dịch câu 1 và câu 3 tiến 400ms", "shift_subtitles", [1, 3]),
+        ("Quét lại câu 1, câu 3 và câu 5", "rescan_subtitles", [1, 3, 5]),
+        ("Gen sub câu 2 và câu 4", "run_asr", [2, 4]),
+    ]
+    for prompt, expected_tool, expected_indices in cases:
+        plan = controller._synthesize_plan(prompt)
+        step = plan.steps[0]
+        actual_indices = step.tool_args.get("segment_indices") or step.tool_args.get("indices")
+        assert step.tool_name == expected_tool, f"Prompt '{prompt}': kỳ vọng {expected_tool}, nhận {step.tool_name}"
+        assert actual_indices == expected_indices, f"Prompt '{prompt}': kỳ vọng {expected_indices}, nhận {actual_indices}"

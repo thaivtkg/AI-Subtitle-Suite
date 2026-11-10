@@ -122,7 +122,7 @@ class AgentCopilotController(QObject):
             m_first_n = re.search(r"(\d+)\s*câu\s*đầu", text)
             if m_first_n:
                 return list(range(1, int(m_first_n.group(1)) + 1))
-            m_multi = re.search(r"câu\s+(?:số\s+|thứ\s+)?((?:\d+(?:\s*,\s*|\s+và\s+|\s+hoặc\s+|\s+)?)+)", text)
+            m_multi = re.search(r"câu\s+(?:số\s+|thứ\s+)?(\d+(?:\s*(?:,|và|hoặc)\s*(?:câu\s+)?(?:số\s+|thứ\s+)?\d+)*)", text)
             if m_multi:
                 nums = [int(x) for x in re.findall(r"\d+", m_multi.group(1))]
                 if nums:
@@ -145,7 +145,7 @@ class AgentCopilotController(QObject):
                 # Form 2: (mốc đầu|đầu câu) (tăng|giảm) (thêm)? [val] [unit]
                 p2 = rf"(?:mốc\s*{pos_key}|{pos_key}\s*câu|{pos_key})\s*(?:{w_pat})\s*(?:thêm\s+)?([+-]?\d+(?:\.\d+)?)\s*(s|giây|ms)?"
                 # Form 3 (Vietnamese natural order): (giảm|tăng) [mốc đầu|mốc cuối] (dải câu / câu X)? (thêm|đi)? [val] [unit]
-                sent_spec = r"(?:\s+(?:từ\s+câu\s+\d+\s+đến\s+(?:câu\s+)?\d+|câu\s+\d+\s+đến\s+(?:câu\s+)?\d+|câu\s+(?:số\s+|thứ\s+)?(?:\d+(?:\s*,\s*|\s+và\s+|\s+hoặc\s+)?)+|\d+\s*câu\s*đầu))?"
+                sent_spec = r"(?:\s+(?:từ\s+câu\s+\d+\s+đến\s+(?:câu\s+)?\d+|câu\s+\d+\s+đến\s+(?:câu\s+)?\d+|câu\s+(?:số\s+|thứ\s+)?\d+(?:\s*(?:,|và|hoặc)\s*(?:câu\s+)?(?:số\s+|thứ\s+)?\d+)*|\d+\s*câu\s*đầu))?"
                 p3 = rf"(?:{w_pat})\s+(?:ở\s+|cho\s+)?(?:mốc\s*{pos_key}|{pos_key}\s*câu|{pos_key}){sent_spec}\s*(?:thêm\s+|đi\s+|bớt\s+|lên\s+|xuống\s+)?([+-]?\d+(?:\.\d+)?)\s*(s|giây|ms)?"
                 m = re.search(p1, text) or re.search(p2, text) or re.search(p3, text)
                 if m:
@@ -276,7 +276,10 @@ class AgentCopilotController(QObject):
         elif any(w in lower for w in ["quét lại", "rescan", "scan lại"]):
             m_rng = re.search(r"từ\s+câu\s+(\d+)\s+đến\s+(?:câu\s+)?(\d+)", lower)
             m_time = re.search(r"từ\s+(?:giây\s+)?(\d+(?:\.\d+)?)(?:\s*s|\s*giây)?\s+đến\s+(?:giây\s+)?(\d+(?:\.\d+)?)(?:\s*s|\s*giây)?", lower)
-            m_multi = re.search(r"câu\s+(?:số\s+|thứ\s+)?((?:\d+(?:\s*,\s*|\s+và\s+|\s+hoặc\s+|\s+)?)+)", lower)
+            m_multi = re.search(
+                r"câu\s+(?:số\s+|thứ\s+)?(\d+(?:\s*(?:,|và|hoặc)\s*(?:câu\s+)?(?:số\s+|thứ\s+)?\d+)*)",
+                lower,
+            )
 
             if m_rng:
                 raw_a = int(m_rng.group(1))
@@ -340,7 +343,10 @@ class AgentCopilotController(QObject):
         # 5. Check ASR Gen Sub (odd sentence, range, or limit)
         elif any(w in lower for w in ["nhận diện", "gen sub", "asr", "whisper", "tạo sub"]):
             m_rng = re.search(r"từ\s+câu\s+(\d+)\s+đến\s+(?:câu\s+)?(\d+)", lower)
-            m_multi = re.search(r"câu\s+(?:số\s+|thứ\s+)?((?:\d+(?:\s*,\s*|\s+và\s+|\s+hoặc\s+|\s+)?)+)", lower)
+            m_multi = re.search(
+                r"câu\s+(?:số\s+|thứ\s+)?(\d+(?:\s*(?:,|và|hoặc)\s*(?:câu\s+)?(?:số\s+|thứ\s+)?\d+)*)",
+                lower,
+            )
             m_lim = re.search(r"(\d+)\s*câu(?:\s*đầu)?", lower)
 
             args = {"language": self.context_ledger.source_lang or "auto"}

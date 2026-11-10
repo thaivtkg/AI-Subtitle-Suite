@@ -2813,10 +2813,19 @@ class MainWindow(QMainWindow):
                     self.page_ai_agent.controller._active_segments = synced
                     if hasattr(self.page_ai_agent, "col_inspect") and hasattr(self.page_ai_agent.col_inspect, "inspection_card"):
                         card = self.page_ai_agent.col_inspect.inspection_card
-                        card.current_segments = copy.deepcopy(synced)
-                        rows = getattr(card, "_rows", None)
-                        if isinstance(rows, list) and rows:
-                            card.render_result("Cập nhật từ Workspace", {"segments": synced})
+                        if not self.page_ai_agent.controller.is_waiting_plan_approval():
+                            card.current_segments = copy.deepcopy(synced)
+                            rows = getattr(card, "_rows", None)
+                            if isinstance(rows, list) and rows:
+                                last_res = getattr(self.page_ai_agent.controller, "_last_step_result", None)
+                                has_last_style = isinstance(last_res, dict) and bool(last_res.get("style"))
+                                if not synced and not has_last_style:
+                                    card.show_placeholder()
+                                else:
+                                    payload = {"segments": synced}
+                                    if has_last_style:
+                                        payload["style"] = last_res["style"]
+                                    card.render_result("Cập nhật từ Workspace", payload)
             if hasattr(self, "video_player") and getattr(self.video_player, "video_path", None):
                 self._sync_agent_video_context(self.video_player.video_path)
 
