@@ -1367,7 +1367,7 @@ class SubtitleEditorWidget(QWidget):
                 index, self.all_segments[index].get("id"), SelectionSource.EDITOR
             )
             return
-        self._select_segment_ui(index)
+        self._select_segment_ui(index, source=SelectionSource.EDITOR)
 
     def sync_multi_selection(self, indices: list[int], segment_ids: set[str], source=None):
         if source == SelectionSource.EDITOR:
@@ -1405,13 +1405,13 @@ class SubtitleEditorWidget(QWidget):
 
         if 0 <= target_idx < len(self.all_segments):
             self._is_syncing_ui = True
-            self._select_segment_ui(target_idx)
+            self._select_segment_ui(target_idx, source=source)
             self._is_syncing_ui = False
         else:
             self.current_index = -1
             self.update_empty_state()
 
-    def _select_segment_ui(self, index: int):
+    def _select_segment_ui(self, index: int, source=None):
         self.current_index = index
         self.update_empty_state()
         seg = self.all_segments[index]
@@ -1425,7 +1425,11 @@ class SubtitleEditorWidget(QWidget):
             table_has_focus = self.table.hasFocus() or (
                 hasattr(self.table, "viewport") and self.table.viewport().hasFocus()
             )
-        if hasattr(self.current_editor, "text_edit") and not table_has_focus:
+        effective_source = source
+        if effective_source is None and hasattr(self, "selection_controller") and self.selection_controller:
+            effective_source = getattr(self.selection_controller, "last_source", None)
+        is_background_sync = effective_source in (SelectionSource.TIMELINE, SelectionSource.PLAYBACK)
+        if hasattr(self.current_editor, "text_edit") and not table_has_focus and not is_background_sync:
             self.current_editor.text_edit.setFocus()
 
         # If the selected ID is included by the active range but is on another

@@ -25,6 +25,11 @@ class SubtitleSelectionController(QObject):
         self._selected_segment_id: Optional[str] = None
         self._selected_indices: list[int] = []
         self._selected_ids: set[str] = set()
+        self._last_source: SelectionSource = SelectionSource.PROGRAMMATIC
+
+    @property
+    def last_source(self) -> SelectionSource:
+        return self._last_source
 
     @property
     def selected_index(self) -> int:
@@ -49,6 +54,7 @@ class SubtitleSelectionController(QObject):
         source: SelectionSource = SelectionSource.PROGRAMMATIC,
     ):
         """Cập nhật trạng thái và phát tín hiệu đồng bộ xuống các View."""
+        self._last_source = source
         new_indices = [index] if index >= 0 else []
         new_ids = {segment_id} if segment_id else set()
         if (
@@ -73,6 +79,7 @@ class SubtitleSelectionController(QObject):
         source: SelectionSource = SelectionSource.PROGRAMMATIC,
     ):
         """Cập nhật trạng thái đa chọn và phát tín hiệu xuống các View."""
+        self._last_source = source
         sorted_indices = sorted(indices)
         set_ids = set(segment_ids)
         if self._selected_indices == sorted_indices and self._selected_ids == set_ids:
@@ -88,6 +95,7 @@ class SubtitleSelectionController(QObject):
         self, source: SelectionSource = SelectionSource.PROGRAMMATIC
     ):
         """Bỏ chọn toàn bộ, truyền segment_id = None."""
+        self._last_source = source
         self._selected_indices = []
         self._selected_ids = set()
         self.select(-1, None, source)

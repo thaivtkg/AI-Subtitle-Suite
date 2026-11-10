@@ -237,6 +237,7 @@ class TimelineController(QObject):
                     if segment and mode != EditMode.NONE:
                         self.ui.timing_edit_started.emit()
                 if obj in (self.ui.container.ruler, self.ui.container.waveform):
+                    self.ui.setFocus()
                     self.ui.auto_scroll_enabled = False
                     if (
                         obj is self.ui.container.waveform
@@ -261,6 +262,15 @@ class TimelineController(QObject):
                     target_ms = self._x_to_ms(event.pos().x())
                     if hasattr(self.ui, "jog_engine") and self.ui.jog_engine:
                         self.ui.jog_engine.play_slice(target_ms, 40)
+                import time
+                now = time.time()
+                if hasattr(self, "_last_scrub_seek_time") and (now - self._last_scrub_seek_time) < 0.05:
+                    pixels_per_sec = self.ui.container.track.pixels_per_second
+                    target_ms = max(0, int((event.pos().x() / pixels_per_sec) * 1000.0))
+                    if hasattr(self.ui, 'update_playhead'):
+                        self.ui.update_playhead(target_ms)
+                    return True
+                self._last_scrub_seek_time = now
                 self._do_seek(event.pos().x(), event.modifiers())
                 return True
         elif event.type() == QEvent.MouseButtonRelease:
@@ -269,6 +279,9 @@ class TimelineController(QObject):
             if obj is self.ui.container.waveform and self._range_drag_start_ms is not None:
                 self._update_visual_range(event.pos().x())
                 self._range_drag_start_ms = None
+                return True
+            if obj in (self.ui.container.ruler, self.ui.container.waveform):
+                self._do_seek(event.pos().x(), event.modifiers())
                 return True
         elif event.type() == QEvent.KeyRelease:
             if event.key() == Qt.Key_Alt:

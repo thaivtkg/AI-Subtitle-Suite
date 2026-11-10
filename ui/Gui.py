@@ -1602,9 +1602,14 @@ class MainWindow(QMainWindow):
         self.set_subtitle_preview_enabled(is_visible)
 
     def _on_player_duration_changed(self, duration_ms: int):
-        if duration_ms > 0 and getattr(self, "generation_panel", None):
-            if self.generation_panel.video_duration_ms <= 0:
+        if duration_ms > 0:
+            if getattr(self, "generation_panel", None) and self.generation_panel.video_duration_ms <= 0:
                 self.generation_panel.set_video_duration(duration_ms)
+            if getattr(self, "timeline_widget", None) and getattr(self.timeline_widget, "duration_ms", 0) <= 0:
+                if hasattr(self.timeline_widget, "set_duration"):
+                    self.timeline_widget.set_duration(duration_ms)
+                else:
+                    self.timeline_widget.duration_ms = duration_ms
 
     def _on_waveform_ready_slot(self, req_vid_path, duration_ms, peaks):
         req_norm = os.path.normpath(req_vid_path).casefold()

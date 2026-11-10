@@ -48,6 +48,11 @@ class CustomGraphicsView(QGraphicsView):
         
         # Lắng nghe sự thay đổi khung hình thực tế của Video để cập nhật
         self.video_item.nativeSizeChanged.connect(self.update_layout)
+        self.setFocusPolicy(Qt.StrongFocus)
+
+    def mousePressEvent(self, event):
+        self.setFocus()
+        super().mousePressEvent(event)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -237,7 +242,9 @@ class VideoPlayerWidget(QWidget):
             }
             QSlider::handle:horizontal:hover { background: #38BDF8; }
         """)
-        self.slider_seek.sliderMoved.connect(self.set_position)
+        self.slider_seek.sliderPressed.connect(self._on_slider_pressed)
+        self.slider_seek.sliderMoved.connect(self._on_slider_moved)
+        self.slider_seek.sliderReleased.connect(self._on_slider_released)
         controls_layout.addWidget(self.slider_seek)
 
         # Label Thời gian
@@ -514,7 +521,8 @@ class VideoPlayerWidget(QWidget):
         elif bounds and not playback_active:
             if position < bounds[0] or position >= bounds[1]:
                 self._segment_bounds = None
-        self.slider_seek.setValue(position)
+        if not self.slider_seek.isSliderDown():
+            self.slider_seek.setValue(position)
 
         # [FIX BLOCKER] Đồng nhất tên cờ 'is_enabled' với SubtitleController
         is_preview_enabled = getattr(self.sub_controller, 'is_enabled', True)
@@ -604,6 +612,28 @@ class VideoPlayerWidget(QWidget):
     def duration_changed(self, duration):
         self.slider_seek.setRange(0, duration)
         self.update_time_label()
+
+    def _on_slider_pressed(self):
+        self._was_playing_before_scrub = bool(self.player.isPlaying())
+        if self._was_playing_before_scrub:
+            self.player.pause()
+
+    def _on_slider_moved(self, value):
+        self.update_time_label(value)
+        import time
+        now = time.time()
+        if not hasattr(self, "_last_slider_seek_time"):
+            self._last_slider_seek_time = 0.0
+        if now - self._last_slider_seek_time >= 0.05:
+            self._last_slider_seek_time = now
+            self.set_position(value)
+
+    def _on_slider_released(self):
+        final_pos = self.slider_seek.value()
+        self.set_position(final_pos)
+        if getattr(self, "_was_playing_before_scrub", False):
+            self._was_playing_before_scrub = False
+            self.player.play()
 
     def set_position(self, position):
         self._current_pos_ms = int(position)
@@ -700,7 +730,9 @@ class VideoPlayerWidget(QWidget):
 class ClickableSlider(QSlider):
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            val = self.minimum() + ((self.maximum() - self.minimum()) * event.position().x()) / self.width()
-            self.setValue(int(val))
+            w = max(1, self.width())
+            ratio = max(0.0, min(1.0, event.position().x() / w))
+            val = self.minimum() + int((self.maximum() - self.minimum()) * ratio)
+            self.setValue(val)
             self.sliderMoved.emit(self.value())
         super().mousePressEvent(event)

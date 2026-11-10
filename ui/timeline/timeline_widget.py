@@ -163,6 +163,7 @@ class TimelineWidget(QScrollArea):
         """)
 
         self.setObjectName("timeline_widget")
+        self.setFocusPolicy(Qt.StrongFocus)
         self.jog_engine = JogAudioEngine(self)
         self.container = TimelineContainer()
         self.container.setObjectName("timeline_container")
@@ -497,6 +498,15 @@ class TimelineWidget(QScrollArea):
         self.horizontalScrollBar().setValue(target_scroll)
         self._internal_scroll = False
 
+    def set_duration(self, duration_ms: int):
+        self.duration_ms = max(0, int(duration_ms))
+        if hasattr(self, "container"):
+            if hasattr(self.container, "ruler"):
+                self.container.ruler.set_data(self.duration_ms)
+            if hasattr(self.container, "track"):
+                self.container.track.duration_ms = self.duration_ms
+                self.container.track.setMinimumWidth(int((self.duration_ms / 1000.0) * self.pixels_per_second))
+
     def center_on_time(self, time_ms: int):
         if self.duration_ms <= 0:
             return
@@ -505,6 +515,7 @@ class TimelineWidget(QScrollArea):
 
     def mousePressEvent(self, event):
         """User click vào Timeline -> Chuyển tọa độ thành Time (ms) và phát tín hiệu Seek"""
+        self.setFocus()
         # Lấy tọa độ click tương đối với mặt cuộn bên trong
         click_x = event.pos().x() + self.horizontalScrollBar().value()
         target_ms = int((click_x / self.pixels_per_second) * 1000.0)
