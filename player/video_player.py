@@ -371,20 +371,63 @@ class VideoPlayerWidget(QWidget):
 
     def load_video(self, file_path):
         self.cancel_segment_playback(pause=True)
-        if os.path.exists(file_path):
-            self.empty_state_lbl.hide()
-            self.player.setSource(QUrl.fromLocalFile(file_path))
+        if not file_path or not os.path.exists(file_path):
+            return
+
+        self._original_video_path = file_path
+        self._playback_video_path = file_path
+        self.empty_state_lbl.hide()
+
+        from core.video.transcode_service import (
+            is_transcode_needed,
+            get_cached_transcode,
+        )
+
+        cached_path = get_cached_transcode(file_path)
+        if cached_path:
+            # Cache Hit (< 50ms): Nạp ngay bản Fast-Seek MP4 tối ưu
+            self._playback_video_path = cached_path
+            self.player.setSource(QUrl.fromLocalFile(cached_path))
             self.player.pause()
-            if self._is_legacy_wmv_format(file_path):
-                try:
-                    from ui.toast import Toast
-                    parent_widget = self.window() if hasattr(self, 'window') and self.window() else self
-                    Toast.show_warning(
-                        parent_widget,
-                        "Video thuộc định dạng cũ/lỗi (WMV2). Khuyến nghị chuyển đổi sang MP4 tiêu chuẩn để tránh giật lag khi phát.",
-                    )
-                except Exception:
-                    pass
+            return
+
+        # Nạp video gốc ngay lập tức để người dùng phát mà không chờ đợi
+        self.player.setSource(QUrl.fromLocalFile(file_path))
+        self.player.pause()
+
+        # Nếu video thuộc định dạng cần tối ưu Fast-Seek, khởi động background transcode
+        if is_transcode_needed(file_path):
+            self._start_background_transcode(file_path)
+
+    def _start_background_transcode(self, file_path):
+        if hasattr(self, "_transcode_worker") and self._transcode_worker and self._transcode_worker.isRunning():
+            self._transcode_worker.cancel()
+            self._transcode_worker.wait(1000)
+
+        from core.video.transcode_service import TranscodeWorker
+        self._transcode_worker = TranscodeWorker(file_path, parent=self)
+        self._transcode_worker.transcode_finished.connect(self._on_transcode_finished)
+        self._transcode_worker.start()
+
+    def _on_transcode_finished(self, original_path, transcoded_path):
+        if getattr(self, "_original_video_path", None) == original_path:
+            was_playing = bool(self.player.isPlaying())
+            current_pos = self.player.position()
+            self._playback_video_path = transcoded_path
+            self.player.setSource(QUrl.fromLocalFile(transcoded_path))
+            self.player.setPosition(current_pos)
+            if was_playing:
+                self.player.play()
+            try:
+                from ui.toast import Toast
+                parent_widget = self.window() if hasattr(self, 'window') and self.window() else self
+                Toast.show_toast(
+                    parent_widget,
+                    "⚡ Đã tối ưu hóa video Fast-Seek (<50ms). Sẵn sàng tua mượt mà!",
+                    duration_ms=2500,
+                )
+            except Exception:
+                pass
 
     def toggle_playback(self):
         self.cancel_segment_playback()
@@ -637,9 +680,8 @@ class VideoPlayerWidget(QWidget):
 
     def set_position(self, position):
         self._current_pos_ms = int(position)
-        bounds = getattr(self, "_segment_bounds", None)
-        if bounds and not (bounds[0] <= position < bounds[1]):
-            self.clear_segment_focus()
+        self._segment_bounds = None
+        self._segment_playback_active = False
         if hasattr(self, 'sub_controller'):
             if not hasattr(self, 'player') or not getattr(self.player, 'isPlaying', lambda: False)():
                 self._sync_subtitle_position(position)

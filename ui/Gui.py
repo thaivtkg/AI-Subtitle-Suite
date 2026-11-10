@@ -1721,7 +1721,10 @@ class MainWindow(QMainWindow):
             return
 
         from core.subtitle_editing.selection_controller import SelectionSource
-        if source == SelectionSource.PLAYBACK:
+        if source in (SelectionSource.PLAYBACK, SelectionSource.TIMELINE):
+            if hasattr(self, "inspector_panel") and 0 <= index < len(self.sub_editor.all_segments):
+                preset = self.sub_editor.all_segments[index].get("style_preset", "normal")
+                self.inspector_panel.set_current_preset(preset)
             return
 
         if index >= 0 and index < len(self.sub_editor.all_segments):
