@@ -18,9 +18,9 @@ def parse_srt_content(content: str) -> list[dict]:
         return []
 
     pattern = re.compile(
-        r"(?:^|\n+)(?:(\d+)\s*\n)?\s*"
-        r"((?:(?:\d+:)?\d{1,2}:\d{2}[,.]\d{1,3})\s*-->\s*(?:(?:\d+:)?\d{1,2}:\d{2}[,.]\d{1,3}))\s*\n"
-        r"([\s\S]*?)(?=(?:\n+\d+\s*\n\s*(?:(?:\d+:)?\d{1,2}:\d{2}[,.]\d{1,3})\s*-->)|\Z)"
+        r"(?:^|\n+)(?:[ \t]*(\d+)[ \t]*\n)?"
+        r"[ \t]*((?:(?:\d+:)?\d{1,2}:\d{2}[,.]\d{1,3})[ \t]*-->[ \t]*(?:(?:\d+:)?\d{1,2}:\d{2}[,.]\d{1,3}))[ \t]*(?:\n|\Z)"
+        r"([\s\S]*?)(?=(?:\n+[ \t]*(?:\d+[ \t]*\n)?[ \t]*(?:(?:\d+:)?\d{1,2}:\d{2}[,.]\d{1,3})[ \t]*-->)|\Z)"
     )
     matches = list(pattern.finditer(normalized))
     if matches:
@@ -42,15 +42,23 @@ def parse_srt_content(content: str) -> list[dict]:
     segments = []
     for block in re.split(r"\n{2,}", normalized):
         lines = block.splitlines()
-        if len(lines) < 2 or "-->" not in lines[1]:
+        if not lines:
             continue
-        start, end = (part.strip() for part in lines[1].split("-->", 1))
+        if "-->" in lines[0]:
+            ts_line = lines[0]
+            text_lines = lines[1:]
+        elif len(lines) >= 2 and "-->" in lines[1]:
+            ts_line = lines[1]
+            text_lines = lines[2:]
+        else:
+            continue
+        start, end = (part.strip() for part in ts_line.split("-->", 1))
         segments.append({
             "id": uuid.uuid4().hex,
             "stt": str(len(segments) + 1),
             "start": _to_ms(start),
             "end": _to_ms(end),
-            "text": "\n".join(lines[2:]).strip(),
+            "text": "\n".join(text_lines).strip(),
             "status": "draft",
             "metadata": {"type": "normal"},
         })

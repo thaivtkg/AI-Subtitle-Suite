@@ -2,9 +2,9 @@ name: Automated Tests Pipeline
 
 on:
   push:
-    branches: [ master, codex/help-center-guided-tour ]
+    branches: [ master, main, codex/help-center-guided-tour ]
   pull_request:
-    branches: [ master ]
+    branches: [ master, main ]
 
 jobs:
   test:
@@ -44,7 +44,7 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: |
           # Dùng xvfb-run để bọc tiến trình test, cấp cho nó một màn hình ảo (:99)
-          xvfb-run -a python -m unittest discover -s tests -v
+          xvfb-run -a pytest tests -v
 
       - name: Syntax & Compilation Check
         run: |

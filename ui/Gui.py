@@ -5525,7 +5525,7 @@ class MainWindow(QMainWindow):
             if hasattr(self, "inspector_panel"):
                 project.state.subtitle_style = self.inspector_panel.get_current_style()
                 project.state.style_presets = copy.deepcopy(getattr(self.inspector_panel, "custom_presets", {}))
-            if hasattr(self, "sub_editor") and self.sub_editor.all_segments:
+            if hasattr(self, "sub_editor") and getattr(self.sub_editor, "all_segments", None) is not None:
                 project.state.segment_styles = {
                     str(s.get("stt", i + 1)): s.get("style_preset", "normal")
                     for i, s in enumerate(self.sub_editor.all_segments)
@@ -5543,7 +5543,7 @@ class MainWindow(QMainWindow):
                     self.page_translation.save_translation_project(aisrt_path)
             
             # 2. ÉP GHI DỮ LIỆU TIMELINE XUỐNG ĐÚNG FILE ĐANG MỞ (PERSISTENCE)
-            if hasattr(self, 'sub_editor') and self.sub_editor.all_segments:
+            if hasattr(self, 'sub_editor') and getattr(self.sub_editor, 'all_segments', None) is not None:
                 project = self.project_service.current_project
                 
                 # Tìm ID của file Artifact đang được dùng
@@ -5629,6 +5629,10 @@ class MainWindow(QMainWindow):
                         else:
                             self.sub_editor.srt_path = artifact_path
                             draft_path = self.sub_editor.save_draft(silent=True)
+                            if draft_path is None:
+                                trace("draft-save-failed", path=artifact_path)
+                                print(f"[LỖI LƯU DRAFT] Không thể lưu draft vào: {artifact_path}")
+                                return False
                             if draft_path and draft_path != artifact.path:
                                 artifact.path = draft_path
                                 self.queue_mgr.set_srt_for_video(self.queue_mgr.active_vid, draft_path)
@@ -5734,12 +5738,17 @@ class MainWindow(QMainWindow):
         if not selected_paths:
             return
 
+        # Sửa Issue 2: Lưu/chốt trạng thái dự án hiện tại TRƯỚC KHI tạo/chuẩn bị bất kỳ dự án mới nào
+        if not self._prepare_recovery_session_switch():
+            return
+
         first_video = selected_paths[0]
         other_videos = selected_paths[1:]
 
         # Tạo / xác định dự án cho tất cả video được chọn và đăng ký vào queue
+        # set_as_current=False đảm bảo không làm thay đổi ngữ cảnh đang làm việc
         bundle_first = self.project_service.get_canonical_bundle_dir(first_video)
-        proj_first, _ = self.project_service.create_or_get_folder_project(first_video)
+        proj_first, _ = self.project_service.create_or_get_folder_project(first_video, set_as_current=False)
 
         self.queue_mgr.add_video(first_video)
         self._queue_project_dirs[first_video] = bundle_first
@@ -5748,7 +5757,7 @@ class MainWindow(QMainWindow):
 
         for vid in other_videos:
             bundle_other = self.project_service.get_canonical_bundle_dir(vid)
-            proj_other, _ = self.project_service.create_or_get_folder_project(vid)
+            proj_other, _ = self.project_service.create_or_get_folder_project(vid, set_as_current=False)
             self.queue_mgr.add_video(vid)
             self._queue_project_dirs[vid] = bundle_other
             if hasattr(self.queue_mgr, "bind_project"):

@@ -2101,7 +2101,7 @@ class SubtitleEditorWidget(QWidget):
         
         try:
             if not getattr(self, "project_service", None):
-                return
+                return None
             self.project_service.save_draft(path, self.all_segments)
             if self.undo_manager:
                 self.undo_manager.mark_saved()

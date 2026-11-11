@@ -43,6 +43,11 @@ class BatchSession:
     def to_dict(self) -> dict:
         data = asdict(self)
         data['jobs'] = [job.to_dict() for job in self.jobs]
+        if 'translation_config' in data:
+            data['translation_config'] = {
+                k: v for k, v in self.translation_config.items()
+                if isinstance(v, (str, int, float, bool, list, dict, type(None)))
+            }
         return data
 
     @classmethod

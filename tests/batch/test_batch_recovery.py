@@ -1,6 +1,7 @@
 import os
 import json
 import unittest
+from unittest.mock import patch, MagicMock
 from PySide6.QtCore import QCoreApplication, QThreadPool
 import sys
 
@@ -17,7 +18,12 @@ class TestBatchRecovery(unittest.TestCase):
         if os.path.exists(self.batch_file):
             os.remove(self.batch_file)
 
-    def test_manager_saves_session_to_disk_on_status_change(self):
+    @patch('core.batch.batch_manager.ExportService')
+    @patch('core.batch.batch_manager.FasterWhisperService')
+    @patch('core.batch.batch_manager.MediaImportService')
+    def test_manager_saves_session_to_disk_on_status_change(self, mock_import, mock_whisper, mock_export):
+        mock_whisper.return_value.run.return_value = "mock_art_1"
+        mock_export.return_value.run.return_value = MagicMock()
         manager = BatchManager()
         job = BatchJob(id="job_1", input_file="test.mp4")
         session = BatchSession("s1", "tiny", "en", "srt", [job])
@@ -34,7 +40,6 @@ class TestBatchRecovery(unittest.TestCase):
         self.assertEqual(data['jobs'][0]['status'], "COMPLETED")
         
         from core.recovery.recovery_manager import RecoveryManager
-        from unittest.mock import MagicMock
         rec_mgr = RecoveryManager(MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock())
         self.assertTrue(rec_mgr.has_active_batch_session())
         loaded_data = rec_mgr.load_active_batch_session()

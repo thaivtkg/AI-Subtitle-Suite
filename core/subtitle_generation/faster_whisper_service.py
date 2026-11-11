@@ -304,3 +304,63 @@ class FasterWhisperService:
     @staticmethod
     def _shift_ms(seconds: float, offset_ms: int) -> int:
         return max(0, int(round(seconds * 1000)) + offset_ms)
+
+    def run(
+        self,
+        input_file: str,
+        model_size: str = "tiny",
+        language: Optional[str] = None,
+        artifact_store: Optional[object] = None,
+        session_id: Optional[str] = None,
+    ) -> str:
+        """Transcribe full media file and register resulting SRT artifact."""
+        if not input_file or not os.path.exists(input_file):
+            raise FileNotFoundError(f"Media file not found: {input_file}")
+
+        target_size = model_size or self.current_model_size or "tiny"
+        compute_type = "float16" if self.device == "cuda" else "int8"
+        if not self.is_loaded(target_size, compute_type):
+            self.load_model(target_size, compute_type)
+
+        if self.model is None:
+            raise RuntimeError(f"Failed to load Faster-Whisper model: {target_size}")
+
+        transcribe_kwargs = {}
+        if language and language != "auto":
+            transcribe_kwargs["language"] = language
+
+        segments_gen, _info = self.model.transcribe(input_file, **transcribe_kwargs)
+
+        lines = []
+        for idx, seg in enumerate(segments_gen, 1):
+            s_ms = self._shift_ms(seg.start, 0)
+            e_ms = self._shift_ms(seg.end, 0)
+            s_str = f"{s_ms // 3600000:02d}:{(s_ms % 3600000) // 60000:02d}:{(s_ms % 60000) // 1000:02d},{s_ms % 1000:03d}"
+            e_str = f"{e_ms // 3600000:02d}:{(e_ms % 3600000) // 60000:02d}:{(e_ms % 60000) // 1000:02d},{e_ms % 1000:03d}"
+            lines.append(f"{idx}\n{s_str} --> {e_str}\n{seg.text.strip()}\n\n")
+
+        from datetime import datetime
+        import uuid
+        from core.utils.file_utils import atomic_save_text
+        from core.artifacts.artifact import Artifact
+        from core.artifacts.artifact_types import ArtifactType, ArtifactStatus
+
+        video_dir = os.path.dirname(input_file)
+        video_name = os.path.splitext(os.path.basename(input_file))[0]
+        srt_path = os.path.join(video_dir, f"{video_name}.srt")
+        atomic_save_text(srt_path, "".join(lines))
+
+        artifact_id = uuid.uuid4().hex
+        if artifact_store:
+            art = Artifact(
+                artifact_id=artifact_id,
+                artifact_type=ArtifactType.SUBTITLE,
+                path=srt_path,
+                created_at=datetime.now().isoformat(),
+                updated_at=datetime.now().isoformat(),
+                source_project_id=session_id or "batch_session",
+                status=ArtifactStatus.READY,
+            )
+            artifact_store.register(art)
+
+        return artifact_id

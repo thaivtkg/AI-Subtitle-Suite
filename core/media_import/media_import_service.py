@@ -155,3 +155,14 @@ class MediaImportService:
                 raise
             raise MediaImportError(MediaImportErrorCode.UNKNOWN, "Unexpected error during media import pipeline",
                                    details={"exception_type": type(exc).__name__}) from exc
+
+    def run(self, input_file: str) -> str:
+        """Process or validate input media file for pipeline consumption."""
+        if not input_file:
+            raise ValueError("Input file path is empty")
+        if input_file.startswith(("http://", "https://")):
+            result = self.import_from_url(input_file)
+            return str(result.output_path)
+        if not os.path.exists(input_file):
+            raise FileNotFoundError(f"Media file not found: {input_file}")
+        return input_file

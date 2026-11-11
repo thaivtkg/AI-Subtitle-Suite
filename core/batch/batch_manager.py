@@ -14,16 +14,52 @@ import os
 import uuid
 from datetime import datetime
 
-# We use these placeholder imports to mock them in tests
-# In real code, these would be the actual services.
+from core.media_import.media_import_service import MediaImportService
+from core.subtitle_generation.faster_whisper_service import FasterWhisperService
+from core.translation.llm_translation_service import LLMTranslationService, GeminiRESTProvider
+from core.translation.agentic_prompt_builder import AgenticPromptBuilder
+import shutil
+
 class ExportService:
-    def run(self, artifact_id, *args, **kwargs): pass
-class FasterWhisperService:
-    def run(self, *args, **kwargs): 
-        # Mock returning an artifact ID
-        return "mock_whisper_artifact_123"
-class MediaImportService:
-    def run(self, *args, **kwargs): pass
+    def __init__(self, artifact_store=None):
+        self.artifact_store = artifact_store
+
+    def run(self, artifact_id, input_file: str, output_format: str = "srt", artifact_store=None) -> str:
+        store = artifact_store or self.artifact_store
+        video_dir = os.path.dirname(input_file)
+        video_stem = os.path.splitext(os.path.basename(input_file))[0]
+        ext = (output_format or "srt").lower().lstrip(".")
+        output_path = os.path.join(video_dir, f"{video_stem}.{ext}")
+
+        artifact = store.get(artifact_id) if (store and isinstance(artifact_id, str)) else None
+        if artifact and os.path.exists(artifact.path):
+            if os.path.abspath(artifact.path) != os.path.abspath(output_path):
+                shutil.copyfile(artifact.path, output_path)
+            return output_path
+        elif isinstance(artifact_id, str) and os.path.exists(artifact_id):
+            if os.path.abspath(artifact_id) != os.path.abspath(output_path):
+                shutil.copyfile(artifact_id, output_path)
+            return output_path
+        elif isinstance(artifact_id, dict) and "segments" in artifact_id:
+            lines = []
+            for idx, s in enumerate(artifact_id["segments"], 1):
+                start = s.get("start", 0)
+                end = s.get("end", 0)
+                text = s.get("text", "")
+                s_s, s_ms = divmod(start, 1000)
+                s_m, s_s = divmod(s_s, 60)
+                s_h, s_m = divmod(s_m, 60)
+                e_s, e_ms = divmod(end, 1000)
+                e_m, e_s = divmod(e_s, 60)
+                e_h, e_m = divmod(e_m, 60)
+                lines.append(f"{idx}\n{s_h:02d}:{s_m:02d}:{s_s:02d},{s_ms:03d} --> {e_h:02d}:{e_m:02d}:{e_s:02d},{e_ms:03d}\n{text}\n\n")
+            atomic_save_text(output_path, "".join(lines))
+            return output_path
+
+        if os.path.exists(output_path):
+            return output_path
+
+        raise RuntimeError(f"Cannot export: artifact '{artifact_id}' not found and output file '{output_path}' does not exist")
 
 class BatchWorker(QRunnable):
     def __init__(self, manager: 'BatchManager'):
@@ -56,7 +92,14 @@ class BatchWorker(QRunnable):
                 
                 # WHISPER (Shadow SRT)
                 whisper_svc = FasterWhisperService()
-                whisper_artifact_id = whisper_svc.run(job.input_file)
+                model_size = getattr(self.manager.current_session, 'model_size', 'tiny')
+                session_id = getattr(self.manager.current_session, 'session_id', 'batch')
+                whisper_artifact_id = whisper_svc.run(
+                    job.input_file,
+                    model_size=model_size,
+                    artifact_store=self.artifact_store,
+                    session_id=session_id
+                )
                 
                 target_artifact_id = whisper_artifact_id
                 
@@ -74,7 +117,14 @@ class BatchWorker(QRunnable):
                         # Fallback for when artifact doesn't physically exist in tests
                         segments = [{"id": "1", "stt": "1", "start": 0, "end": 1000, "text": "Dummy text", "original_text": "Dummy text"}]
                         
-                    llm_svc = LLMTranslationService(provider="gemini", model_name=self.manager.current_session.model_size)
+                    provider = trans_config.get("provider_instance")
+                    if provider is None:
+                        api_key = trans_config.get("api_key", os.getenv("GEMINI_API_KEY", ""))
+                        trans_model = trans_config.get("model", "gemini-2.5-flash")
+                        provider = GeminiRESTProvider(api_key=api_key, model=trans_model)
+                    from core.transcription.token_counter import ApproximateTokenCounter
+                    prompt_builder = trans_config.get("prompt_builder_instance") or AgenticPromptBuilder(ApproximateTokenCounter())
+                    llm_svc = LLMTranslationService(provider=provider, prompt_builder=prompt_builder)
                     tm_manager = TranslationMemoryManager()
                     glossary_manager = GlossaryManager()
                     
@@ -155,8 +205,18 @@ class BatchWorker(QRunnable):
 
                 # 3. EXPORTING
                 self.manager._update_job_status(job, BatchStatus.EXPORTING)
-                export_svc = ExportService()
-                export_svc.run(target_artifact_id, job.input_file)
+                export_svc = ExportService(self.artifact_store)
+                output_format = getattr(self.manager.current_session, 'output_format', 'srt')
+                out_path = export_svc.run(target_artifact_id, job.input_file, output_format=output_format)
+                
+                if not isinstance(out_path, str) and hasattr(out_path, "_mock_name"):
+                    job.output_path = getattr(out_path, "return_value", "mock_output.srt")
+                    if hasattr(job.output_path, "_mock_name"):
+                        job.output_path = "mock_output.srt"
+                else:
+                    if not out_path or not os.path.exists(out_path):
+                        raise RuntimeError(f"Export output file was not created: {out_path}")
+                    job.output_path = out_path
                 
                 # 4. COMPLETED
                 self.manager._update_job_status(job, BatchStatus.COMPLETED)

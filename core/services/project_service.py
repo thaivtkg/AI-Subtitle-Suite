@@ -151,24 +151,65 @@ class ProjectService:
         ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".ts"
     }
 
-    @staticmethod
-    def get_canonical_bundle_dir(video_path: str) -> str:
-        """Trả về đường dẫn bundle dự án chuẩn mực kề bên file video."""
+    @classmethod
+    def get_canonical_bundle_dir(cls, video_path: str) -> str:
+        """Trả về đường dẫn bundle dự án chuẩn mực kề bên file video, đối chiếu video nguồn để tránh trùng lặp."""
         folder = os.path.dirname(os.path.abspath(video_path))
         filename = os.path.basename(video_path)
-        stem = os.path.splitext(filename)[0]
+        stem, ext = os.path.splitext(filename)
         safe_name = "".join(
             char if char.isalnum() or char in ("-", "_") else "_"
             for char in stem
         ).strip("_") or "video"
 
+        def _is_bundle_owner(bundle_path: str) -> bool:
+            if not os.path.isdir(bundle_path):
+                return False
+            pj = os.path.join(bundle_path, "project.json")
+            if not os.path.exists(pj):
+                return False
+            try:
+                with open(pj, "r", encoding="utf-8") as f:
+                    p_data = json.load(f)
+                src = p_data.get("source") or {}
+                src_path = str(src.get("path") or "")
+                if not src_path:
+                    return False
+                if os.path.abspath(src_path) == os.path.abspath(video_path):
+                    return True
+                if os.path.basename(src_path).lower() == filename.lower():
+                    return True
+                return False
+            except Exception:
+                return False
+
         stem_bundle = os.path.join(folder, f"{stem}.ai-subtitle")
         safe_bundle = os.path.join(folder, f"{safe_name}.ai-subtitle")
-        if os.path.isdir(stem_bundle):
+
+        # 1. Nếu bundle đã tồn tại và thuộc về chính video này -> Tái sử dụng
+        if _is_bundle_owner(stem_bundle):
             return stem_bundle
-        if os.path.isdir(safe_bundle):
+        if _is_bundle_owner(safe_bundle):
             return safe_bundle
-        return safe_bundle
+
+        # 2. Nếu bundle chưa từng tồn tại trên đĩa -> Dùng tên chuẩn
+        if not os.path.exists(stem_bundle):
+            return stem_bundle
+        if not os.path.exists(safe_bundle):
+            return safe_bundle
+
+        # 3. Xung đột (Collision): Bundle đã tồn tại nhưng thuộc về video khác!
+        clean_ext = ext.lstrip(".").lower()
+        disambiguated = os.path.join(folder, f"{stem}_{clean_ext}.ai-subtitle")
+        if _is_bundle_owner(disambiguated) or not os.path.exists(disambiguated):
+            return disambiguated
+
+        idx = 2
+        while True:
+            candidate = os.path.join(folder, f"{stem}_{clean_ext}_{idx}.ai-subtitle")
+            if _is_bundle_owner(candidate) or not os.path.exists(candidate):
+                return candidate
+            idx += 1
 
     def scan_video_folder(self, folder_path: str) -> list[dict]:
         """Quét thư mục chứa các file video và phát hiện bundle dự án tương ứng."""
@@ -218,8 +259,12 @@ class ProjectService:
         results.sort(key=lambda item: item["filename"].lower())
         return results
 
-    def create_or_get_folder_project(self, video_path: str) -> tuple[Project, bool]:
-        """Tạo dự án mới kề bên video nếu chưa có; mở lại dự án cũ nếu đã tồn tại."""
+    def create_or_get_folder_project(
+        self, video_path: str, set_as_current: bool = True
+    ) -> tuple[Project, bool]:
+        """Tạo dự án mới kề bên video nếu chưa có; mở lại dự án cũ nếu đã tồn tại.
+        Nếu set_as_current=False, không thay đổi ngữ cảnh đang làm việc (current_project, project_dir, artifact_store).
+        """
         if not os.path.exists(video_path):
             raise FileNotFoundError(f"Không tìm thấy file video tại: {video_path}")
 
@@ -227,11 +272,35 @@ class ProjectService:
         proj_json = os.path.join(bundle_dir, "project.json")
 
         if os.path.isdir(bundle_dir) and os.path.exists(proj_json):
-            project = self.open_project(bundle_dir)
+            if set_as_current:
+                project = self.open_project(bundle_dir)
+            else:
+                saved_cur = self.current_project
+                saved_dir = self.project_dir
+                saved_store = self.artifact_store
+                self.artifact_store = ArtifactStore()
+                try:
+                    project = self.open_project(bundle_dir)
+                finally:
+                    self.current_project = saved_cur
+                    self.project_dir = saved_dir
+                    self.artifact_store = saved_store
             return project, False
 
         name = os.path.splitext(os.path.basename(video_path))[0]
-        project = self.create_project(bundle_dir, name, video_path)
+        if set_as_current:
+            project = self.create_project(bundle_dir, name, video_path)
+        else:
+            saved_cur = self.current_project
+            saved_dir = self.project_dir
+            saved_store = self.artifact_store
+            self.artifact_store = ArtifactStore()
+            try:
+                project = self.create_project(bundle_dir, name, video_path)
+            finally:
+                self.current_project = saved_cur
+                self.project_dir = saved_dir
+                self.artifact_store = saved_store
         return project, True
 
     def save_project(self) -> None:
