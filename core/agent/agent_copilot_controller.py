@@ -240,9 +240,14 @@ class AgentCopilotController(QObject):
 
         # 3. Check Timing Creation (tạo timing N câu - VAD Preset CFG-9 & Gate 1 Preview)
         preview_segments = None
-        if "tạo timing" in lower or ("timing" in lower and any(w in lower for w in ["tạo", "khởi tạo", "add"])):
+        created_timing_step_count: Optional[int] = None
+        is_create_timing = "tạo timing" in lower or ("timing" in lower and any(w in lower for w in ["tạo", "khởi tạo", "add"]))
+        is_continue = any(w in lower for w in ["tiếp theo", "tiếp tục", "kế tiếp", "tiếp", "sau mốc", "sau đó"])
+
+        if is_create_timing:
             m_count = re.search(r"(\d+)\s*câu", lower)
             count = int(m_count.group(1)) if m_count else 5
+            created_timing_step_count = count
 
             start_offset_s = 0.0
             m_tc = re.search(r"từ\s+(\d{1,2}):(\d{2})", lower)
@@ -252,6 +257,16 @@ class AgentCopilotController(QObject):
                 m_sec = re.search(r"từ\s+(?:giây\s+)?(\d+(?:\.\d+)?)\s*(?:giây|s)?", lower)
                 if m_sec:
                     start_offset_s = float(m_sec.group(1))
+                elif is_continue:
+                    # Tự động lấy mốc kết thúc lớn nhất (max end_ms) của các câu hiện có làm điểm bắt đầu
+                    max_end_ms = 0
+                    if self._active_segments:
+                        from ui.SubEditor import time_str_to_ms
+                        for s in self._active_segments:
+                            en_ms = time_str_to_ms(s.get("end", 0))
+                            if en_ms > max_end_ms:
+                                max_end_ms = en_ms
+                    start_offset_s = max_end_ms / 1000.0
 
             vad_threshold = None
             m_th = re.search(r"(?:ngưỡng|threshold)\s*[:=]?\s*(\d+(?:\.\d+)?)", lower)
@@ -273,19 +288,31 @@ class AgentCopilotController(QObject):
                 tool_args["vad_threshold"] = vad_threshold
             if min_silence_ms is not None:
                 tool_args["min_silence_ms"] = min_silence_ms
+            if is_continue:
+                tool_args["is_continue"] = True
             tool_args["preview_segments"] = None
+
+            # Đặt tiêu đề rõ ràng: nếu chưa có câu nào thì ghi rõ từ đầu video
+            if is_continue:
+                if start_offset_s > 0:
+                    from ui.SubEditor import ms_to_time_str
+                    title = f"Khởi tạo Timing {count} câu tiếp theo (từ {ms_to_time_str(int(start_offset_s * 1000))})"
+                else:
+                    title = f"Khởi tạo Timing {count} câu (từ đầu video)"
+            else:
+                title = f"Khởi tạo Timing {count} câu đầu"
 
             steps.append(
                 AgentStep(
                     id=f"step_{len(steps)+1}",
-                    title=f"Khởi tạo Timing {count} câu đầu",
+                    title=title,
                     tool_name="create_timing",
                     tool_args=tool_args,
                 )
             )
 
-        # 4. Check Subtitle Rescan ("quét lại", "rescan", "scan lại")
-        elif any(w in lower for w in ["quét lại", "rescan", "scan lại"]):
+        # 4. Check Subtitle Rescan ("quét lại", "rescan", "scan lại") - Tách độc lập khỏi elif
+        if any(w in lower for w in ["quét lại", "rescan", "scan lại"]):
             m_rng = re.search(r"từ\s+câu\s+(\d+)\s+đến\s+(?:câu\s+)?(\d+)", lower)
             m_time = re.search(r"từ\s+(?:giây\s+)?(\d+(?:\.\d+)?)(?:\s*s|\s*giây)?\s+đến\s+(?:giây\s+)?(\d+(?:\.\d+)?)(?:\s*s|\s*giây)?", lower)
             m_multi = re.search(
@@ -352,8 +379,8 @@ class AgentCopilotController(QObject):
                     )
                 )
 
-        # 5. Check ASR Gen Sub (odd sentence, range, or limit)
-        elif any(w in lower for w in ["nhận diện", "gen sub", "asr", "whisper", "tạo sub"]):
+        # 5. Check ASR Gen Sub (odd sentence, range, limit, hoặc trỏ tới câu vừa tạo) - Tách độc lập khỏi elif
+        if any(w in lower for w in ["nhận diện", "gen sub", "asr", "whisper", "tạo sub"]):
             m_rng = re.search(r"từ\s+câu\s+(\d+)\s+đến\s+(?:câu\s+)?(\d+)", lower)
             m_multi = re.search(
                 r"câu\s+(?:số\s+|thứ\s+)?(\d+(?:\s*(?:,|và|hoặc)\s*(?:câu\s+)?(?:số\s+|thứ\s+)?\d+)*)",
@@ -362,7 +389,16 @@ class AgentCopilotController(QObject):
             m_lim = re.search(r"(\d+)\s*câu(?:\s*đầu)?", lower)
 
             args = {"language": self.context_ledger.source_lang or "auto"}
-            if m_rng:
+            if self.context_ledger.video_path:
+                args["video_path"] = self.context_ledger.video_path
+
+            # Xử lý Prompt kết hợp: "tạo timing 3 câu tiếp theo và gen sub 3 câu đó"
+            # Cụm "3 câu đó" / "đó" / "câu tiếp theo" phải trỏ tới kết quả bước timing, KHÔNG biến thành limit=3 rồi xử lý nhầm 3 câu đầu
+            if created_timing_step_count is not None and ("câu đó" in lower or "đó" in lower or is_continue or ("câu" in lower and not m_rng and not m_multi)):
+                args["target_newly_created"] = True
+                args["count"] = created_timing_step_count
+                title = f"ASR Gen Sub {created_timing_step_count} câu vừa tạo (Faster-Whisper)"
+            elif m_rng:
                 raw_a = int(m_rng.group(1))
                 raw_b = int(m_rng.group(2))
                 st_idx, en_idx = min(raw_a, raw_b), max(raw_a, raw_b)
@@ -564,8 +600,23 @@ class AgentCopilotController(QObject):
 
         # 2. Execute tool
         args = dict(step.tool_args)
-        if step.tool_name == "create_timing" and "video_path" not in args and self.context_ledger.video_path:
-            args["video_path"] = self.context_ledger.video_path
+        if step.tool_name == "create_timing":
+            if "video_path" not in args and self.context_ledger.video_path:
+                args["video_path"] = self.context_ledger.video_path
+            if "existing_segments" not in args:
+                args["existing_segments"] = copy.deepcopy(self._active_segments)
+        if step.tool_name == "run_asr":
+            if "video_path" not in args and self.context_ledger.video_path:
+                args["video_path"] = self.context_ledger.video_path
+            if "whisper_service" not in args and getattr(self, "whisper_service", None):
+                args["whisper_service"] = self.whisper_service
+            if args.get("target_newly_created"):
+                prev_res = getattr(self, "_last_step_result", None)
+                if isinstance(prev_res, dict):
+                    if "new_indices" in prev_res and prev_res["new_indices"]:
+                        args["indices"] = prev_res["new_indices"]
+                    elif "new_segments" in prev_res and prev_res["new_segments"]:
+                        args["indices"] = [s.get("id") for s in prev_res["new_segments"] if s.get("id") is not None]
         if step.tool_name == "translate_subtitles":
             if "auto_load_model" not in args:
                 args["auto_load_model"] = True

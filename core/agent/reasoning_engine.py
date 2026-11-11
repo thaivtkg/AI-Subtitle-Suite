@@ -190,15 +190,37 @@ class DynamicReasoningEngine:
 
         if tool_name == "create_timing":
             segs = result.get("segments", [])
-            count = len(segs) or args.get("count", 5)
+            new_segs = result.get("new_segments", [])
+            is_continue = args.get("is_continue") or bool(new_segs)
+            count = len(new_segs) if new_segs else (len(segs) or args.get("count", 5))
+            target_list = new_segs if new_segs else segs
             t_span = ""
-            if segs:
-                t_span = f" ({segs[0].get('start', '00:00.000')} ➔ {segs[-1].get('end', '00:00.000')})"
-            templates = [
-                f"Tôi đã kích hoạt engine VAD CFG-9 (Anime JA) trích xuất thành công {count} phân đoạn nhịp thoại đầu tiên{t_span}, lọc sạch toàn bộ tạp âm và 17.5s nhạc intro không lời.",
-                f"Hệ thống đã bắt trọn {count} câu thoại của nhân vật{t_span} qua bộ lọc Silero VAD 16kHz. Mọi khoảng lặng âm thanh đã được chuẩn hóa mượt mà.",
-                f"Đã hoàn thành thiết lập {count} phân đoạn phụ đề chuẩn{t_span}. Toàn bộ phần dạo đầu không lời đã được tự động bỏ qua chính xác.",
-            ]
+            if target_list:
+                t_span = f" ({target_list[0].get('start', '00:00.000')} ➔ {target_list[-1].get('end', '00:00.000')})"
+
+            status = result.get("status", "ok")
+            req_count = result.get("requested_count", count)
+            partial_note = ""
+            if status == "partial" or (req_count and count < req_count):
+                partial_note = f" (đã quét đến cuối video, tìm thấy {count}/{req_count} phân đoạn thực tế)"
+            elif status == "no_speech":
+                partial_note = " (không phát hiện thêm đoạn thoại nào sau mốc này)"
+
+            if is_continue and new_segs:
+                start_off = result.get("start_offset_s", 0.0)
+                from ui.SubEditor import ms_to_time_str
+                off_str = ms_to_time_str(int(start_off * 1000)) if start_off > 0 else "đầu video"
+                templates = [
+                    f"Tôi đã kích hoạt engine VAD CFG-9 (Anime JA) trích xuất thành công {count} phân đoạn nhịp thoại tiếp theo{t_span} từ mốc {off_str}{partial_note}. Toàn bộ {len(segs) - len(new_segs)} câu phụ đề trước đó được bảo toàn nguyên vẹn 100%.",
+                    f"Hệ thống đã bắt trọn {count} câu thoại tiếp theo{t_span} sau mốc {off_str}{partial_note}. Dữ liệu các câu trước được giữ nguyên vẹn.",
+                    f"Đã hoàn thành thiết lập {count} phân đoạn phụ đề mới{t_span} nối tiếp mốc {off_str}{partial_note}. Cấu trúc timeline được bảo toàn tuyệt đối.",
+                ]
+            else:
+                templates = [
+                    f"Tôi đã kích hoạt engine VAD CFG-9 (Anime JA) trích xuất thành công {count} phân đoạn nhịp thoại{t_span}{partial_note}. Mọi khoảng lặng âm thanh đã được chuẩn hóa mượt mà.",
+                    f"Hệ thống đã bắt trọn {count} câu thoại của nhân vật{t_span} qua bộ lọc Silero VAD 16kHz{partial_note}.",
+                    f"Đã hoàn thành thiết lập {count} phân đoạn phụ đề chuẩn{t_span}{partial_note}.",
+                ]
             summary_body = templates[(self._last_completion_idx + 1) % len(templates)]
 
         elif tool_name == "apply_subtitle_style":
@@ -252,12 +274,27 @@ class DynamicReasoningEngine:
         elif tool_name == "run_asr":
             lang = (args.get("language") or "auto").upper()
             segs = result.get("segments", [])
-            count = len(segs)
-            templates = [
-                f"Faster-Whisper ({lang}) đã bóc tách thành công lời thoại từ âm phổ video. Dữ liệu văn bản gồm {count} câu đã sẵn sàng trong khung kiểm tra.",
-                f"Nhận diện giọng nói tự động hoàn tất cho {count} phân đoạn. Toàn bộ từ khóa và nhịp ngắt đã được chuyển đổi sang text.",
-            ]
-            summary_body = templates[(self._last_completion_idx + 1) % len(templates)]
+            indices = result.get("indices") or []
+            target_segs = [s for s in segs if s.get("id") in indices] if indices else segs
+            count = len(target_segs)
+            t_span = ""
+            if target_segs:
+                t_span = f" ({target_segs[0].get('start', '00:00.000')} ➔ {target_segs[-1].get('end', '00:00.000')})"
+
+            err = result.get("error")
+            status = result.get("status", "ok")
+            if err or status == "error":
+                summary_body = (
+                    f"⚠️ **Quá trình nhận diện giọng nói (Faster-Whisper) gặp lỗi:** {err or 'Lỗi nhận diện âm thanh'}.\n\n"
+                    f"Mốc thời gian phụ đề đã duyệt được bảo toàn 100%. Bạn có thể kiểm tra cấu hình model hoặc chạy lại."
+                )
+            else:
+                templates = [
+                    f"Faster-Whisper ({lang}) đã nhận diện thành công nội dung âm thanh cho {count} phân đoạn phụ đề mới{t_span}. Dữ liệu lời thoại thực tế đã sẵn sàng trong khung kiểm tra.",
+                    f"Nhận diện giọng nói tự động hoàn tất cho {count} phân đoạn mới{t_span}. Toàn bộ từ khóa và nhịp ngắt đã được bóc tách sang text.",
+                    f"Đã bóc tách thành công lời thoại từ âm phổ video cho {count} câu{t_span} qua Faster-Whisper ({lang}).",
+                ]
+                summary_body = templates[(self._last_completion_idx + 1) % len(templates)]
 
         elif tool_name == "translate_subtitles":
             tgt = (result.get("target_lang") or args.get("target_lang", "vi")).upper()

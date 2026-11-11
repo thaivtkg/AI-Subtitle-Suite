@@ -28,6 +28,23 @@ DEFAULT_CFG9_PRESET = {
 }
 
 
+def get_video_duration_ms(video_path: Optional[str]) -> Optional[int]:
+    """Lấy thời lượng video (ms) từ container hoặc stream âm thanh."""
+    if not video_path or not os.path.exists(video_path) or av is None:
+        return None
+    try:
+        with av.open(video_path, mode="r", metadata_errors="ignore") as container:
+            if container.duration:
+                return int((container.duration / av.time_base) * 1000)
+            if container.streams.audio and container.streams.audio[0].duration:
+                s = container.streams.audio[0]
+                if s.time_base:
+                    return int(float(s.duration * s.time_base) * 1000)
+    except Exception:
+        pass
+    return None
+
+
 def extract_audio_window(
     video_path: Optional[str],
     start_offset_s: float = 0.0,
@@ -35,12 +52,22 @@ def extract_audio_window(
     sampling_rate: int = 16000,
 ) -> Optional[np.ndarray]:
     """
-    Gate 1 & TC-VAD-10: Windowed Audio Extraction.
-    Decodes only the leading audio window (default 120s - 180s) instead of the entire video.
-    Ensures execution time < 0.3s and RAM usage < 50MB.
+    Gate 1 & TC-VAD-10: Windowed Audio Extraction with Seek-Offset Frame Trimming.
+    Decodes audio window starting from start_offset_s.
+    Accurately drops excess audio samples from keyframe seek undershoot so sample 0
+    corresponds exactly to start_offset_s.
     """
     if not video_path or not os.path.exists(video_path) or av is None:
         return None
+
+    # Tận dụng cache Fast-Seek MP4 nếu có sẵn
+    try:
+        from core.video.transcode_service import get_cached_transcode
+        cached_mp4 = get_cached_transcode(video_path)
+        if cached_mp4 and os.path.exists(cached_mp4):
+            video_path = cached_mp4
+    except Exception:
+        pass
 
     try:
         resampler = av.audio.resampler.AudioResampler(
@@ -52,6 +79,8 @@ def extract_audio_window(
         max_samples = int(max_duration_s * sampling_rate)
         accumulated_samples = 0
         dtype = None
+        trimmed_lead = False
+        lead_samples_to_drop = 0
 
         with av.open(video_path, mode="r", metadata_errors="ignore") as container:
             if not container.streams.audio:
@@ -64,11 +93,35 @@ def extract_audio_window(
                 container.seek(target_pts, stream=audio_stream, any_frame=False, backward=True)
 
             for frame in container.decode(audio_stream):
+                # Kiểm tra timestamp để loại bỏ phần âm thanh dôi dư trước start_offset_s
+                if start_offset_s > 0 and not trimmed_lead:
+                    f_time = float(frame.pts * audio_stream.time_base) if (frame.pts is not None and audio_stream.time_base) else frame.time
+                    if f_time is not None:
+                        frame_duration = float(frame.samples) / float(frame.sample_rate) if frame.sample_rate else 0.0
+                        if f_time + frame_duration <= start_offset_s:
+                            # Khung này nằm hoàn toàn trước mốc yêu cầu -> bỏ qua
+                            continue
+                        elif f_time < start_offset_s:
+                            lead_sec = start_offset_s - f_time
+                            lead_samples_to_drop = int(lead_sec * sampling_rate)
+
                 resampled_frames = resampler.resample(frame)
                 for r_frame in resampled_frames:
                     arr = r_frame.to_ndarray()
                     dtype = arr.dtype
-                    raw_buffer.write(arr)
+                    if lead_samples_to_drop > 0:
+                        samples_in_frame = arr.shape[-1]
+                        if samples_in_frame <= lead_samples_to_drop:
+                            lead_samples_to_drop -= samples_in_frame
+                            continue
+                        else:
+                            arr = arr[..., lead_samples_to_drop:]
+                            lead_samples_to_drop = 0
+                            trimmed_lead = True
+                    else:
+                        trimmed_lead = True
+
+                    raw_buffer.write(arr.tobytes())
                     accumulated_samples += arr.shape[-1]
                     if accumulated_samples >= max_samples:
                         break
@@ -150,18 +203,24 @@ def generate_vad_timing_segments(
     preserved_segments: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Generates timing segments using VAD if audio is available, with graceful
-    fallback to synthetic timing (Gate 3) if no speech is detected or no video is loaded.
-    Adopts text from preserved_segments (Gate 4) if present.
+    Generates timing segments using VAD if audio is available.
+    When a real video is loaded, scans speech chunks starting from start_offset_s
+    up to count chunks or video end. Clamps timestamps within video duration.
+    DOES NOT inject fake synthetic segments if fewer than count chunks are found in real video.
+    Only falls back to synthetic timing when NO video is provided (offline demo mode).
     """
     segments: List[Dict[str, Any]] = []
+    has_real_video = bool(video_path and os.path.exists(video_path))
+    video_dur_ms = get_video_duration_ms(video_path) if has_real_video else None
 
     # 1. Try VAD extraction if video exists
-    if video_path and os.path.exists(video_path):
+    if has_real_video:
+        # Window scan: scan sufficiently wide window (up to 300s or count * 60s) to catch count speech intervals
+        scan_win_s = max(300.0, count * 60.0)
         audio = extract_audio_window(
             video_path,
             start_offset_s=start_offset_s,
-            max_duration_s=max(180.0, count * 25.0),
+            max_duration_s=scan_win_s,
         )
         if audio is not None:
             intervals = detect_speech_intervals_vad(
@@ -174,20 +233,27 @@ def generate_vad_timing_segments(
                 min_speech_duration_ms=min_speech_duration_ms,
             )
             for idx, inter in enumerate(intervals[:count]):
+                st_ms = inter["start_ms"]
+                en_ms = inter["end_ms"]
+                if video_dur_ms:
+                    if st_ms >= video_dur_ms:
+                        continue
+                    en_ms = min(video_dur_ms, en_ms)
+                if en_ms <= st_ms:
+                    continue
                 segments.append({
                     "id": idx + 1,
-                    "start": ms_to_time_str(inter["start_ms"]),
-                    "end": ms_to_time_str(inter["end_ms"]),
-                    "text": f"Dòng phụ đề #{idx+1}",
-                    "translation": f"Subtitle line #{idx+1}",
+                    "start": ms_to_time_str(st_ms),
+                    "end": ms_to_time_str(en_ms),
+                    "text": "",
+                    "translation": "",
                 })
 
-    # 2. Gate 3: Zero-Crash Synthetic Fallback if no VAD chunks found
-    if len(segments) < count:
+    # 2. Gate 3: Fallback only when NO VIDEO is loaded (demo/offline mode without video)
+    if not has_real_video and len(segments) < count:
         missing_count = count - len(segments)
         base_ms = int(start_offset_s * 1000) if start_offset_s > 0 else gap_ms
         if segments:
-            # Continue after the last VAD segment
             from ui.SubEditor import time_str_to_ms
             base_ms = time_str_to_ms(segments[-1]["end"]) + gap_ms
 

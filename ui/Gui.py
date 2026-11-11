@@ -1328,6 +1328,7 @@ class MainWindow(QMainWindow):
         # Page 9 (Index 8): AI Agent Mission Control Page
         self.page_ai_agent = AIAgentMissionControlPage(parent=self)
         if hasattr(self.page_ai_agent, "controller") and self.page_ai_agent.controller:
+            self.page_ai_agent.controller.whisper_service = getattr(self, "subtitle_whisper_service", None)
             self.page_ai_agent.controller.step_completed.connect(self._on_agent_step_completed)
             self.page_ai_agent.controller.step_reverted.connect(self._on_agent_step_reverted)
             self.page_ai_agent.controller.plan_completed.connect(self._on_agent_plan_completed)
@@ -2816,6 +2817,8 @@ class MainWindow(QMainWindow):
         # Cầu nối Dữ liệu 2 chiều (Bi-directional Data Sync Bridge): Khi chuyển sang trang AI Agent (tab 9)
         if original_index == 9:
             if hasattr(self, "page_ai_agent") and self.page_ai_agent:
+                if hasattr(self.page_ai_agent, "controller") and self.page_ai_agent.controller:
+                    self.page_ai_agent.controller.whisper_service = getattr(self, "subtitle_whisper_service", None)
                 proj_dir = getattr(self.project_service, "project_dir", None)
                 if proj_dir and hasattr(self.page_ai_agent, "controller") and hasattr(self.page_ai_agent.controller, "context_ledger"):
                     self.page_ai_agent.controller.context_ledger.project_dir = str(proj_dir)
