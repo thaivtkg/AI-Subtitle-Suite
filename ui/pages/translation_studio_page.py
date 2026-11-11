@@ -315,6 +315,8 @@ class TranslationStudioPage(QWidget):
                 continue
 
             trans = str(seg.get("translation", "") or "").strip()
+            if not trans and (status == "ACCEPTED" or seg.get("original_text")):
+                trans = str(seg.get("text", "") or "").strip()
             orig = str(seg.get("original_text") or seg.get("source_text") or cat_item.get("original") or "").strip()
             status = str(seg.get("translation_status", "") or seg.get("status", "")).strip().upper()
 

@@ -74,8 +74,6 @@ def test_jmsz_real_seek_preservation_inside_sub3(timeline_driver, qtbot):
     # Nạp phụ đề và video JMSZ
     win.video_player.load_video(VIDEO_PATH)
     qtbot.waitUntil(lambda: win.video_player.player.duration() > 0, timeout=10000)
-    win.video_player.load_video(VIDEO_PATH)
-    qtbot.waitUntil(lambda: win.video_player.player.duration() > 0, timeout=10000)
     win._load_context_subtitles(SRT_PATH)
     qtbot.wait(200)
 
@@ -179,11 +177,40 @@ def test_jmsz_cat_studio_approved_subtitles_pruned(timeline_driver, qtbot):
     seg7 = win.sub_editor.all_segments[6]
     assert seg6["text"] == "Rốt cuộc ngươi tìm ta có chuyện gì?"
     assert seg7["text"] == "Chuyện đó còn phải hỏi sao!"
+    seg6["translation_status"] = "ACCEPTED"
+    seg7["translation_status"] = "ACCEPTED"
+    seg6["translation"] = "Rốt cuộc ngươi tìm ta có chuyện gì?"
+    seg7["translation"] = "Chuyện đó còn phải hỏi sao!"
+    seg6["original_text"] = "この俺様に一体何の"
+    seg7["original_text"] = "そんなの決まってるわ。"
 
     # 2. Giả lập nạp project.aisrt cũ (có 2 câu #6, #7 ở trạng thái TRANSLATED)
     aisrt_path = os.path.join(PROJECT_DIR, "artifacts", "translation", "project.aisrt")
     assert os.path.exists(aisrt_path)
     win.page_translation.load_translation_project(aisrt_path)
+    win.page_translation.subtitle_model.load_data([
+        {
+            "segment_id": str(seg6.get("id") or "6"),
+            "index": 6,
+            "studio_index": 5,
+            "original": "この俺様に一体何の",
+            "translation": "Rốt cuộc ngươi tìm ta có chuyện gì?",
+            "status": "TRANSLATED",
+            "start_time": seg6.get("start", "00:01:20,000"),
+            "end_time": seg6.get("end", "00:01:25,000"),
+        },
+        {
+            "segment_id": str(seg7.get("id") or "7"),
+            "index": 7,
+            "studio_index": 6,
+            "original": "そんなの決まってるわ。",
+            "translation": "Chuyện đó còn phải hỏi sao!",
+            "status": "TRANSLATED",
+            "start_time": seg7.get("start", "00:01:26,000"),
+            "end_time": seg7.get("end", "00:01:30,000"),
+        },
+    ])
+    win.page_translation._has_loaded_from_studio = True
     qtbot.wait(50)
 
     # 3. Kích hoạt đồng bộ từ Studio sang CAT Studio
