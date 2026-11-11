@@ -114,11 +114,21 @@ def test_tc_acc_gen_01_specific_odd_sentence():
     assert step.tool_name == "run_asr"
     assert step.tool_args.get("indices") == [3]
 
-    # Verify tool execution
+    # Verify tool execution với mock ASR theo chuẩn kiểm thử
     assert controller.tool_registry.has_tool("run_asr")
-    res = controller.tool_registry.execute_tool("run_asr", step.tool_args)
-    assert res["status"] == "ok"
-    assert res["indices"] == [3]
+    import tempfile
+    mock_svc = MagicMock()
+    mock_svc.model = MagicMock()
+    mock_res = MagicMock(error=None, segments=[MagicMock(text="Nhận diện câu 3", start_ms=1000, end_ms=3000)])
+    mock_svc.transcribe_batch.return_value = mock_res
+    with tempfile.NamedTemporaryFile(suffix=".mp4") as tmp_vid:
+        exec_args = dict(step.tool_args)
+        exec_args["video_path"] = tmp_vid.name
+        exec_args["whisper_service"] = mock_svc
+        exec_args["segments"] = [{"id": 3, "start": "00:00:01,000", "end": "00:00:03,000", "text": "Cũ"}]
+        res = controller.tool_registry.execute_tool("run_asr", exec_args)
+        assert res["status"] == "ok"
+        assert res["indices"] == [3]
 
 
 # =========================================================================

@@ -35,8 +35,8 @@ def create_timing(
     existing = existing_segments if existing_segments is not None else kwargs.get("segments")
     existing_list = list(existing) if existing else []
 
-    # 1. Tự động tính mốc tiếp tục từ max(end) của các câu hiện có nếu chưa có mốc thời gian tường minh
-    if (is_continue or existing_list) and start_offset_s == 0.0 and existing_list:
+    # 1. Tự động tính mốc tiếp tục từ max(end) của các câu hiện có CHỈ KHI có cờ is_continue tường minh
+    if is_continue and start_offset_s == 0.0 and existing_list:
         max_end_ms = 0
         for s in existing_list:
             en_ms = time_str_to_ms(s.get("end", 0))
@@ -69,6 +69,9 @@ def create_timing(
             val = int(sid)
             if val > max_id:
                 max_id = val
+
+    # Bảo đảm ID mới không bao giờ va chạm với số lượng / chỉ số của danh sách cũ (kể cả khi cũ dùng UUID hay thiếu id)
+    max_id = max(max_id, len(existing_list))
 
     for i, s in enumerate(new_segments):
         new_id = max_id + i + 1
@@ -325,15 +328,21 @@ def run_asr(
     svc = whisper_service or kwargs.get("whisper_service")
 
     segs = segments or []
-    target_indices = set(indices) if indices else None
+    target_indices = set(indices) if indices is not None else None
+    target_str_indices = {str(x) for x in indices} if indices is not None else None
 
-    # Xác định các phân đoạn mục tiêu cần nhận diện
+    # Xác định các phân đoạn mục tiêu cần nhận diện dựa trên định danh ổn định (id / segment_id)
     targets_to_scan = []
     for i, s in enumerate(segs):
-        seg_id = s.get("id") if isinstance(s.get("id"), int) else (i + 1)
+        seg_id = s.get("id")
         is_target = False
         if target_indices is not None:
-            if seg_id in target_indices:
+            if seg_id in target_indices or (seg_id is not None and str(seg_id) in target_str_indices):
+                is_target = True
+            elif s.get("segment_id") and s.get("segment_id") in target_str_indices:
+                is_target = True
+            elif seg_id is None and s.get("segment_id") is None and (i + 1) in target_indices:
+                # Chỉ quy về số thứ tự 1-based khi phân đoạn hoàn toàn không có cả id lẫn segment_id
                 is_target = True
         elif limit is not None:
             if i < limit:
@@ -347,6 +356,17 @@ def run_asr(
     has_video = bool(vid_path and os.path.exists(vid_path))
 
     if has_video:
+        # Nếu danh sách câu mục tiêu rỗng (ví dụ: VAD trả về 0 câu mới) -> không quét bất kỳ câu nào
+        if target_indices is not None and not targets_to_scan:
+            return {
+                "status": "ok",
+                "language": language,
+                "limit": limit,
+                "indices": [],
+                "segments": segs,
+                "count": 0,
+            }
+
         # Thực thi nhận diện giọng nói thật qua Faster-Whisper
         if svc is None:
             try:
@@ -359,7 +379,7 @@ def run_asr(
         if svc is not None and getattr(svc, "model", None) is None:
             if hasattr(svc, "load_model"):
                 try:
-                    c_type = compute_type or getattr(svc, "current_compute_type", "float16")
+                    c_type = compute_type or getattr(svc, "current_compute_type", None) or "float16"
                     svc.load_model(model_size, c_type)
                 except Exception as exc:
                     logger.warning(f"Failed to load FasterWhisper model: {exc}")
@@ -371,22 +391,28 @@ def run_asr(
                 "error": "Chưa nạp mô hình nhận diện giọng nói Faster-Whisper",
                 "segments": segs,
                 "count": 0,
-                "indices": list(target_indices) if target_indices else [t[2] for t in targets_to_scan],
+                "indices": list(target_indices) if target_indices is not None else [t[2] for t in targets_to_scan],
             }
 
         from core.subtitle_generation.subtitle_generation_request import SubtitleGenerationRequest
         from core.subtitle_generation.subtitle_generation_batch import SubtitleGenerationBatch
-        from core.subtitle_generation.subtitle_generation_validator import SubtitleGenerationValidator
+        from core.subtitle_generation.generation_validator import SubtitleGenerationValidator
         from core.subtitle_generation.language_utils import normalize_to_iso_code, get_initial_prompt_for_language
 
         iso_lang = normalize_to_iso_code(language) if language != "auto" else None
         prompt_ctx = get_initial_prompt_for_language(iso_lang) if iso_lang == "ja" else ""
 
+        c_type = compute_type or getattr(svc, "current_compute_type", None) or "float16"
+        proj_id = kwargs.get("project_id") or getattr(svc, "project_id", "agent_project")
+        src_fp = kwargs.get("source_fingerprint") or "agent_source_fp"
+
         request = SubtitleGenerationRequest(
             request_id=f"agent_asr_{len(targets_to_scan)}",
+            project_id=proj_id,
+            source_fingerprint=src_fp,
             video_path=vid_path,
             model_size=model_size,
-            compute_type=compute_type or "float16",
+            compute_type=c_type,
             language=iso_lang,
             use_vad=False,  # Mốc timing đã được thiết lập chính xác từ bước VAD
             min_silence_ms=300,
@@ -397,87 +423,77 @@ def run_asr(
 
         modified_segs = [dict(s) for s in segs]
         scanned_count = 0
+        failed_count = 0
+        last_error = None
 
+        segments_data = []
         for i, original_s, seg_id in targets_to_scan:
             sc = modified_segs[i]
             st_ms = time_str_to_ms(sc.get("start", "00:00:00,000"))
             en_ms = time_str_to_ms(sc.get("end", "00:00:00,000"))
+            segments_data.append({
+                "id": seg_id,
+                "start_ms": st_ms,
+                "end_ms": en_ms,
+                "scan_mode": "asr",
+            })
 
-            now_iso = datetime.datetime.now().isoformat()
-            batch = SubtitleGenerationBatch(
-                batch_id=f"agent_scan_{seg_id}",
-                start_ms=st_ms,
-                end_ms=en_ms,
-                status="RUNNING",
-                revision=1,
-                created_at=now_iso,
-                updated_at=now_iso,
-            )
+        from workers.SegmentScanWorker import BatchSegmentScanWorker
+        worker = BatchSegmentScanWorker(segments_data, request, svc)
 
-            result = svc.transcribe_batch(request, batch, lambda: False)
-            if result and not result.error:
-                valid_segs = SubtitleGenerationValidator.validate(
-                    result.segments or [], st_ms, en_ms
-                )
-                raw_text = " ".join([v.text.strip() for v in valid_segs]).strip()
-                filtered_text = SubtitleGenerationValidator.filter_inconsistent_language(raw_text, iso_lang)
-                if not filtered_text:
-                    filtered_text = "[Không nhận diện được giọng nói]"
-                sc["text"] = filtered_text
-                sc["original_text"] = filtered_text
-                # Bảo đảm không tự động điền bản dịch giả
+        if progress_callback := kwargs.get("progress_callback"):
+            worker.progress_signal.connect(progress_callback)
+
+        scanned_texts = {}
+        def on_segment_done(sid, text):
+            nonlocal last_error
+            if text.startswith("[Lỗi nhận diện:"):
+                last_error = text
+            else:
+                scanned_texts[str(sid)] = text
+
+        worker.segment_completed_signal.connect(on_segment_done)
+        worker.run()
+
+        for i, original_s, seg_id in targets_to_scan:
+            sc = modified_segs[i]
+            sid_str = str(seg_id)
+            if sid_str in scanned_texts:
+                sc["text"] = scanned_texts[sid_str]
+                sc["original_text"] = scanned_texts[sid_str]
                 if "translation" in sc and not sc.get("translation"):
                     sc["translation"] = ""
                 scanned_count += 1
-            elif result and result.error:
-                sc["text"] = f"[Lỗi nhận diện: {result.error}]"
+            else:
+                # Bảo toàn nội dung cũ khi xảy ra lỗi, không ghi đè lỗi vào text
+                failed_count += 1
+
+        status = "ok"
+        if len(targets_to_scan) > 0:
+            if scanned_count == 0:
+                status = "error"
+            elif scanned_count < len(targets_to_scan):
+                status = "partial"
 
         return {
-            "status": "ok",
+            "status": status,
             "language": language,
             "limit": limit,
-            "indices": list(target_indices) if target_indices else [t[2] for t in targets_to_scan],
+            "indices": list(target_indices) if target_indices is not None else [t[2] for t in targets_to_scan],
             "segments": modified_segs,
             "count": scanned_count,
+            "error": last_error or ("Không nhận diện được phân đoạn nào" if status == "error" else None),
         }
 
     else:
-        # Chế độ Offline / Synthetic (cho unit test khi không nạp file video thật)
-        if not segs:
-            count = limit or (max(indices) if indices else 5)
-            generated = []
-            for i in range(count):
-                idx = i + 1
-                if indices and idx not in indices:
-                    continue
-                generated.append({
-                    "id": idx,
-                    "start": ms_to_time_str(i * 3000 + 500),
-                    "end": ms_to_time_str((i + 1) * 3000),
-                    "text": f"Nội dung nhận diện câu #{idx}",
-                    "translation": "",
-                })
-            segs = generated
-        else:
-            modified_segs = []
-            for i, s in enumerate(segs):
-                sc = dict(s)
-                seg_id = sc.get("id") if isinstance(sc.get("id"), int) else (i + 1)
-                is_target = any(t[2] == seg_id for t in targets_to_scan)
-                if is_target:
-                    sc["text"] = f"Nội dung nhận diện câu #{seg_id} (Whisper)"
-                    if "translation" not in sc or not sc.get("translation"):
-                        sc["translation"] = ""
-                modified_segs.append(sc)
-            segs = modified_segs
-
+        err_msg = f"Không tìm thấy file video tại: '{vid_path or 'chưa chỉ định'}'. Không thể thực hiện nhận diện giọng nói (ASR)."
+        logger.error(err_msg)
         return {
-            "status": "ok",
-            "language": language,
-            "limit": limit,
-            "indices": list(target_indices) if target_indices else [t[2] for t in targets_to_scan],
+            "status": "error",
+            "error": err_msg,
             "segments": segs,
-            "count": len(targets_to_scan),
+            "count": 0,
+            "indices": list(target_indices) if target_indices is not None else [t[2] for t in targets_to_scan],
         }
 
 

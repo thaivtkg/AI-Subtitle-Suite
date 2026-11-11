@@ -215,24 +215,38 @@ def generate_vad_timing_segments(
 
     # 1. Try VAD extraction if video exists
     if has_real_video:
-        # Window scan: scan sufficiently wide window (up to 300s or count * 60s) to catch count speech intervals
+        # Window scan: iteratively scan subsequent windows until count speech intervals found or video ends
         scan_win_s = max(300.0, count * 60.0)
-        audio = extract_audio_window(
-            video_path,
-            start_offset_s=start_offset_s,
-            max_duration_s=scan_win_s,
-        )
-        if audio is not None:
+        curr_offset_s = start_offset_s
+        total_dur_s = (video_dur_ms / 1000.0) if video_dur_ms else None
+
+        while len(segments) < count:
+            if total_dur_s is not None and curr_offset_s >= total_dur_s:
+                break
+
+            audio = extract_audio_window(
+                video_path,
+                start_offset_s=curr_offset_s,
+                max_duration_s=scan_win_s,
+            )
+            if audio is None:
+                break
+
             intervals = detect_speech_intervals_vad(
                 audio,
-                start_offset_s=start_offset_s,
+                start_offset_s=curr_offset_s,
                 vad_threshold=vad_threshold,
                 min_silence_ms=min_silence_ms,
                 speech_pad_ms=speech_pad_ms,
                 max_speech_duration_s=max_speech_duration_s,
                 min_speech_duration_ms=min_speech_duration_ms,
             )
-            for idx, inter in enumerate(intervals[:count]):
+
+            if not intervals:
+                curr_offset_s += scan_win_s
+                continue
+
+            for inter in intervals:
                 st_ms = inter["start_ms"]
                 en_ms = inter["end_ms"]
                 if video_dur_ms:
@@ -242,12 +256,17 @@ def generate_vad_timing_segments(
                 if en_ms <= st_ms:
                     continue
                 segments.append({
-                    "id": idx + 1,
+                    "id": len(segments) + 1,
                     "start": ms_to_time_str(st_ms),
                     "end": ms_to_time_str(en_ms),
                     "text": "",
                     "translation": "",
                 })
+                if len(segments) == count:
+                    break
+
+            last_end_s = intervals[-1]["end_ms"] / 1000.0
+            curr_offset_s = max(curr_offset_s + scan_win_s, last_end_s)
 
     # 2. Gate 3: Fallback only when NO VIDEO is loaded (demo/offline mode without video)
     if not has_real_video and len(segments) < count:

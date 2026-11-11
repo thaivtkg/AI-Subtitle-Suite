@@ -23,38 +23,46 @@ def test_tc_audit_08_run_asr_preserves_other_segments_and_subeditor_format():
         {"start": "00:00:13,000", "end": "00:00:15,000", "text": "Câu 5 cũ"},
     ]
 
-    # 1. Test tool run_asr trực tiếp với indices=[2, 4]
-    res = run_asr(indices=[2, 4], segments=initial_segs)
-    assert res["status"] == "ok"
-    segs = res["segments"]
-    assert len(segs) == 5, f"Kỳ vọng bảo toàn 5 câu nhưng chỉ còn {len(segs)} câu"
-    assert segs[0]["text"] == "Câu 1 cũ"
-    assert segs[2]["text"] == "Câu 3 cũ"
-    assert segs[4]["text"] == "Câu 5 cũ"
-    # Câu 2 và 4 được nhận diện lại text
-    assert segs[1]["text"] != "Câu 2 cũ"
-    assert segs[3]["text"] != "Câu 4 cũ"
+    # 1. Test tool run_asr trực tiếp với indices=[2, 4] kèm mock service và video file
+    import tempfile
+    mock_svc = MagicMock()
+    mock_svc.model = MagicMock()
+    mock_res = MagicMock(error=None, segments=[MagicMock(text="Nhận diện mới", start_ms=4000, end_ms=6000)])
+    mock_svc.transcribe_batch.return_value = mock_res
+    with tempfile.NamedTemporaryFile(suffix=".mp4") as tmp_vid:
+        res = run_asr(indices=[2, 4], segments=initial_segs, video_path=tmp_vid.name, whisper_service=mock_svc)
+        assert res["status"] == "ok"
+        segs = res["segments"]
+        assert len(segs) == 5, f"Kỳ vọng bảo toàn 5 câu nhưng chỉ còn {len(segs)} câu"
+        assert segs[0]["text"] == "Câu 1 cũ"
+        assert segs[2]["text"] == "Câu 3 cũ"
+        assert segs[4]["text"] == "Câu 5 cũ"
+        # Câu 2 và 4 được nhận diện lại text
+        assert segs[1]["text"] != "Câu 2 cũ"
+        assert segs[3]["text"] != "Câu 4 cũ"
 
-    # 2. Test controller _run_current_step với limit=2 trên dự án 5 câu
-    controller = AgentCopilotController()
-    controller._active_segments = list(initial_segs)
-    plan = AgentTaskPlan(
-        prompt="Gen sub 2 câu đầu",
-        steps=[
-            AgentStep(
-                id="step_1",
-                title="ASR Gen Sub 2 câu đầu",
-                tool_name="run_asr",
-                tool_args={"limit": 2},
-            )
-        ],
-    )
-    controller.active_plan = plan
-    controller._waiting_task_approval = True
-    controller._run_current_step()
-    # Kiểm tra controller._active_segments không bị cắt cụt về 2 câu
-    assert len(controller._active_segments) == 5, "Dự án phải giữ nguyên 5 câu, không bị cắt cụt về limit=2"
-    assert controller._active_segments[2]["text"] == "Câu 3 cũ"
+        # 2. Test controller _run_current_step với limit=2 trên dự án 5 câu
+        controller = AgentCopilotController()
+        controller.whisper_service = mock_svc
+        controller.context_ledger.video_path = tmp_vid.name
+        controller._active_segments = list(initial_segs)
+        plan = AgentTaskPlan(
+            prompt="Gen sub 2 câu đầu",
+            steps=[
+                AgentStep(
+                    id="step_1",
+                    title="ASR Gen Sub 2 câu đầu",
+                    tool_name="run_asr",
+                    tool_args={"limit": 2},
+                )
+            ],
+        )
+        controller.active_plan = plan
+        controller._waiting_task_approval = True
+        controller._run_current_step()
+        # Kiểm tra controller._active_segments không bị cắt cụt về 2 câu
+        assert len(controller._active_segments) == 5, "Dự án phải giữ nguyên 5 câu, không bị cắt cụt về limit=2"
+        assert controller._active_segments[2]["text"] == "Câu 3 cũ"
 
 
 def test_tc_audit_09_unregistered_tools_translate_and_render_hardsub():

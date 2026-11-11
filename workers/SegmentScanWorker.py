@@ -125,7 +125,7 @@ class BatchSegmentScanWorker(QThread):
                 self.finished_signal.emit()
                 return
 
-            if hasattr(self.whisper_service, "load_model"):
+            if hasattr(self.whisper_service, "load_model") and getattr(self.whisper_service, "model", None) is None:
                 self.whisper_service.load_model(self.request.model_size, self.request.compute_type)
 
             total = len(self.segments_data)

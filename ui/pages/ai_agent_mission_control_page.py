@@ -35,6 +35,7 @@ class AIAgentMissionControlPage(QWidget):
         super().__init__(parent)
         self.setObjectName("ai_agent_mission_control_page")
         self.controller = controller or AgentCopilotController()
+        self.controller.async_mode = True
         self.alert_service = alert_service or TaskAlertService(self)
 
         self._init_ui()

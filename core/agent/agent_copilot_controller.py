@@ -2,7 +2,7 @@ import logging
 import re
 import time
 from typing import Any, Dict, List, Optional
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Signal, QThread
 
 from core.agent.models import (
     AgentStep,
@@ -17,6 +17,30 @@ from core.agent.multi_provider_client import MultiProviderLLMClient, ProviderCon
 from core.agent.snapshot_manager import SnapshotManager
 
 logger = logging.getLogger(__name__)
+
+
+class StepExecutionWorker(QThread):
+    finished_signal = Signal(dict)
+
+    def __init__(
+        self,
+        tool_registry: AgentToolRegistry,
+        tool_name: str,
+        tool_args: Dict[str, Any],
+        parent: Optional[QObject] = None,
+    ):
+        super().__init__(parent)
+        self.tool_registry = tool_registry
+        self.tool_name = tool_name
+        self.tool_args = tool_args
+
+    def run(self):
+        try:
+            exec_res = self.tool_registry.safe_execute_tool(self.tool_name, self.tool_args)
+            self.finished_signal.emit(exec_res)
+        except Exception as e:
+            logger.exception("StepExecutionWorker exception")
+            self.finished_signal.emit({"success": False, "error": str(e)})
 
 
 class AgentCopilotController(QObject):
@@ -60,6 +84,9 @@ class AgentCopilotController(QObject):
         self._waiting_task_approval: bool = False
         self._last_pre_task_snapshot_id: Optional[str] = None
         self._last_step_result: Optional[Dict[str, Any]] = None
+        self._last_created_indices: Optional[List[Any]] = None
+        self.async_mode: bool = False
+        self._active_worker: Optional[StepExecutionWorker] = None
 
     @property
     def current_step_index(self) -> int:
@@ -611,12 +638,19 @@ class AgentCopilotController(QObject):
             if "whisper_service" not in args and getattr(self, "whisper_service", None):
                 args["whisper_service"] = self.whisper_service
             if args.get("target_newly_created"):
-                prev_res = getattr(self, "_last_step_result", None)
-                if isinstance(prev_res, dict):
-                    if "new_indices" in prev_res and prev_res["new_indices"]:
-                        args["indices"] = prev_res["new_indices"]
-                    elif "new_segments" in prev_res and prev_res["new_segments"]:
-                        args["indices"] = [s.get("id") for s in prev_res["new_segments"] if s.get("id") is not None]
+                if "indices" in args:
+                    pass
+                elif self._last_created_indices is not None:
+                    args["indices"] = list(self._last_created_indices)
+                else:
+                    prev_res = getattr(self, "_last_step_result", None)
+                    if isinstance(prev_res, dict):
+                        if "new_indices" in prev_res:
+                            args["indices"] = list(prev_res["new_indices"])
+                        elif "new_segments" in prev_res and prev_res["new_segments"]:
+                            args["indices"] = [s.get("id") for s in prev_res["new_segments"] if s.get("id") is not None]
+                if "indices" in args:
+                    step.tool_args["indices"] = list(args["indices"])
         if step.tool_name == "translate_subtitles":
             if "auto_load_model" not in args:
                 args["auto_load_model"] = True
@@ -634,17 +668,50 @@ class AgentCopilotController(QObject):
                     self._active_segments = init_res.get("segments", [])
             args["segments"] = self._active_segments
 
-        exec_res = self.tool_registry.safe_execute_tool(step.tool_name, args)
+        # Chạy worker nền khi async_mode=True cho các công cụ tốn thời gian (run_asr) để không làm đơ giao diện
+        should_async = False
+        if getattr(self, "async_mode", False):
+            if self.async_mode == "all" or step.tool_name == "run_asr":
+                should_async = True
 
-        if exec_res.get("success"):
+        if should_async:
+            self._active_worker = StepExecutionWorker(self.tool_registry, step.tool_name, args, parent=self)
+            self._active_worker.finished_signal.connect(
+                lambda res: self._handle_step_result(idx, step, res)
+            )
+            self._active_worker.start()
+        else:
+            exec_res = self.tool_registry.safe_execute_tool(step.tool_name, args)
+            self._handle_step_result(idx, step, exec_res)
+
+    def _handle_step_result(self, idx: int, step: AgentStep, exec_res: Dict[str, Any]) -> None:
+        self._active_worker = None
+        res_dict = exec_res.get("result", {})
+        tool_status = res_dict.get("status") if isinstance(res_dict, dict) else None
+        is_success = exec_res.get("success", False) and (tool_status not in ("error", "failed", "partial"))
+
+        if is_success:
             step.status = StepStatus.COMPLETED
             step.completed_at = time.time()
             step.result_summary = f"Hoàn thành {step.title}"
-            res_dict = exec_res.get("result", {})
             if isinstance(res_dict, dict) and "segments" in res_dict:
                 self._active_segments = res_dict["segments"]
 
             self._last_step_result = res_dict
+
+            # Ghi nhớ danh sách ID mới tạo từ create_timing để truyền ổn định cho run_asr kể cả khi Redo
+            if step.tool_name == "create_timing" and isinstance(res_dict, dict):
+                new_ids = res_dict.get("new_indices")
+                if new_ids is not None:
+                    self._last_created_indices = list(new_ids)
+                elif "new_segments" in res_dict and res_dict["new_segments"] is not None:
+                    self._last_created_indices = [
+                        s.get("id") for s in res_dict["new_segments"] if s.get("id") is not None
+                    ]
+                if self._last_created_indices is not None and self.active_plan:
+                    for s in self.active_plan.steps:
+                        if s.tool_name == "run_asr" and s.tool_args.get("target_newly_created"):
+                            s.tool_args["indices"] = list(self._last_created_indices)
 
             # PAUSE and WAIT for user approval
             self._waiting_task_approval = True
@@ -659,7 +726,7 @@ class AgentCopilotController(QObject):
             self.chat_history.append(chat_reply)
             self.chat_message_added.emit(chat_reply)
 
-            self.step_completed.emit(idx, step, exec_res.get("result", {}))
+            self.step_completed.emit(idx, step, res_dict)
             if step.tool_name == "process_general_task":
                 self.notification_requested.emit(f"Task #{idx+1}: Đã tiếp nhận yêu cầu.")
             elif step.tool_name == "translate_subtitles" and (res_dict.get("failed_indices") or res_dict.get("status") == "warning"):
@@ -668,9 +735,16 @@ class AgentCopilotController(QObject):
                 self.notification_requested.emit(f"Task #{idx+1} ({step.title}) hoàn tất! Đang chờ bạn duyệt.")
         else:
             step.status = StepStatus.FAILED
-            err = exec_res.get("error", "Lỗi không xác định")
+            err = exec_res.get("error")
+            if not err and isinstance(res_dict, dict):
+                err = res_dict.get("error")
+            if not err:
+                err = "Lỗi không xác định hoặc tác vụ không hoàn tất (partial/failed)"
             step.error_message = err
             self._waiting_task_approval = False
+
+            if isinstance(res_dict, dict) and "segments" in res_dict and res_dict["segments"]:
+                self._active_segments = res_dict["segments"]
 
             err_msg = ChatMessage(role="assistant", content=f"❌ Task #{idx+1} thất bại: {err}", timestamp=time.time())
             self.chat_history.append(err_msg)
