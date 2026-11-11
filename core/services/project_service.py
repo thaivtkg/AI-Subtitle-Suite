@@ -400,7 +400,103 @@ class ProjectService:
             self.current_project.source = updated_source
             self.current_project.state.is_video_missing = False
             
+        self._reconcile_checkpoints_for_source(
+            project_dir, updated_source.fingerprint, new_video_path
+        )
         return updated_source
+
+    def _reconcile_checkpoints_for_source(
+        self, project_dir: str, new_fingerprint: str, new_video_path: str | None = None
+    ) -> None:
+        """Đồng bộ vân tay video cho các checkpoint cũ khi video nguồn được thay đổi hoặc mở lại."""
+        if not project_dir or not os.path.exists(project_dir) or not new_fingerprint:
+            return
+
+        proj_file = os.path.join(project_dir, "project.json")
+        current_project_id = None
+        if os.path.exists(proj_file):
+            try:
+                with open(proj_file, "r", encoding="utf-8") as pf:
+                    current_project_id = json.load(pf).get("project_id")
+            except Exception:
+                pass
+
+        # 1. Timing Checkpoint
+        timing_cp_path = os.path.join(project_dir, "artifacts", "timing", "checkpoint.json")
+        if os.path.exists(timing_cp_path):
+            try:
+                with open(timing_cp_path, "r", encoding="utf-8") as f:
+                    tcp_data = json.load(f)
+                if (
+                    not current_project_id
+                    or tcp_data.get("project_id") == current_project_id
+                ) and tcp_data.get("source_fingerprint") != new_fingerprint:
+                    tcp_data["source_fingerprint"] = new_fingerprint
+                    atomic_save_json(timing_cp_path, tcp_data)
+            except Exception as e:
+                print(f"[ProjectService] Warning: Không thể đồng bộ Timing Checkpoint: {e}")
+
+        # 2. Subtitle Generation Checkpoint
+        sub_cp_path = os.path.join(
+            project_dir, "artifacts", "subtitle_generation", "checkpoint.json"
+        )
+        if os.path.exists(sub_cp_path):
+            try:
+                with open(sub_cp_path, "r", encoding="utf-8") as f:
+                    scp_data = json.load(f)
+                if (
+                    not current_project_id
+                    or scp_data.get("project_id") == current_project_id
+                ):
+                    changed = False
+                    if scp_data.get("source_fingerprint") != new_fingerprint:
+                        scp_data["source_fingerprint"] = new_fingerprint
+                        changed = True
+                    if "request_data" in scp_data and isinstance(
+                        scp_data["request_data"], dict
+                    ):
+                        if (
+                            scp_data["request_data"].get("source_fingerprint")
+                            != new_fingerprint
+                        ):
+                            scp_data["request_data"]["source_fingerprint"] = new_fingerprint
+                            changed = True
+                        if (
+                            new_video_path
+                            and scp_data["request_data"].get("video_path")
+                            != new_video_path
+                        ):
+                            scp_data["request_data"]["video_path"] = new_video_path
+                            changed = True
+                    if changed:
+                        atomic_save_json(sub_cp_path, scp_data)
+            except Exception as e:
+                print(f"[ProjectService] Warning: Không thể đồng bộ Subtitle Generation Checkpoint: {e}")
+
+        # 3. Subtitle Generation History
+        history_path = os.path.join(
+            project_dir, "artifacts", "subtitle_generation", "history.json"
+        )
+        if os.path.exists(history_path):
+            try:
+                with open(history_path, "r", encoding="utf-8") as f:
+                    h_data = json.load(f)
+                changed = False
+                for cp in h_data.get("all_checkpoints", []):
+                    if (
+                        isinstance(cp, dict)
+                        and (
+                            not current_project_id
+                            or cp.get("project_id") == current_project_id
+                        )
+                        and cp.get("source_fingerprint") != new_fingerprint
+                    ):
+                        cp["source_fingerprint"] = new_fingerprint
+                        changed = True
+                if changed:
+                    atomic_save_json(history_path, h_data)
+            except Exception as e:
+                print(f"[ProjectService] Warning: Không thể đồng bộ Subtitle History Checkpoint: {e}")
 
     def open_project(
         self,
@@ -507,6 +603,11 @@ class ProjectService:
                 manifest_data = json.load(f)
             self.artifact_store.from_dict(manifest_data, self.project_dir)
         
+        if not is_missing:
+            self._reconcile_checkpoints_for_source(
+                self.project_dir, source_info.fingerprint, video_path
+            )
+
         return self.current_project
 
     def close_project(self) -> None:

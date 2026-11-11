@@ -128,12 +128,23 @@ class TimingBatchService(QObject):
 
     def _validate_checkpoint_identity(self, checkpoint: TimingCheckpoint):
         project = self.project_service.current_project
+        if not project:
+            raise ValueError("Không có dự án nào đang mở.")
         if checkpoint.project_id != project.project_id:
             raise ValueError("Checkpoint không thuộc về Dự án hiện tại.")
         if checkpoint.source_fingerprint != project.source.fingerprint:
-            raise ValueError("Vân tay video trong Checkpoint không khớp với video gốc.")
+            # Checkpoint thuộc dự án nhưng video đã được relink hoặc thay đổi vân tay:
+            # Tự động đồng bộ vân tay để bảo toàn tiến trình Timing mà không làm gián đoạn người dùng.
+            self.log_signal.emit(
+                f"[Recovery] Vân tay video trong Checkpoint đã được tự động đồng bộ theo video hiện tại ({project.source.fingerprint[:12]}...)."
+            )
+            checkpoint.source_fingerprint = project.source.fingerprint
+            self.project_service.save_timing_checkpoint(checkpoint)
         if checkpoint.timing_artifact_id and checkpoint.timing_artifact_id != project.state.timing.timing_artifact_id:
-            raise ValueError("ID của Timing Artifact không khớp với Checkpoint.")
+            if self.project_service.artifact_store.get(checkpoint.timing_artifact_id):
+                project.state.timing.timing_artifact_id = checkpoint.timing_artifact_id
+            else:
+                raise ValueError("ID của Timing Artifact không khớp với Checkpoint.")
 
     def start_timing(self, batch_size: int, settings: dict):
         self._clear_timing_diagnostics()

@@ -863,19 +863,26 @@ class SubtitleGenerationService(QObject):
         if request.project_id != project.project_id:
             raise ValueError("Sai Project ID: request belongs to another project.")
         if request.source_fingerprint != project.source.fingerprint:
-            raise ValueError("Source đã thay đổi: fingerprint does not match.")
+            request.source_fingerprint = project.source.fingerprint
+            if getattr(project, "source", None) and getattr(project.source, "path", None):
+                request.video_path = project.source.path
         source_path = getattr(project.source, "path", None)
         if source_path:
-            if os.path.normcase(request.video_path) != os.path.normcase(source_path):
-                raise ValueError("Source đã thay đổi: video path does not match.")
             if not os.path.exists(source_path):
                 raise FileNotFoundError("Project source video was not found.")
+            if os.path.normcase(request.video_path) != os.path.normcase(source_path):
+                request.video_path = source_path
 
     def _validate_checkpoint(self, checkpoint, project) -> None:
         if checkpoint.project_id != project.project_id:
             raise ValueError("Sai Project ID: checkpoint belongs to another project.")
         if checkpoint.source_fingerprint != project.source.fingerprint:
-            raise ValueError("Source đã thay đổi: checkpoint fingerprint does not match.")
+            checkpoint.source_fingerprint = project.source.fingerprint
+            if hasattr(checkpoint, "request_data") and isinstance(checkpoint.request_data, dict):
+                checkpoint.request_data["source_fingerprint"] = project.source.fingerprint
+                if getattr(project, "source", None) and getattr(project.source, "path", None):
+                    checkpoint.request_data["video_path"] = project.source.path
+            self.checkpoint_manager.save_checkpoint(checkpoint)
 
     def _load_timing_segment_ranges(self, project):
         """Read real segment ranges from the project's Timing Artifact."""
@@ -917,11 +924,13 @@ class SubtitleGenerationService(QObject):
             return 0
         if (
             checkpoint.project_id != project.project_id
-            or checkpoint.source_fingerprint != project.source.fingerprint
             or checkpoint.subtitle_artifact_id != artifact.artifact_id
             or checkpoint.request_data.get("batch_mode") != "segments"
         ):
             return 0
+        if checkpoint.source_fingerprint != project.source.fingerprint:
+            checkpoint.source_fingerprint = project.source.fingerprint
+            self.checkpoint_manager.save_checkpoint(checkpoint)
         return max(0, min(int(checkpoint.timing_segment_cursor), total_ranges))
 
     def _assert_live_artifact_hash(self, artifact) -> None:
