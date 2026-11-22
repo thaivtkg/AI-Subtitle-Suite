@@ -219,10 +219,10 @@ ColumnLayout {
                 spacing: 8
 
                 Text {
-                    text: "📋 DANH SÁCH CÂU"
+                    text: "Danh sách câu"
                     font.pixelSize: 12
                     font.bold: true
-                    color: "#FFFFFF"
+                    color: Theme.textPrimary
                     Layout.alignment: Qt.AlignVCenter
                 }
 
@@ -247,13 +247,15 @@ ColumnLayout {
                         color: Theme.badgeEmeraldText
                         font.pixelSize: 10
                         font.bold: true
+                        font.family: "JetBrains Mono, Consolas, monospace"
+                        font.features: { "tnum": 1 }
                     }
                 }
 
                 // Filter expand toggle icon button
                 Rectangle {
                     objectName: "btnToggleFilters"
-                    implicitWidth: 26
+                    implicitWidth: toggleFiltersText.implicitWidth + 14
                     implicitHeight: 20
                     radius: 10
                     color: root.showAdvancedFilters ? Theme.accentSapphire : Qt.rgba(1.0, 1.0, 1.0, 0.22)
@@ -261,9 +263,11 @@ ColumnLayout {
                     border.width: 1
                     Layout.alignment: Qt.AlignVCenter
                     Text {
+                        id: toggleFiltersText
                         anchors.centerIn: parent
-                        text: "⚙"
-                        font.pixelSize: 11
+                        text: "Bộ lọc"
+                        font.pixelSize: 10
+                        font.bold: true
                         color: "#FFFFFF"
                     }
                     MouseArea {
@@ -277,7 +281,7 @@ ColumnLayout {
                 Rectangle {
                     id: btnImportTimeline
                     objectName: "btnImportTimeline"
-                    implicitWidth: 26
+                    implicitWidth: importTimelineText.implicitWidth + 14
                     implicitHeight: 20
                     radius: 10
                     enabled: (typeof batchController === "undefined" || !batchController.executionLocked) &&
@@ -288,9 +292,10 @@ ColumnLayout {
                     border.width: 1
                     Layout.alignment: Qt.AlignVCenter
                     Text {
+                        id: importTimelineText
                         anchors.centerIn: parent
-                        text: "📥"
-                        font.pixelSize: 11
+                        text: "Nạp"
+                        font.pixelSize: 10
                         font.bold: true
                         color: "#FFFFFF"
                     }
@@ -384,13 +389,27 @@ ColumnLayout {
                         border.color: searchInput.activeFocus ? Theme.accentSapphire : Theme.glassBorderSpecularUpper
                         border.width: searchInput.activeFocus ? 1.5 : 1.0
 
-                        Text {
+                        Canvas {
                             anchors.left: parent.left
                             anchors.leftMargin: 10
                             anchors.verticalCenter: parent.verticalCenter
-                            text: "🔍"
-                            font.pixelSize: 12
-                            opacity: 0.80
+                            implicitWidth: 14
+                            implicitHeight: 14
+                            renderTarget: Canvas.FramebufferObject
+                            onPaint: {
+                                var ctx = getContext("2d");
+                                ctx.reset();
+                                ctx.strokeStyle = Theme.textMuted;
+                                ctx.lineWidth = 1.5;
+                                ctx.lineCap = "round";
+                                ctx.beginPath();
+                                ctx.arc(5.5, 5.5, 4, 0, 2 * Math.PI);
+                                ctx.stroke();
+                                ctx.beginPath();
+                                ctx.moveTo(8.5, 8.5);
+                                ctx.lineTo(12.5, 12.5);
+                                ctx.stroke();
+                            }
                         }
                     }
                     onTextChanged: {
@@ -917,6 +936,8 @@ ColumnLayout {
             onCountChanged: {
                 if (count > 0 && currentIndex < 0) {
                     currentIndex = 0
+                } else if (count > 0 && currentIndex >= count) {
+                    currentIndex = count - 1
                 }
                 if (count === 0) {
                     currentIndex = -1
@@ -1168,6 +1189,8 @@ ColumnLayout {
                             color: delegateItem.isPrimarySelected ? "#FFFFFF" : Theme.accentSapphire
                             font.pixelSize: 11
                             font.bold: true
+                            font.family: "JetBrains Mono, Consolas, monospace"
+                            font.features: { "tnum": 1 }
                             Layout.alignment: Qt.AlignVCenter
                             Behavior on color { ColorAnimation { duration: 150 } }
                         }
@@ -1176,6 +1199,8 @@ ColumnLayout {
                             text: durationStr !== "" ? "(" + durationStr + ")" : ""
                             color: delegateItem.isPrimarySelected ? Qt.rgba(0.88, 0.95, 1.0, 0.75) : Theme.textOnLightPodMuted
                             font.pixelSize: 10
+                            font.family: "JetBrains Mono, Consolas, monospace"
+                            font.features: { "tnum": 1 }
                             Layout.alignment: Qt.AlignVCenter
                             Behavior on color { ColorAnimation { duration: 150 } }
                         }
@@ -1188,8 +1213,10 @@ ColumnLayout {
                         Text {
                             z: 2
                             visible: typeof qaSeverity !== "undefined" && qaSeverity !== ""
-                            text: qaSeverity === "ERROR" ? "🛑" : "⚠️"
+                            text: "!"
+                            color: qaSeverity === "ERROR" ? Theme.danger : Theme.warning
                             font.pixelSize: 11
+                            font.bold: true
                             Layout.alignment: Qt.AlignVCenter
                             ToolTip.visible: qaHoverArea.containsMouse
                             ToolTip.text: typeof qaTooltip !== "undefined" ? qaTooltip : ""
@@ -1207,12 +1234,12 @@ ColumnLayout {
                             implicitHeight: 20
                             radius: 10
                             Layout.alignment: Qt.AlignVCenter
-                            color: normalizedStatus === "ACCEPTED" ? Theme.badgeEmeraldBg :
-                                   (normalizedStatus === "TRANSLATED" || normalizedStatus === "EDITED") ? Theme.badgeAmberBg :
+                            color: normalizedStatus === "ACCEPTED" ? Qt.rgba(0.06, 0.72, 0.50, 0.15) :
+                                   (normalizedStatus === "TRANSLATED" || normalizedStatus === "EDITED") ? Qt.rgba(0.96, 0.62, 0.04, 0.15) :
                                    normalizedStatus === "ERROR" ? Qt.rgba(Theme.danger.r, Theme.danger.g, Theme.danger.b, 0.15) :
-                                   normalizedStatus === "TRANSLATING" ? Qt.rgba(0, 0.4, 1.0, 0.15) : Qt.rgba(0.58, 0.64, 0.72, 0.15)
-                            border.color: normalizedStatus === "ACCEPTED" ? Theme.badgeEmeraldText :
-                                          (normalizedStatus === "TRANSLATED" || normalizedStatus === "EDITED") ? Theme.badgeAmberText :
+                                   normalizedStatus === "TRANSLATING" ? Qt.rgba(0.31, 0.27, 0.90, 0.15) : Qt.rgba(0.58, 0.64, 0.72, 0.15)
+                            border.color: normalizedStatus === "ACCEPTED" ? "#10B981" :
+                                          (normalizedStatus === "TRANSLATED" || normalizedStatus === "EDITED") ? "#F59E0B" :
                                           normalizedStatus === "ERROR" ? Theme.danger :
                                           normalizedStatus === "TRANSLATING" ? Theme.accentSapphire : "#94A3B8"
                             border.width: 1
@@ -1222,14 +1249,14 @@ ColumnLayout {
                                 anchors.centerIn: parent
                                 leftPadding: 8
                                 rightPadding: 8
-                                text: normalizedStatus === "ACCEPTED" ? "✓ ĐÃ DUYỆT" : 
-                                      (normalizedStatus === "TRANSLATED" || normalizedStatus === "EDITED") ? "⌛ CHỜ DUYỆT" : 
-                                      normalizedStatus === "TRANSLATING" ? "⚡ ĐANG DỊCH" : 
-                                      normalizedStatus === "ERROR" ? "🛑 LỖI" : "⏳ CHỜ DỊCH"
-                                color: normalizedStatus === "ACCEPTED" ? Theme.badgeEmeraldText :
-                                       (normalizedStatus === "TRANSLATED" || normalizedStatus === "EDITED") ? Theme.badgeAmberText :
+                                text: normalizedStatus === "ACCEPTED" ? "Đã duyệt" : 
+                                      (normalizedStatus === "TRANSLATED" || normalizedStatus === "EDITED") ? "Chờ duyệt" : 
+                                      normalizedStatus === "TRANSLATING" ? "Đang dịch" : 
+                                      normalizedStatus === "ERROR" ? "Lỗi" : "Chờ dịch"
+                                color: normalizedStatus === "ACCEPTED" ? "#34D399" :
+                                       (normalizedStatus === "TRANSLATED" || normalizedStatus === "EDITED") ? "#FBBF24" :
                                        normalizedStatus === "ERROR" ? Theme.danger :
-                                       normalizedStatus === "TRANSLATING" ? Theme.accentSapphire : "#94A3B8"
+                                       normalizedStatus === "TRANSLATING" ? "#818CF8" : "#94A3B8"
                                 font.pixelSize: 10
                                 font.bold: true
                             }
@@ -1270,7 +1297,7 @@ ColumnLayout {
 
     } // subListView
 
-    // FLOATING ACTION PILL: "👇 Cuộn tới câu đang dịch" (AC-02)
+    // FLOATING ACTION PILL: "Cuộn tới câu đang dịch" (AC-02)
     Rectangle {
         id: scrollToActivePill
         objectName: "btnScrollToActive"
@@ -1330,8 +1357,10 @@ ColumnLayout {
             spacing: 6
 
             Text {
-                text: root.activeTranslationTarget >= 0 ? "⚡" : "👇"
+                text: "↓"
+                color: "#FFFFFF"
                 font.pixelSize: 11
+                font.bold: true
             }
 
             Text {
@@ -1341,6 +1370,8 @@ ColumnLayout {
                 color: "#FFFFFF"
                 font.pixelSize: 11
                 font.bold: true
+                font.family: "JetBrains Mono, Consolas, monospace"
+                font.features: { "tnum": 1 }
             }
         }
 

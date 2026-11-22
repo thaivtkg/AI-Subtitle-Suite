@@ -3,36 +3,36 @@ import QtQuick 2.15
 
 QtObject {
     // --- Legacy / Base Backgrounds (Preserved for compatibility) ---
-    readonly property color bgApp: "#090D16"
-    readonly property color bgSurface: "#0F172A"
-    readonly property color bgSurfaceElevated: "#172033"
-    readonly property color bgSurfaceSoft: "#1E293B"
-    readonly property color border: "#273247"
-    readonly property color borderDisabled: "#273247"
+    readonly property color bgApp: "#0B0F17"
+    readonly property color bgSurface: "#151B28"
+    readonly property color bgSurfaceElevated: "#1E293B"
+    readonly property color bgSurfaceSoft: "#334155"
+    readonly property color border: "#334155"
+    readonly property color borderDisabled: "#1E293B"
     // Bổ sung màu nền chuẩn Dark Deep Navy của Studio
-    readonly property color colorBackground: "#0B0F19"
+    readonly property color colorBackground: "#0B0F17"
 
-    // --- Dark Liquid Glass Surfaces (Đồng bộ chuẩn Studio Obsidian / Navy) ---
-    readonly property color glassBackground: Qt.rgba(0.05, 0.07, 0.10, 0.75)
-    readonly property color glassIslandSurface: Qt.rgba(0.08, 0.10, 0.15, 0.70)      // Phủ mờ Slate tối
-    readonly property color glassIslandActive: Qt.rgba(0.39, 0.40, 0.95, 0.25)       // Viền Indigo nổi bật (#6366F1)
-    readonly property color glassPodLuminous: Qt.rgba(0.12, 0.15, 0.21, 0.85)       // Thay thế nền trắng bằng Surface Elevated (#1E2536)
-    readonly property color glassPodRaised: Qt.rgba(0.15, 0.18, 0.25, 0.90)         // Phím bấm Surface Soft (#262E40)
-    readonly property color glassDarkPill: Qt.rgba(0.07, 0.09, 0.14, 0.80)
-    readonly property color glassDarkPillHover: Qt.rgba(0.12, 0.15, 0.23, 0.90)
+    // --- Dark Liquid Glass Surfaces (Đồng bộ chuẩn Studio Slate) ---
+    readonly property color glassBackground: Qt.rgba(0.04, 0.06, 0.09, 0.85)
+    readonly property color glassIslandSurface: Qt.rgba(0.08, 0.11, 0.16, 0.90)      // Phủ mờ Slate tối (#151B28)
+    readonly property color glassIslandActive: Qt.rgba(0.31, 0.27, 0.90, 0.25)       // Viền Indigo nổi bật (#4F46E5)
+    readonly property color glassPodLuminous: Qt.rgba(0.08, 0.11, 0.16, 0.95)       // Surface Card (#151B28)
+    readonly property color glassPodRaised: Qt.rgba(0.12, 0.16, 0.23, 0.95)         // Surface Soft (#1E293B)
+    readonly property color glassDarkPill: Qt.rgba(0.08, 0.11, 0.16, 0.90)
+    readonly property color glassDarkPillHover: Qt.rgba(0.12, 0.16, 0.23, 0.95)
     readonly property color badgeSolidEmerald: "#10B981"
 
     // --- Specular Bevels & Refractive Rims ---
-    readonly property color glassBorderSpecularUpper: Qt.rgba(1.0, 1.0, 1.0, 0.12)  // Viền sáng tinh tế, không chói
+    readonly property color glassBorderSpecularUpper: Qt.rgba(1.0, 1.0, 1.0, 0.10)  // Viền sáng tinh tế, không chói
     readonly property color glassBorderSpecularLower: Qt.rgba(1.0, 1.0, 1.0, 0.05)
     readonly property color glassBorderSubtle: Qt.rgba(1.0, 1.0, 1.0, 0.04)
     readonly property color glassBevelInner: Qt.rgba(0.0, 0.0, 0.0, 0.08)          // Đổ bóng lồi mép kính 3D
-    readonly property color glassGleamWhite: Qt.rgba(1.0, 1.0, 1.0, 0.55)          // Vệt sáng lóa bề mặt (Specular Gleam)
+    readonly property color glassGleamWhite: Qt.rgba(1.0, 1.0, 1.0, 0.35)          // Vệt sáng lóa bề mặt
 
-    // --- Sapphire Blue Theme Accents ---
-    readonly property color accentSapphire: "#0066FF"
-    readonly property color accentSapphireHover: "#1A75FF"
-    readonly property color accentSapphireGradientEnd: "#0284C7"
+    // --- Indigo Theme Accents ---
+    readonly property color accentSapphire: "#4F46E5"
+    readonly property color accentSapphireHover: "#4338CA"
+    readonly property color accentSapphireGradientEnd: "#4F46E5"
 
     // --- High-Contrast Typography (Chữ sáng trên nền tối) ---
     readonly property color textOnLightPod: "#F8FAFC"       // Slate 50 (Trắng ngà sắc nét)
@@ -46,20 +46,21 @@ QtObject {
     readonly property color badgeEmeraldText: "#15803D"
     readonly property color badgeAmberBg: "#FEF3C7"
     readonly property color badgeAmberText: "#B45309"
-    readonly property color badgePurpleGradientStart: "#8B5CF6"
-    readonly property color badgePurpleGradientEnd: "#EC4899"
+    readonly property color badgePurpleGradientStart: "#4F46E5"
+    readonly property color badgePurpleGradientEnd: "#4F46E5"
     readonly property color accentOrangeKeyword: "#EA580C"
 
     // --- Dimension & Corner Radius Metrics ---
     readonly property int radiusIsland: 26
-    readonly property int radiusPill: 22
+    readonly property int radiusMedium: 12
+    readonly property int radiusPill: 8
     readonly property int islandSpacing: 12
     readonly property int windowPadding: 14
 
-    // --- Existing Accents ---
-    readonly property color accentPurple: "#8B5CF6"
-    readonly property color accentPink: "#EC4899"
-    readonly property color accentCyan: "#38BDF8"
+    // --- Accents ---
+    readonly property color accentPurple: "#4F46E5"
+    readonly property color accentPink: "#4F46E5"
+    readonly property color accentCyan: "#4F46E5"
     readonly property color success: "#34D399"
     readonly property color warning: "#FBBF24"
     readonly property color danger: "#F43F5E"

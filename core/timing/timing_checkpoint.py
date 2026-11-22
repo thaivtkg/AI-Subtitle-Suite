@@ -25,8 +25,16 @@ class TimingCheckpoint:
     max_window_ms: Optional[int] = None
     music_mode: Optional[bool] = None
     language: Optional[str] = None
+    vad_preset: Optional[str] = None
+    vad_threshold: Optional[float] = None
+    vad_speech_pad_ms: Optional[int] = None
+    vad_max_speech_duration_s: Optional[float] = None
+    min_speech_duration_ms: Optional[int] = None
+    condition_on_previous_text: Optional[bool] = None
+    specialized_model: Optional[str] = None
     
     next_segment_index: int = 1
     last_completed_end_ms: int = 0
+    completed_until: int = 0
     completed_batches: List[str] = field(default_factory=list)
     updated_at: str = ""

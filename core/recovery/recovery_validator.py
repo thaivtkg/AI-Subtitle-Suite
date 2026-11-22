@@ -6,6 +6,26 @@ from core.recovery.recovery_models import (
 )
 
 
+def _parse_segment_time(value) -> float:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        try:
+            return float(stripped)
+        except ValueError:
+            pass
+        parts = stripped.replace(".", ",").split(":")
+        if len(parts) == 3:
+            sec_parts = parts[2].split(",")
+            if len(sec_parts) == 2 and len(sec_parts[1]) == 3:
+                hours, mins = int(parts[0]), int(parts[1])
+                secs, ms = int(sec_parts[0]), int(sec_parts[1])
+                if 0 <= mins < 60 and 0 <= secs < 60 and 0 <= ms < 1000 and hours >= 0:
+                    return (hours * 3600 + mins * 60 + secs) * 1000 + ms
+    raise ValueError(f"Invalid segment timestamp: {value!r}")
+
+
 class RecoveryValidator:
     def validate_data(
         self,
@@ -60,7 +80,8 @@ class RecoveryValidator:
                 return RecoveryValidationResult(False, "INVALID_SEGMENT_SCHEMA")
             if "start" in segment and "end" in segment:
                 try:
-                    start, end = float(segment["start"]), float(segment["end"])
+                    start = _parse_segment_time(segment["start"])
+                    end = _parse_segment_time(segment["end"])
                 except (TypeError, ValueError):
                     return RecoveryValidationResult(False, "INVALID_SEGMENT_SCHEMA")
                 if start < 0 or end < start:

@@ -30,7 +30,7 @@ ARCHETYPE_METADATA: dict[str, dict[str, Any]] = {
         "id": ARCHETYPE_PURE,
         "name": "Dịch Thuần (Pure Model)",
         "pronouns": "Tự do",
-        "icon": "🔮",
+        "icon": "",
     },
 }
 

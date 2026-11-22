@@ -226,6 +226,9 @@ class BatchController(QObject):
             except (ValueError, TypeError):
                 continue
             if 0 <= idx < total_len and idx not in seen:
+                orig = str(all_data[idx].get("original", "")).strip()
+                if not orig or orig in {"[ Chưa có nội dung ]", "[Chưa có nội dung]"}:
+                    continue
                 seen.add(idx)
                 target_indices.append(idx)
 

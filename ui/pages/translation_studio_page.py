@@ -214,12 +214,6 @@ class TranslationStudioPage(QWidget):
             if studio_idx.isdigit() and str(int(studio_idx) + 1) == target:
                 return idx
 
-        # Tier 4: studio_index
-        for idx, item in enumerate(data):
-            studio_idx = str(item.get("studio_index") if item.get("studio_index") is not None else "")
-            if studio_idx and studio_idx == target:
-                return idx
-
         return -1
 
     def update_segment_source(self, segment_id: str, new_source_text: str):
@@ -295,21 +289,24 @@ class TranslationStudioPage(QWidget):
             cat_orig = str(cat_item.get("original") or "").strip()
             seg = None
             cat_sid = str(cat_item.get("segment_id") or "").strip()
-            if cat_sid and cat_sid in by_id:
-                seg = by_id[cat_sid]
-
-            if not seg:
+            if cat_sid:
+                seg = by_id.get(cat_sid)
+                if not seg and by_id:
+                    self.subtitle_model.remove_subtitle(cat_idx)
+                    pruned_any = True
+                    continue
+            else:
                 cat_stt = str(cat_item.get("index") or "").strip()
                 if cat_stt and cat_stt in by_stt:
                     seg = by_stt[cat_stt]
 
-            if not seg:
-                cat_sidx = cat_item.get("studio_index")
-                if cat_sidx is not None and cat_sidx in by_idx:
-                    seg = by_idx[cat_sidx]
+                if not seg:
+                    cat_sidx = cat_item.get("studio_index")
+                    if cat_sidx is not None and cat_sidx in by_idx:
+                        seg = by_idx[cat_sidx]
 
-            if not seg and cat_orig and cat_orig in by_orig:
-                seg = by_orig[cat_orig]
+                if not seg and cat_orig and cat_orig in by_orig:
+                    seg = by_orig[cat_orig]
 
             if not seg:
                 continue
@@ -317,7 +314,15 @@ class TranslationStudioPage(QWidget):
             trans = str(seg.get("translation", "") or "").strip()
             orig = str(seg.get("original_text") or seg.get("source_text") or cat_item.get("original") or "").strip()
             status = str(seg.get("translation_status", "") or seg.get("status", "")).strip().upper()
-            if not trans and (status == "ACCEPTED" or seg.get("original_text")):
+            # Project loading can attach a CAT draft to display text already edited in Studio.
+            if (status in {"TRANSLATED", "EDITED"} and trans and orig
+                    and seg.get("text", "").strip() not in {orig, trans}):
+                seg["original_text"] = orig
+                seg["translation"] = seg["text"]
+                seg["translation_status"] = "ACCEPTED"
+                trans = seg["text"].strip()
+                status = "ACCEPTED"
+            if not trans and status == "ACCEPTED":
                 trans = str(seg.get("text", "") or "").strip()
 
             # Kiểm tra xem câu này đã được DUYỆT (ACCEPTED) trên Studio/AI Agent hoặc đã nằm trong TM
@@ -381,9 +386,12 @@ class TranslationStudioPage(QWidget):
             if getattr(self.translation_controller, "_active_translation_index", -1) == matched_idx:
                 self.translation_controller.cancelTranslation()
 
+        orig_item = self.subtitle_model.get_item(matched_idx) or {}
+        base_studio_idx = int(orig_item.get("studio_index", matched_idx))
+
         seg1_data = {
             "segment_id": str(seg1.get("id") or original_id),
-            "studio_index": matched_idx,
+            "studio_index": base_studio_idx,
             "index": int(seg1.get("stt", matched_idx + 1)),
             "start_time": self._format_time(seg1.get("start")),
             "end_time": self._format_time(seg1.get("end")),
@@ -393,7 +401,7 @@ class TranslationStudioPage(QWidget):
         }
         seg2_data = {
             "segment_id": str(seg2.get("id") or (matched_idx + 2)),
-            "studio_index": matched_idx + 1,
+            "studio_index": base_studio_idx + 1,
             "index": int(seg2.get("stt", matched_idx + 2)),
             "start_time": self._format_time(seg2.get("start")),
             "end_time": self._format_time(seg2.get("end")),
@@ -416,9 +424,12 @@ class TranslationStudioPage(QWidget):
             if getattr(self.translation_controller, "_active_translation_index", -1) in (matched_idx, matched_idx + 1):
                 self.translation_controller.cancelTranslation()
 
+        orig_item = self.subtitle_model.get_item(matched_idx) or {}
+        base_studio_idx = int(orig_item.get("studio_index", matched_idx))
+
         orig_data = {
             "segment_id": str(original_seg.get("id") or original_id),
-            "studio_index": matched_idx,
+            "studio_index": base_studio_idx,
             "index": int(original_seg.get("stt", matched_idx + 1)),
             "start_time": self._format_time(original_seg.get("start")),
             "end_time": self._format_time(original_seg.get("end")),
@@ -441,10 +452,13 @@ class TranslationStudioPage(QWidget):
             if getattr(self.translation_controller, "_active_translation_index", -1) in (matched_idx, matched_idx + 1):
                 self.translation_controller.cancelTranslation()
 
+        orig_item = self.subtitle_model.get_item(matched_idx) or {}
+        base_studio_idx = int(orig_item.get("studio_index", matched_idx))
+
         trans = merged_seg.get("translation", "")
         merged_data = {
             "segment_id": str(merged_seg.get("id") or id1),
-            "studio_index": matched_idx,
+            "studio_index": base_studio_idx,
             "index": int(merged_seg.get("stt", matched_idx + 1)),
             "start_time": self._format_time(merged_seg.get("start")),
             "end_time": self._format_time(merged_seg.get("end")),
@@ -467,11 +481,14 @@ class TranslationStudioPage(QWidget):
             if getattr(self.translation_controller, "_active_translation_index", -1) == matched_idx:
                 self.translation_controller.cancelTranslation()
 
+        orig_item = self.subtitle_model.get_item(matched_idx) or {}
+        base_studio_idx = int(orig_item.get("studio_index", matched_idx))
+
         t1 = seg1.get("translation", "")
         t2 = seg2.get("translation", "")
         seg1_data = {
             "segment_id": str(seg1.get("id") or id1),
-            "studio_index": matched_idx,
+            "studio_index": base_studio_idx,
             "index": int(seg1.get("stt", matched_idx + 1)),
             "start_time": self._format_time(seg1.get("start")),
             "end_time": self._format_time(seg1.get("end")),
@@ -481,7 +498,7 @@ class TranslationStudioPage(QWidget):
         }
         seg2_data = {
             "segment_id": str(seg2.get("id") or (matched_idx + 2)),
-            "studio_index": matched_idx + 1,
+            "studio_index": base_studio_idx + 1,
             "index": int(seg2.get("stt", matched_idx + 2)),
             "start_time": self._format_time(seg2.get("start")),
             "end_time": self._format_time(seg2.get("end")),
@@ -523,7 +540,7 @@ class TranslationStudioPage(QWidget):
 
                 # Overwrite Guard 2: If timeline segment has a new speech and its original_text
                 # doesn't match cat_orig, do not overwrite with old translation!
-                if timeline_orig and cat_orig and timeline_orig != cat_orig:
+                if timeline_orig and cat_orig and str(timeline_orig).strip() != cat_orig:
                     continue
                     
                 if trans:
@@ -534,17 +551,6 @@ class TranslationStudioPage(QWidget):
                     # AUD-SYNC-001 (Approval-Gated Sync): Chỉ ghi đè text câu trên Timeline/Player khi câu đã DUYỆT (ACCEPTED)
                     if item.get("status") == "ACCEPTED":
                         timeline_seg["text"] = trans
-            else:
-                trans = str(item.get("translation", "")).strip()
-                studio_segments.append({
-                    "stt": item.get("index", len(studio_segments) + 1),
-                    "start": item.get("start_time", "00:00:00,000"),
-                    "end": item.get("end_time", "00:00:00,000"),
-                    "text": trans or item.get("original", ""),
-                    "original_text": item.get("original", ""),
-                    "translation": trans,
-                    "translation_status": item.get("status", "TRANSLATED" if trans else "PENDING"),
-                })
 
     def save_translation_project(self, file_path: str):
         """Lưu toàn bộ dữ liệu dịch và bảng thuật ngữ thành tệp .aisrt chuẩn JSON."""
@@ -552,7 +558,7 @@ class TranslationStudioPage(QWidget):
         self.project_controller.saveProject(
             file_url=file_path,
             story_summary=getattr(self.project_controller, "_story_summary", ""),
-            source_lang="English",
+            source_lang=getattr(self.project_controller, "_source_language", "English"),
             target_lang="Vietnamese",
             notify=False,
         )

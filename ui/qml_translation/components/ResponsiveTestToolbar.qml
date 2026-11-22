@@ -49,7 +49,7 @@ Item {
 
     function presetLabel(index) {
         const preset = root.presets[index]
-        return preset.label + (root.isPresetAvailable(index) ? "" : " ⚠")
+        return preset.label + (root.isPresetAvailable(index) ? "" : " (!)")
     }
 
     Rectangle {

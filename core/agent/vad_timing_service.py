@@ -172,12 +172,20 @@ def detect_speech_intervals_vad(
             min_speech_duration_ms=minspeech,
         )
         chunks = get_speech_timestamps(audio, options, sampling_rate=sampling_rate)
+        from core.subtitle_generation.faster_whisper_service import FasterWhisperService
+
+        raw_spans = [(chunk["start"] / sampling_rate, chunk["end"] / sampling_rate) for chunk in chunks]
+        if isinstance(mmax, (int, float)) and not isinstance(mmax, bool) and float(mmax) > 0.0:
+            raw_spans = FasterWhisperService.enforce_max_speech_spans(
+                raw_spans, float(mmax), audio=audio, sampling_rate=sampling_rate
+            )
+
         intervals = []
         base_offset_ms = int(start_offset_s * 1000)
 
-        for chunk in chunks:
-            c_start_ms = base_offset_ms + int((chunk["start"] / sampling_rate) * 1000)
-            c_end_ms = base_offset_ms + int((chunk["end"] / sampling_rate) * 1000)
+        for sp_start_s, sp_end_s in raw_spans:
+            c_start_ms = base_offset_ms + int(sp_start_s * 1000)
+            c_end_ms = base_offset_ms + int(sp_end_s * 1000)
             # Ensure at least 200ms duration
             if c_end_ms - c_start_ms < 200:
                 c_end_ms = c_start_ms + 200

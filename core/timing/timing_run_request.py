@@ -22,3 +22,16 @@ class TimingRunRequest:
     overlap_gap_ms: int = 50
     music_mode: bool = False
     language: Optional[str] = None
+    vad_preset: Optional[str] = None
+    vad_threshold: Optional[float] = None
+    vad_speech_pad_ms: Optional[int] = None
+    vad_max_speech_duration_s: Optional[float] = None
+    min_speech_duration_ms: Optional[int] = None
+    start_segment_index: int = 1
+    speech_filter: bool = False
+    initial_prompt: str = ""
+    hotwords: str = ""
+    patience: Optional[float] = None
+    hallucination_silence_threshold: Optional[float] = None
+    tail_pad_ms: int = 0
+    condition_on_previous_text: bool = True

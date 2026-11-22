@@ -67,6 +67,7 @@ def _vars() -> dict:
         "SURFACE_ELEVATED": ColorToken.SURFACE_ELEVATED,
         "SURFACE_SOFT": ColorToken.SURFACE_SOFT,
         "BORDER": ColorToken.BORDER,
+        "BORDER_MUTED": ColorToken.BORDER_MUTED,
         "PRIMARY": ColorToken.PRIMARY,
         "PRIMARY_HOVER": ColorToken.PRIMARY_HOVER,
         "PRIMARY_PINK": ColorToken.PRIMARY_PINK,
@@ -452,6 +453,13 @@ QPushButton#btn_danger:hover {
     color: #FFFFFF;
 }
 
+QPushButton[variant="danger"]:disabled,
+QPushButton#btn_danger:disabled {
+    color: $TEXT_DISABLED;
+    border-color: $BORDER;
+    background-color: $SURFACE_SOFT;
+}
+
 /* Compact icon / window buttons */
 QPushButton[variant="icon"],
 QPushButton[variant="window"],
@@ -580,8 +588,8 @@ QMenu::item {
 }
 
 QMenu::item:selected {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 rgba(99, 102, 241, 0.35), stop:1 rgba(56, 189, 248, 0.20));
-    border: 1px solid rgba(165, 180, 252, 0.40);
+    background-color: $SURFACE_SOFT;
+    border: 1px solid $BORDER;
     color: #FFFFFF;
 }
 
@@ -627,6 +635,17 @@ QComboBox {
     padding-right: 24px;
 }
 
+QSpinBox, QDoubleSpinBox {
+    padding-right: 28px;
+}
+
+QSpinBox QLineEdit, QDoubleSpinBox QLineEdit {
+    background: transparent;
+    border: none;
+    padding: 0px;
+    min-height: 0px;
+}
+
 QComboBox::drop-down {
     subcontrol-origin: padding;
     subcontrol-position: top right;
@@ -668,8 +687,8 @@ QComboBox QAbstractItemView::item:hover {
 }
 
 QComboBox QAbstractItemView::item:selected {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 rgba(99, 102, 241, 0.35), stop:1 rgba(56, 189, 248, 0.20));
-    border: 1px solid rgba(165, 180, 252, 0.40);
+    background-color: $SURFACE_SOFT;
+    border: 1px solid $BORDER;
     border-radius: $RADIUS_INNER;
     color: #FFFFFF;
     font-weight: 600;
@@ -769,8 +788,8 @@ QListWidget::item:hover:!selected, QListView::item:hover:!selected {
 }
 
 QListWidget::item:selected, QListView::item:selected {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 rgba(99, 102, 241, 0.35), stop:1 rgba(56, 189, 248, 0.20));
-    border: 1px solid rgba(165, 180, 252, 0.45);
+    background-color: $SELECTED_SURFACE;
+    border: 1px solid rgba(99, 102, 241, 0.40);
     color: #FFFFFF;
     font-weight: 600;
 }
@@ -816,14 +835,17 @@ QHeaderView::section {
 
 QProgressBar {
     background-color: $SURFACE_SOFT;
-    border: none;
+    border: 1px solid $BORDER;
     border-radius: $RADIUS_INNER;
-    min-height: 6px;
-    max-height: 8px;
+    min-height: 18px;
+    text-align: center;
+    color: #FFFFFF;
+    font-size: 11px;
+    font-weight: 700;
 }
 
 QProgressBar::chunk {
-    background: $PRIMARY_GRADIENT;
+    background-color: $PRIMARY;
     border-radius: $RADIUS_INNER;
 }
 
@@ -984,8 +1006,8 @@ class GlobalSpotlightOverlay(QWidget):
         self.last_update_ms = 0
         self.cursor_pos: QPoint | None = None
         self.radius = 120
-        self.spotlight_color = QColor(56, 189, 248, 25)  # Sapphire #38BDF8 alpha 25/255
-        self.is_active = True
+        self.spotlight_color = QColor(99, 102, 241, 20)
+        self.is_active = False
 
     def update_cursor_pos(self, pos: QPoint | None):
         """Cập nhật tọa độ chuột với throttling 60 FPS (>= 16ms)."""
@@ -1010,7 +1032,7 @@ class GlobalSpotlightOverlay(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         gradient = QRadialGradient(QPointF(self.cursor_pos), float(self.radius))
         gradient.setColorAt(0.0, self.spotlight_color)
-        gradient.setColorAt(1.0, QColor(56, 189, 248, 0))
+        gradient.setColorAt(1.0, QColor(99, 102, 241, 0))
         painter.setBrush(gradient)
         painter.setPen(Qt.NoPen)
         painter.drawEllipse(self.cursor_pos, self.radius, self.radius)

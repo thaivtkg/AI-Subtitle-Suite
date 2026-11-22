@@ -50,7 +50,7 @@ Button {
         height: control.height
 
         // Luôn bo góc dạng viên thuốc
-        radius: Math.min(width, height) / 2
+        radius: Theme.radiusPill
         antialiasing: true
 
         gradient: Gradient {
@@ -64,11 +64,11 @@ Button {
                          ? (control.pressed ? "#991B1B" :
                             control.hovered ? "#DC2626" : "#B91C1C")
                          : control.isPrimary
-                           ? (control.pressed ? "#1D4ED8" :
-                              control.hovered ? "#3B82F6" : "#2563EB")
+                           ? (control.pressed ? "#3730A3" :
+                              control.hovered ? "#4338CA" : "#4F46E5")
                            : control.hovered
-                             ? Qt.rgba(0.20, 0.26, 0.38, 0.95)
-                             : Qt.rgba(0.12, 0.16, 0.24, 0.85)
+                             ? Qt.rgba(0.20, 0.26, 0.35, 0.95)
+                             : Qt.rgba(0.12, 0.16, 0.23, 0.85)
             }
 
             GradientStop {
@@ -79,11 +79,11 @@ Button {
                          ? (control.pressed ? "#7F1D1D" :
                             control.hovered ? "#B91C1C" : "#991B1B")
                          : control.isPrimary
-                           ? (control.pressed ? "#4338CA" :
-                              control.hovered ? "#6366F1" : "#4F46E5")
+                           ? (control.pressed ? "#3730A3" :
+                              control.hovered ? "#4338CA" : "#4F46E5")
                            : control.hovered
-                             ? Qt.rgba(0.24, 0.30, 0.45, 0.95)
-                             : Qt.rgba(0.15, 0.19, 0.28, 0.85)
+                             ? Qt.rgba(0.20, 0.26, 0.35, 0.95)
+                             : Qt.rgba(0.12, 0.16, 0.23, 0.85)
             }
         }
 

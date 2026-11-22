@@ -27,8 +27,9 @@ def test_tc_audit_08_run_asr_preserves_other_segments_and_subeditor_format():
     import tempfile
     mock_svc = MagicMock()
     mock_svc.model = MagicMock()
-    mock_res = MagicMock(error=None, segments=[MagicMock(text="Nhận diện mới", start_ms=4000, end_ms=6000)])
-    mock_svc.transcribe_batch.return_value = mock_res
+    mock_svc.transcribe_batch.side_effect = lambda request, batch, cancelled: MagicMock(
+        error=None, segments=[MagicMock(text="Nhận diện mới", start_ms=batch.start_ms, end_ms=batch.end_ms)]
+    )
     with tempfile.NamedTemporaryFile(suffix=".mp4") as tmp_vid:
         res = run_asr(indices=[2, 4], segments=initial_segs, video_path=tmp_vid.name, whisper_service=mock_svc)
         assert res["status"] == "ok"

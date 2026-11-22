@@ -36,7 +36,28 @@ class TranslationMemoryManager:
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         with self._lock:
-            self._init_db()
+            try:
+                self._init_db()
+            except sqlite3.DatabaseError:
+                if self.db_path == ":memory:":
+                    raise
+                try:
+                    self.conn.close()
+                except Exception:
+                    pass
+                db_file = Path(self.db_path)
+                backup_file = Path(f"{self.db_path}.corrupt")
+                try:
+                    if backup_file.exists():
+                        backup_file.unlink()
+                    if db_file.exists():
+                        db_file.replace(backup_file)
+                except OSError:
+                    if db_file.exists():
+                        db_file.unlink(missing_ok=True)
+                self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
+                self.conn.row_factory = sqlite3.Row
+                self._init_db()
         
     def _init_db(self):
         c = self.conn.cursor()
@@ -127,11 +148,11 @@ class TranslationMemoryManager:
             self.conn.commit()
 
     def _sanitize_for_fts(self, text: str) -> str:
-        # Extract alphanumeric sequences and join with OR
+        # Quote tokens so FTS5 operators like OR/AND/NOT match literally
         words = re.findall(r'\w+', text)
         if not words:
             return ""
-        return " OR ".join(words)
+        return " OR ".join(f'"{w}"' for w in words)
 
     def find_matches(self, 
                     source_text: str, 
@@ -190,15 +211,24 @@ class TranslationMemoryManager:
             return []
             
         # Retrieve candidates based on FTS MATCH, limit to 50 for performance
+        fuzzy_filters = ["tm_search MATCH ?"]
+        fuzzy_params = [sanitized_query]
+        if lang_pair:
+            fuzzy_filters.append("tm_segments.lang_pair = ?")
+            fuzzy_params.append(lang_pair)
+        if domain:
+            fuzzy_filters.append("tm_segments.domain = ?")
+            fuzzy_params.append(domain)
+
         with self._lock:
             c = self.conn.cursor()
-            c.execute("""
+            c.execute(f"""
                 SELECT tm_segments.* 
                 FROM tm_search 
                 JOIN tm_segments ON tm_search.rowid = tm_segments.id
-                WHERE tm_search MATCH ?
+                WHERE {' AND '.join(fuzzy_filters)}
                 LIMIT 50
-            """, (sanitized_query,))
+            """, fuzzy_params)
             candidate_rows = c.fetchall()
         
         for row in candidate_rows:

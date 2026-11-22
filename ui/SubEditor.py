@@ -4,8 +4,9 @@ import os
 import re
 import uuid
 
-from PySide6.QtCore import Qt, Signal, QTimer, QEvent
+from PySide6.QtCore import Qt, Signal, QTimer, QEvent, QSize
 from PySide6.QtGui import QColor, QKeySequence, QShortcut
+from ui.core.icons import get_icon
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
@@ -88,14 +89,30 @@ class CurrentSubtitleEditor(QWidget):
 
         self.lbl_title = QLabel("#--")
         self.lbl_title.setObjectName("lbl_current_sub_title")
-        self.lbl_title.setStyleSheet(f"font-weight: bold; color: {Theme.CYAN}; min-width: 32px;")
+        self.lbl_title.setStyleSheet("font-weight: 600; color: #818CF8; min-width: 32px;")
         layout.addWidget(self.lbl_title)
         
+        input_style = """
+            QLineEdit {
+                background-color: #151B28;
+                color: #F1F5F9;
+                border: 1px solid #334155;
+                border-radius: 6px;
+                font-size: 11px;
+                padding: 2px 4px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #4F46E5;
+                background-color: #1E293B;
+            }
+        """
+
         self.start_edit = QLineEdit()
         self.start_edit.setObjectName("inp_current_sub_start")
         self.start_edit.setFixedWidth(95)
         self.start_edit.setAlignment(Qt.AlignCenter)
         self.start_edit.setPlaceholderText("00:00:00,000")
+        self.start_edit.setStyleSheet(input_style)
         layout.addWidget(self.start_edit)
 
         arrow_lbl = QLabel("→")
@@ -107,6 +124,7 @@ class CurrentSubtitleEditor(QWidget):
         self.end_edit.setFixedWidth(95)
         self.end_edit.setAlignment(Qt.AlignCenter)
         self.end_edit.setPlaceholderText("00:00:00,000")
+        self.end_edit.setStyleSheet(input_style)
         layout.addWidget(self.end_edit)
 
         self.lbl_duration = QLabel("0.000s")
@@ -124,15 +142,17 @@ class CurrentSubtitleEditor(QWidget):
         self.lbl_cps.hide()
         layout.addWidget(self.lbl_cps)
 
-        self.btn_smart_split = QPushButton("⚡ Tách câu")
+        self.btn_smart_split = QPushButton("Tách câu")
         self.btn_smart_split.setObjectName("btn_smart_split")
+        self.btn_smart_split.setIcon(get_icon("split", "#FDBA74", 14))
+        self.btn_smart_split.setIconSize(QSize(14, 14))
         self.btn_smart_split.setToolTip("Tách câu tự động theo điểm ngắt tự nhiên gần giữa câu nhất")
         self.btn_smart_split.setCursor(Qt.PointingHandCursor)
         self.btn_smart_split.setFixedHeight(26)
         self.btn_smart_split.setStyleSheet(
-            "QPushButton { background-color: rgba(249, 115, 22, 0.2); color: #FDBA74; "
-            "border: 1px solid #F97316; border-radius: 5px; padding: 2px 8px; font-size: 11px; font-weight: bold; } "
-            "QPushButton:hover { background-color: #F97316; color: #FFFFFF; }"
+            "QPushButton { background-color: rgba(249, 115, 22, 0.15); color: #FDBA74; "
+            "border: 1px solid rgba(249, 115, 22, 0.4); border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: 600; } "
+            "QPushButton:hover { background-color: rgba(249, 115, 22, 0.3); color: #FFFFFF; border-color: #F97316; }"
         )
         self.btn_smart_split.hide()
         self.btn_smart_split.clicked.connect(self._on_smart_split_clicked)
@@ -141,7 +161,23 @@ class CurrentSubtitleEditor(QWidget):
         self.text_edit = QTextEdit()
         self.text_edit.setObjectName("txt_current_sub_content")
         self.text_edit.setPlaceholderText("Nội dung phụ đề...")
-        self.text_edit.setFixedHeight(30)
+        self.text_edit.document().setDocumentMargin(1)
+        self.text_edit.viewport().setStyleSheet("background: transparent;")
+        self.text_edit.setFixedHeight(36)
+        self.text_edit.setStyleSheet("""
+            QTextEdit#txt_current_sub_content {
+                background-color: #151B28;
+                color: #F1F5F9;
+                border: 1px solid #334155;
+                border-radius: 6px;
+                padding: 4px 6px;
+                font-size: 12px;
+            }
+            QTextEdit#txt_current_sub_content:focus {
+                border: 1px solid #4F46E5;
+                background-color: #1E293B;
+            }
+        """)
         layout.addWidget(self.text_edit, stretch=1)
 
         # Hidden text_original for backward compatibility
@@ -149,7 +185,7 @@ class CurrentSubtitleEditor(QWidget):
         self.text_original.hide()
 
         # Tùy chọn tăng âm lượng gốc khi quét lại
-        self.chk_boost_audio = QCheckBox("🔊 Tăng âm")
+        self.chk_boost_audio = QCheckBox("Tăng âm")
         self.chk_boost_audio.setObjectName("chk_boost_audio")
         self.chk_boost_audio.setToolTip(
             "Tăng âm lượng gốc (+6dB / 2x) đoạn này khi quét lại, giúp nhận diện rõ hơn giọng nói nhỏ hoặc bị nhạc nền lấn át"
@@ -183,7 +219,7 @@ class CurrentSubtitleEditor(QWidget):
         self.btn_prev.setStyleSheet(
             f"QPushButton {{ background-color: {Theme.SURFACE_SOFT}; color: {Theme.TEXT_PRIMARY}; "
             f"border: 1px solid {Theme.BORDER}; border-radius: 5px; padding: 0px; font-size: 13px; font-weight: bold; }} "
-            f"QPushButton:hover {{ background-color: {Theme.SURFACE}; border-color: {Theme.CYAN}; color: {Theme.CYAN}; }}"
+            f"QPushButton:hover {{ background-color: {Theme.SURFACE}; border-color: #4F46E5; color: #818CF8; }}"
         )
         self.btn_prev.clicked.connect(self._previous_requested)
         layout.addWidget(self.btn_prev)
@@ -196,7 +232,7 @@ class CurrentSubtitleEditor(QWidget):
         self.btn_next.setStyleSheet(
             f"QPushButton {{ background-color: {Theme.SURFACE_SOFT}; color: {Theme.TEXT_PRIMARY}; "
             f"border: 1px solid {Theme.BORDER}; border-radius: 5px; padding: 0px; font-size: 13px; font-weight: bold; }} "
-            f"QPushButton:hover {{ background-color: {Theme.SURFACE}; border-color: {Theme.CYAN}; color: {Theme.CYAN}; }}"
+            f"QPushButton:hover {{ background-color: {Theme.SURFACE}; border-color: #4F46E5; color: #818CF8; }}"
         )
         self.btn_next.clicked.connect(self._next_requested)
         layout.addWidget(self.btn_next)
@@ -221,7 +257,7 @@ class CurrentSubtitleEditor(QWidget):
         self.lbl_duration.setText(f"{max(0, end_ms - start_ms) / 1000:.3f} s")
         self.update_cps_display()
 
-    def set_values(self, start, end, text, original_text=""):
+    def set_values(self, start, end, text, original_text="", *, preserve_cursor: bool = True):
         start = ms_to_time_str(start) if isinstance(start, (int, float)) else str(start)
         end = ms_to_time_str(end) if isinstance(end, (int, float)) else str(end)
         for widget, value in ((self.start_edit, start), (self.end_edit, end)):
@@ -247,10 +283,19 @@ class CurrentSubtitleEditor(QWidget):
             self.text_edit.setPlainText(target_text)
             self.text_edit.blockSignals(False)
 
-            if has_focus:
+            if preserve_cursor and has_focus:
                 new_cursor = self.text_edit.textCursor()
                 new_cursor.setPosition(min(pos, len(target_text)))
                 self.text_edit.setTextCursor(new_cursor)
+            else:
+                new_cursor = self.text_edit.textCursor()
+                new_cursor.setPosition(0)
+                self.text_edit.setTextCursor(new_cursor)
+                self.text_edit.verticalScrollBar().setValue(0)
+                self.text_edit.horizontalScrollBar().setValue(0)
+        elif not preserve_cursor:
+            self.text_edit.verticalScrollBar().setValue(0)
+            self.text_edit.horizontalScrollBar().setValue(0)
         
         start_ms = time_str_to_ms(start)
         end_ms = time_str_to_ms(end)
@@ -398,6 +443,7 @@ class SubtitleEditorWidget(QWidget):
     request_tm_suggestion = Signal(str)  # original_text
     commit_segment = Signal(str, str, str, str, list)  # original, translated, prev, next, qc_flags
     segment_scan_requested = Signal(str, int, int) # selected indices
+    force_asr_scan_requested = Signal(str, int, int)  # seg_id, start_ms, end_ms
     batch_scan_requested = Signal(list)  # list of source indices
     send_to_translation_requested = Signal(list)  # list of source indices
 
@@ -570,6 +616,69 @@ class SubtitleEditorWidget(QWidget):
         self.current_editor.next_requested.connect(self.select_next)
         self.current_editor.smart_split_requested.connect(self._on_smart_split_requested)
         left_layout.addWidget(self.current_editor)
+
+        # Inline quick-recovery banner when per-segment scan produces no subtitle/speech
+        self._recovery_segment_id = None
+        self.scan_recovery_banner = QFrame(self)
+        self.scan_recovery_banner.setObjectName("scan_recovery_banner")
+        self.scan_recovery_banner.setStyleSheet(
+            "QFrame#scan_recovery_banner { "
+            "background-color: rgba(120, 53, 15, 0.35); "
+            "border: 1px solid #F59E0B; "
+            "border-radius: 6px; "
+            "}"
+        )
+        rec_layout = QHBoxLayout(self.scan_recovery_banner)
+        rec_layout.setContentsMargins(8, 4, 8, 4)
+        rec_layout.setSpacing(6)
+        self.lbl_scan_recovery_msg = QLabel("")
+        self.lbl_scan_recovery_msg.setObjectName("lbl_scan_recovery_msg")
+        self.lbl_scan_recovery_msg.setWordWrap(True)
+        self.lbl_scan_recovery_msg.setStyleSheet(
+            "color: #FDE68A; font-size: 11px; background: transparent; border: none;"
+        )
+        rec_layout.addWidget(self.lbl_scan_recovery_msg, stretch=1)
+
+        btn_style = (
+            "QPushButton { background: #1E293B; color: #F8FAFC; border: 1px solid #475569; "
+            "border-radius: 4px; padding: 3px 8px; font-size: 11px; }"
+            "QPushButton:hover { border-color: #4F46E5; color: #FFFFFF; background: #334155; }"
+        )
+        self.btn_force_asr_retry = QPushButton("Tăng âm + Tắt VAD")
+        self.btn_force_asr_retry.setObjectName("btn_force_asr_retry")
+        self.btn_force_asr_retry.setIcon(get_icon("volume", "#94A3B8", 14))
+        self.btn_force_asr_retry.setCursor(Qt.PointingHandCursor)
+        self.btn_force_asr_retry.setToolTip("Ép nhận diện lại phụ đề đoạn này với tăng âm (+6dB) và tắt bộ lọc VAD")
+        self.btn_force_asr_retry.setStyleSheet(btn_style)
+        self.btn_force_asr_retry.clicked.connect(self._on_force_asr_retry_clicked)
+        rec_layout.addWidget(self.btn_force_asr_retry)
+
+        self.btn_manual_type_sub = QPushButton("Nhập tay")
+        self.btn_manual_type_sub.setObjectName("btn_manual_type_sub")
+        self.btn_manual_type_sub.setIcon(get_icon("keyboard", "#94A3B8", 14))
+        self.btn_manual_type_sub.setCursor(Qt.PointingHandCursor)
+        self.btn_manual_type_sub.setStyleSheet(btn_style)
+        self.btn_manual_type_sub.clicked.connect(self._on_manual_type_recovery_clicked)
+        rec_layout.addWidget(self.btn_manual_type_sub)
+
+        self.btn_delete_empty_timing = QPushButton("Xóa đoạn này")
+        self.btn_delete_empty_timing.setObjectName("btn_delete_empty_timing")
+        self.btn_delete_empty_timing.setIcon(get_icon("trash", "#94A3B8", 14))
+        self.btn_delete_empty_timing.setCursor(Qt.PointingHandCursor)
+        self.btn_delete_empty_timing.setStyleSheet(btn_style)
+        self.btn_delete_empty_timing.clicked.connect(self._on_delete_recovery_clicked)
+        rec_layout.addWidget(self.btn_delete_empty_timing)
+
+        self.btn_dismiss_scan_banner = QPushButton("✕")
+        self.btn_dismiss_scan_banner.setObjectName("btn_dismiss_scan_banner")
+        self.btn_dismiss_scan_banner.setFixedSize(22, 22)
+        self.btn_dismiss_scan_banner.setCursor(Qt.PointingHandCursor)
+        self.btn_dismiss_scan_banner.setStyleSheet(btn_style)
+        self.btn_dismiss_scan_banner.clicked.connect(self.hide_scan_recovery_banner)
+        rec_layout.addWidget(self.btn_dismiss_scan_banner)
+
+        self.scan_recovery_banner.hide()
+        left_layout.addWidget(self.scan_recovery_banner)
         for widget in (
             self.current_editor.text_edit,
             self.current_editor.start_edit,
@@ -606,9 +715,11 @@ class SubtitleEditorWidget(QWidget):
 
         # --- CÁC NÚT HÀNH ĐỘNG (Sẽ được Gui.py gắn vào Timeline Toolbar) ---
         from PySide6.QtWidgets import QMenu
-        self.fix_overlap_btn = QPushButton("⚡ Chồng lấn ▾")
+        self.fix_overlap_btn = QPushButton("Chồng lấn ▾")
         self.fix_overlap_btn.setObjectName("btn_secondary")
         self.fix_overlap_btn.setProperty("variant", "secondary")
+        self.fix_overlap_btn.setIcon(get_icon("zap", "#94A3B8", 14))
+        self.fix_overlap_btn.setIconSize(QSize(14, 14))
         self.fix_overlap_btn.setEnabled(False)
         self.fix_overlap_menu = QMenu(self)
         self.action_fix_keep_prev = self.fix_overlap_menu.addAction("Giữ Sub trước, rút Sub sau")
@@ -621,26 +732,34 @@ class SubtitleEditorWidget(QWidget):
         self.action_fix_keep_next.triggered.connect(lambda: self.fix_overlaps(mode="keep_next", all_overlaps=False))
         self.action_fix_all.triggered.connect(lambda: self.fix_overlaps(mode="keep_prev", all_overlaps=True))
 
-        self.approve_btn = QPushButton("✅ Chốt Timing")
+        self.approve_btn = QPushButton("Chốt Timing")
         self.approve_btn.setProperty("variant", "success")
+        self.approve_btn.setIcon(get_icon("check", "#10B981", 14))
+        self.approve_btn.setIconSize(QSize(14, 14))
         self.approve_btn.clicked.connect(self.approve_timing)
         
-        self.save_draft_btn = QPushButton("📦 Lưu Draft")
+        self.save_draft_btn = QPushButton("Lưu Draft")
         self.save_draft_btn.setObjectName("btn_secondary")
         self.save_draft_btn.setProperty("variant", "secondary")
+        self.save_draft_btn.setIcon(get_icon("archive", "#94A3B8", 14))
+        self.save_draft_btn.setIconSize(QSize(14, 14))
         self.save_draft_btn.clicked.connect(lambda: self.save_draft(silent=False))
         
-        self.save_btn = QPushButton("💾 Lưu SRT")
+        self.save_btn = QPushButton("Lưu SRT")
         self.save_btn.setObjectName("btn_secondary")
         self.save_btn.setProperty("variant", "secondary")
+        self.save_btn.setIcon(get_icon("save", "#94A3B8", 14))
+        self.save_btn.setIconSize(QSize(14, 14))
         self.save_btn.clicked.connect(self.save_srt)
         self.save_draft_btn.clicked.connect(lambda: self.save_requested.emit("draft"))
         self.save_btn.clicked.connect(lambda: self.save_requested.emit("srt"))
         self.approve_btn.clicked.connect(self.timing_committed.emit)
 
-        self.reanalyze_audio_style_btn = QPushButton("🔄 Quét Audio")
+        self.reanalyze_audio_style_btn = QPushButton("Quét Audio")
         self.reanalyze_audio_style_btn.setObjectName("btn_secondary")
         self.reanalyze_audio_style_btn.setProperty("variant", "secondary")
+        self.reanalyze_audio_style_btn.setIcon(get_icon("refresh", "#94A3B8", 14))
+        self.reanalyze_audio_style_btn.setIconSize(QSize(14, 14))
         self.reanalyze_audio_style_btn.setToolTip("Quét lại Style phụ đề theo năng lượng âm thanh")
         self.reanalyze_audio_style_btn.clicked.connect(self._on_reanalyze_audio_style_clicked)
         
@@ -832,11 +951,6 @@ class SubtitleEditorWidget(QWidget):
                 return self._get_row_by_source_index(source_index)
         return -1
 
-    def _set_table_item(self, row: int, col: int, text: str):
-        item = self.table.item(row, col)
-        if item:
-            item.setText(text)
-
     def on_timeline_live_edit(self, changes: list, edit_mode: object, *args):
         """Cập nhật UI thời gian thực khi người dùng đang kéo thả trên Timeline, cập nhật all_segments nhưng KHÔNG tạo Undo."""
         if not self.all_segments:
@@ -864,14 +978,21 @@ class SubtitleEditorWidget(QWidget):
             if abs_idx >= 0:
                 self.all_segments[abs_idx]["start"] = ms_to_time_str(new_start_ms)
                 self.all_segments[abs_idx]["end"] = ms_to_time_str(new_end_ms)
-                
-                page = abs_idx // self.group_size if self.group_size > 0 else 0
-                if self.group_size == 0 or page == self.current_page:
-                    row = abs_idx % self.group_size if self.group_size > 0 else abs_idx
-                    self._set_table_item(row, self.COL_START, ms_to_time_str(new_start_ms))
-                    self._set_table_item(row, self.COL_END, ms_to_time_str(new_end_ms))
-                    dur_ms = max(0, new_end_ms - new_start_ms)
-                    self._set_table_item(row, self.COL_DUR, f"{dur_ms / 1000:.3f} s")
+
+                row = self._get_row_by_source_index(abs_idx)
+                if row >= 0:
+                    self.table.blockSignals(True)
+                    try:
+                        self._set_table_item(row, self.COL_START, ms_to_time_str(new_start_ms))
+                        self._set_table_item(row, self.COL_END, ms_to_time_str(new_end_ms))
+                        dur_ms = max(0, new_end_ms - new_start_ms)
+                        self._set_table_item(row, self.COL_DUR, f"{dur_ms / 1000:.3f} s")
+                    finally:
+                        self.table.blockSignals(False)
+
+    def refresh_table(self):
+        """Alias for render_page to safely update and refresh table view."""
+        self.render_page()
 
     def render_page(self):
         self.is_rendering = True
@@ -942,8 +1063,10 @@ class SubtitleEditorWidget(QWidget):
 
         for row, global_index in enumerate(page_source_indices):
             seg = self.all_segments[global_index]
-            start_text = self.ms_to_time_str(seg['start']) if isinstance(seg['start'], (int, float)) else seg['start']
-            end_text = self.ms_to_time_str(seg['end']) if isinstance(seg['end'], (int, float)) else seg['end']
+            start_raw = seg.get('start', seg.get('start_ms', 0))
+            end_raw = seg.get('end', seg.get('end_ms', 0))
+            start_text = self.ms_to_time_str(start_raw) if isinstance(start_raw, (int, float)) else str(start_raw or "00:00:00,000")
+            end_text = self.ms_to_time_str(end_raw) if isinstance(end_raw, (int, float)) else str(end_raw or "00:00:00,000")
             item_id = QTableWidgetItem(str(seg.get('stt', global_index + 1)))
             item_id.setTextAlignment(Qt.AlignCenter)
             item_id.setFlags(item_id.flags() & ~Qt.ItemIsEditable)
@@ -972,9 +1095,11 @@ class SubtitleEditorWidget(QWidget):
             self._set_table_item(row, self.COL_START, start_text)
             self._set_table_item(row, self.COL_END, end_text)
             try:
-                duration_ms = self.time_str_to_ms(seg['end']) - self.time_str_to_ms(seg['start'])
-                duration_text = f"{max(0, duration_ms) / 1000:.3f} s"
-            except ValueError:
+                s_ms = self.time_str_to_ms(start_text) if not isinstance(start_raw, (int, float)) else int(start_raw)
+                e_ms = self.time_str_to_ms(end_text) if not isinstance(end_raw, (int, float)) else int(end_raw)
+                duration_ms = max(0, e_ms - s_ms)
+                duration_text = f"{duration_ms / 1000:.3f} s"
+            except (ValueError, TypeError):
                 duration_text = "--"
             self._set_table_item(row, self.COL_DUR, duration_text, readonly=True)
 
@@ -1123,7 +1248,8 @@ class SubtitleEditorWidget(QWidget):
                         win.video_player.refresh_current_subtitle()
 
                 manager.push(
-                    EditTextCommand(abs_idx, segment['text'], raw_text, self.all_segments, on_executed=_on_table_edit_executed)
+                    EditTextCommand(abs_idx, segment['text'], raw_text, self.all_segments, on_executed=_on_table_edit_executed,
+                                    sync_translation=bool(segment.get("original_text") and (segment.get("translation") or segment.get("translation_status") == "ACCEPTED")))
                 )
                 self.live_edit_applied.emit(self.all_segments)
                 main_win = self.window()
@@ -1172,7 +1298,8 @@ class SubtitleEditorWidget(QWidget):
         if not selected_indices:
             from PySide6.QtWidgets import QMenu
             menu = QMenu(self)
-            act_add_playhead = menu.addAction("➕ Tạo câu phụ đề (Timing) mới tại Playhead")
+            act_add_playhead = menu.addAction("Tạo câu phụ đề mới tại Playhead")
+            act_add_playhead.setIcon(get_icon("plus", "#94A3B8", 14))
             action = menu.exec(self.table.viewport().mapToGlobal(pos))
             if action == act_add_playhead:
                 self.manual_add_requested.emit(-1)
@@ -1182,26 +1309,40 @@ class SubtitleEditorWidget(QWidget):
         from PySide6.QtWidgets import QMenu
         menu = QMenu(self)
 
-        act_insert_after = menu.addAction("➕ Chèn câu (Timing) mới ngay sau câu này")
-        act_add_playhead = menu.addAction("➕ Tạo câu phụ đề (Timing) mới tại Playhead")
+        act_insert_after = menu.addAction("Chèn câu mới ngay sau câu này")
+        act_insert_after.setIcon(get_icon("plus", "#94A3B8", 14))
+        act_add_playhead = menu.addAction("Tạo câu phụ đề mới tại Playhead")
+        act_add_playhead.setIcon(get_icon("plus", "#94A3B8", 14))
         menu.addSeparator()
 
         # 1. Chỉ giữ lại nhận diện âm thanh Whisper cho câu lẻ / nhiều câu
+        act_merge = None
         if count > 1:
-            act_asr = menu.addAction(f"🎙️ Nhận diện âm thanh Whisper ({count} câu đã chọn)")
-            act_translate = menu.addAction(f"🌐 Chuyển {count} câu đã chọn sang Dịch thuật AI")
+            act_asr = menu.addAction(f"Nhận diện âm thanh Whisper ({count} câu đã chọn)")
+            act_asr.setIcon(get_icon("mic", "#94A3B8", 14))
+            act_translate = menu.addAction(f"Chuyển {count} câu đã chọn sang Dịch thuật AI")
+            act_translate.setIcon(get_icon("globe", "#94A3B8", 14))
+            act_merge = menu.addAction(f"Gộp {count} câu đã chọn (Ctrl+M)")
+            act_merge.setIcon(get_icon("layers", "#94A3B8", 14))
         else:
-            act_asr = menu.addAction("🎙️ Nhận diện âm thanh câu này")
-            act_translate = menu.addAction("🌐 Chuyển câu này sang Dịch thuật AI")
+            act_asr = menu.addAction("Nhận diện âm thanh câu này")
+            act_asr.setIcon(get_icon("mic", "#94A3B8", 14))
+            act_translate = menu.addAction("Chuyển câu này sang Dịch thuật AI")
+            act_translate.setIcon(get_icon("globe", "#94A3B8", 14))
+            if selected_indices[0] < len(self.all_segments) - 1:
+                act_merge = menu.addAction("Gộp với câu tiếp theo (Ctrl+M)")
+                act_merge.setIcon(get_icon("layers", "#94A3B8", 14))
 
         menu.addSeparator()
-        style_menu = menu.addMenu("🏷️ Đặt Style")
+        style_menu = menu.addMenu("Đặt Style")
+        style_menu.setIcon(get_icon("sliders", "#94A3B8", 14))
         act_normal = style_menu.addAction("Normal (Mặc định)")
-        act_loud = style_menu.addAction("⚡ Loud (Nhấn mạnh)")
-        act_whisper = style_menu.addAction("🤫 Whisper (Thì thầm)")
+        act_loud = style_menu.addAction("Loud (Nhấn mạnh)")
+        act_whisper = style_menu.addAction("Whisper (Thì thầm)")
 
         menu.addSeparator()
-        act_reanalyze = menu.addAction("🔄 Quét lại âm lượng")
+        act_reanalyze = menu.addAction("Quét lại âm lượng")
+        act_reanalyze.setIcon(get_icon("refresh", "#94A3B8", 14))
 
         action = menu.exec(self.table.viewport().mapToGlobal(pos))
         if action == act_insert_after:
@@ -1215,6 +1356,8 @@ class SubtitleEditorWidget(QWidget):
             self.batch_scan_requested.emit(selected_indices)
         elif action == act_translate:
             self.send_to_translation_requested.emit(selected_indices)
+        elif act_merge is not None and action == act_merge:
+            self.trigger_merge(explicit_indices=selected_indices)
         elif action == act_normal:
             self._set_style_preset_for_indices(selected_indices, "normal")
         elif action == act_loud:
@@ -1375,16 +1518,33 @@ class SubtitleEditorWidget(QWidget):
         if not indices or len(indices) <= 1:
             return
         self._is_syncing_ui = True
-        self.table.blockSignals(True)
-        self.table.clearSelection()
-        from PySide6.QtCore import QItemSelectionModel
-        for idx in indices:
-            row = self._get_row_by_source_index(idx)
-            if row >= 0:
-                model_idx = self.table.model().index(row, 0)
-                self.table.selectionModel().select(model_idx, QItemSelectionModel.Select | QItemSelectionModel.Rows)
-        self.table.blockSignals(False)
-        self._is_syncing_ui = False
+        try:
+            if self.group_size > 0 and self._visible_source_indices:
+                first_visible = next((i for i in indices if i in self._visible_source_indices), None)
+                if first_visible is not None:
+                    visible_pos = self._visible_source_indices.index(first_visible)
+                    target_page = visible_pos // self.group_size
+                    if target_page != self.current_page:
+                        self.current_page = target_page
+                        self.render_page()
+            self.table.blockSignals(True)
+            self.table.clearSelection()
+            from PySide6.QtCore import QItemSelectionModel
+            first_row = -1
+            for idx in indices:
+                row = self._get_row_by_source_index(idx)
+                if row >= 0:
+                    if first_row < 0:
+                        first_row = row
+                    model_idx = self.table.model().index(row, 0)
+                    self.table.selectionModel().select(model_idx, QItemSelectionModel.Select | QItemSelectionModel.Rows)
+            if first_row >= 0:
+                item = self.table.item(first_row, self.COL_STT)
+                if item:
+                    self.table.scrollToItem(item, QAbstractItemView.PositionAtCenter)
+            self.table.blockSignals(False)
+        finally:
+            self._is_syncing_ui = False
 
         self.current_index = indices[0]
         self._load_current_editor()
@@ -1415,11 +1575,23 @@ class SubtitleEditorWidget(QWidget):
         self.current_index = index
         self.update_empty_state()
         seg = self.all_segments[index]
+        seg_id = str(seg.get("id") or seg.get("stt") or (index + 1))
+        if getattr(self, "_recovery_segment_id", None) not in (None, seg_id):
+            self.hide_scan_recovery_banner()
         self.current_editor.setEnabled(True)
         self.current_editor.setTitle(f"Current Subtitle: #{index + 1}")
         if hasattr(self.current_editor, "btn_scan"):
             self.current_editor.btn_scan.setText("Quét lại")
-        self.current_editor.set_values(seg["start"], seg["end"], seg["text"])
+        seg_key = (index, seg.get("id"))
+        preserve_cursor = getattr(self, "_loaded_editor_key", None) == seg_key
+        self._loaded_editor_key = seg_key
+        self.current_editor.set_values(
+            seg["start"],
+            seg["end"],
+            seg["text"],
+            original_text=seg.get("original_text", ""),
+            preserve_cursor=preserve_cursor,
+        )
         table_has_focus = False
         if hasattr(self, "table") and self.table:
             table_has_focus = self.table.hasFocus() or (
@@ -1458,10 +1630,18 @@ class SubtitleEditorWidget(QWidget):
         """Select the playing subtitle without assuming visible row == source index."""
         if not (0 <= absolute_index < len(self.all_segments)):
             return
+        if self.current_index != absolute_index and hasattr(self, "current_editor"):
+            self.current_editor.commit_pending_edit()
         if self.selection_controller and not self._is_syncing_ui:
+            prev_selected = self.selection_controller.selected_index
+            prev_id = self.selection_controller.selected_segment_id
+            target_id = self.all_segments[absolute_index].get("id")
             self.selection_controller.select(
-                absolute_index, self.all_segments[absolute_index].get("id"), SelectionSource.PLAYBACK
+                absolute_index, target_id, SelectionSource.PLAYBACK
             )
+            if prev_selected == absolute_index and prev_id == target_id:
+                self.current_index = absolute_index
+                self._load_current_editor()
             return
 
         self.current_index = absolute_index
@@ -1501,12 +1681,19 @@ class SubtitleEditorWidget(QWidget):
             seg = self.all_segments[self.current_index]
             self.current_editor.setEnabled(True)
             self.current_editor.setTitle(f"Current Subtitle: #{self.current_index + 1}")
+            seg_key = (self.current_index, seg.get("id"))
+            preserve_cursor = getattr(self, "_loaded_editor_key", None) == seg_key
+            self._loaded_editor_key = seg_key
             self.current_editor.set_values(
                 seg["start"], 
                 seg["end"], 
                 seg["text"], 
-                original_text=seg.get("original_text", "")
+                original_text=seg.get("original_text", ""),
+                preserve_cursor=preserve_cursor,
             )
+            seg_sid = str(seg.get("id") or seg.get("stt") or (self.current_index + 1))
+            if getattr(self, "_recovery_segment_id", None) not in (None, seg_sid):
+                self.hide_scan_recovery_banner()
             self._tm_debounce.start()
             txt = str(seg.get("text", "")).strip()
             has_sub = bool(txt and txt != "[ Chưa có nội dung ]")
@@ -1531,6 +1718,44 @@ class SubtitleEditorWidget(QWidget):
         start_ms = seg.get("start_ms") if seg.get("start_ms") is not None else time_str_to_ms(seg.get("start", "00:00:00,000"))
         end_ms = seg.get("end_ms") if seg.get("end_ms") is not None else time_str_to_ms(seg.get("end", "00:00:00,000"))
         self.segment_scan_requested.emit(seg_id, int(start_ms), int(end_ms))
+
+    def show_scan_recovery_banner(self, segment_id: str, message: str):
+        """Show non-blocking diagnostic + quick actions when per-segment scan finds no subtitle."""
+        self._recovery_segment_id = str(segment_id)
+        if hasattr(self, "lbl_scan_recovery_msg"):
+            self.lbl_scan_recovery_msg.setText(f"⚠️ {message}")
+        if hasattr(self, "scan_recovery_banner"):
+            self.scan_recovery_banner.show()
+
+    def hide_scan_recovery_banner(self):
+        self._recovery_segment_id = None
+        if hasattr(self, "scan_recovery_banner"):
+            self.scan_recovery_banner.hide()
+
+    def _on_force_asr_retry_clicked(self):
+        if not self.all_segments or not (0 <= self.current_index < len(self.all_segments)):
+            return
+        seg = self.all_segments[self.current_index]
+        seg_id = str(seg.get("id") or seg.get("stt") or (self.current_index + 1))
+        seg["id"] = seg_id
+        start_ms = seg.get("start_ms") if seg.get("start_ms") is not None else time_str_to_ms(seg.get("start", "00:00:00,000"))
+        end_ms = seg.get("end_ms") if seg.get("end_ms") is not None else time_str_to_ms(seg.get("end", "00:00:00,000"))
+        self.current_editor.chk_boost_audio.setChecked(True)
+        self.hide_scan_recovery_banner()
+        self.force_asr_scan_requested.emit(seg_id, int(start_ms), int(end_ms))
+
+    def _on_manual_type_recovery_clicked(self):
+        self.hide_scan_recovery_banner()
+        txt = self.current_editor.text_edit.toPlainText().strip()
+        if txt == "[ Chưa có nội dung ]":
+            self.current_editor.text_edit.blockSignals(True)
+            self.current_editor.text_edit.clear()
+            self.current_editor.text_edit.blockSignals(False)
+        self.current_editor.text_edit.setFocus()
+
+    def _on_delete_recovery_clicked(self):
+        self.hide_scan_recovery_banner()
+        self.trigger_delete()
 
     def _apply_current_editor(self, values=None):
         manager = self._undo_manager()
@@ -1614,7 +1839,8 @@ class SubtitleEditorWidget(QWidget):
                         win.video_player.refresh_current_subtitle()
 
                 manager.push(
-                    EditTextCommand(abs_idx, segment["text"], values["text"], self.all_segments, on_executed=_on_editor_edit_executed)
+                    EditTextCommand(abs_idx, segment["text"], values["text"], self.all_segments, on_executed=_on_editor_edit_executed,
+                                    sync_translation=bool(segment.get("original_text") and (segment.get("translation") or segment.get("translation_status") == "ACCEPTED")))
                 )
                 self.live_edit_applied.emit(self.all_segments)
                 main_win = self.window()
@@ -1682,7 +1908,7 @@ class SubtitleEditorWidget(QWidget):
         return ms_to_time_str(value) if isinstance(value, (int, float)) else str(value)
 
     def trigger_delete(self):
-        if self.current_index < 0 or self.undo_manager is None:
+        if not (0 <= self.current_index < len(self.all_segments)) or self.undo_manager is None:
             return
         self.undo_manager.push(DeleteCommand(self.current_index, self.all_segments))
 
@@ -1698,21 +1924,52 @@ class SubtitleEditorWidget(QWidget):
     def _on_merge_undone(self, id1: str, seg1: dict, seg2: dict):
         self.segments_merge_undone.emit(id1, seg1, seg2)
 
-    def trigger_merge(self):
-        if (
-            self.current_index < 0
-            or self.current_index >= len(self.all_segments) - 1
-            or self.undo_manager is None
-        ):
+    def trigger_merge(self, explicit_indices=None):
+        if self.undo_manager is None or not self.all_segments:
             return
+        selected = sorted(
+            explicit_indices
+            if explicit_indices is not None
+            else self._get_selected_source_indices()
+        )
+        if len(selected) < 2 and getattr(self, "selection_controller", None) is not None:
+            ctrl_indices = sorted(getattr(self.selection_controller, "selected_indices", []) or [])
+            if len(ctrl_indices) >= 2:
+                selected = ctrl_indices
+
+        if len(selected) >= 2:
+            if selected != list(range(selected[0], selected[-1] + 1)):
+                try:
+                    from ui.toast import Toast
+                    Toast.show_warning(self.window(), "Chỉ có thể gộp các câu phụ đề nằm liền kề nhau!")
+                except Exception:
+                    pass
+                return
+            target_start = selected[0]
+            merge_count = len(selected)
+        else:
+            target_start = self.current_index
+            merge_count = 2
+
+        if target_start < 0 or target_start + merge_count > len(self.all_segments):
+            return
+
         self.undo_manager.push(
             MergeCommand(
-                self.current_index,
+                target_start,
                 self.all_segments,
                 on_applied=self._on_merge_applied,
                 on_undone=self._on_merge_undone,
+                count=merge_count,
             )
         )
+        if 0 <= target_start < len(self.all_segments):
+            self.current_index = target_start
+            merged_id = self.all_segments[target_start].get("id")
+            if getattr(self, "selection_controller", None) is not None:
+                self.selection_controller.select(target_start, merged_id, SelectionSource.EDITOR)
+            else:
+                self._select_segment_ui(target_start, source=SelectionSource.EDITOR)
 
 
     def _on_smart_split_requested(self, split_time_ms: int):
@@ -1844,11 +2101,6 @@ class SubtitleEditorWidget(QWidget):
             )
             self.current_editor.set_time(start_ms, end_ms)
             self.live_edit_applied.emit(self.all_segments)
-            if getattr(self, "selection_controller", None) and isinstance(segment, dict):
-                # Trigger global selection focus to update waveform highlight
-                self.selection_controller.selection_changed.emit(
-                    abs_idx, segment.get("id"), SelectionSource.EDITOR
-                )
 
     def trigger_add(self, playhead_ms: int, video_duration_ms: int = 0, end_ms: int | None = None, text: str = "") -> int:
         manager = self._undo_manager()
@@ -1969,6 +2221,9 @@ class SubtitleEditorWidget(QWidget):
         if target_idx == -1:
             return
 
+        if self.current_index != target_idx and hasattr(self, "current_editor"):
+            self.current_editor.commit_pending_edit()
+
         # 1. Cập nhật current_index và làm mới thanh biên tập trên cùng (Current Subtitle)
         self.current_index = target_idx
         self._load_current_editor()
@@ -2014,6 +2269,17 @@ class SubtitleEditorWidget(QWidget):
 
     def load_srt_file(self, srt_path):
         if not srt_path or not os.path.exists(srt_path):
+            return
+        media_exts = (
+            ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".webm", ".flv", ".m4v", ".ts",
+            ".m2ts", ".mp3", ".wav", ".aac", ".flac", ".ogg", ".m4a",
+        )
+        if str(srt_path).lower().endswith(media_exts):
+            return
+        try:
+            if os.path.getsize(srt_path) > 20 * 1024 * 1024:
+                return
+        except OSError:
             return
         with open(srt_path, "r", encoding="utf-8", errors="ignore") as handle:
             segments = parse_srt_content(handle.read())
@@ -2205,10 +2471,10 @@ class SubtitleEditorWidget(QWidget):
                 self.overlap_pairs.append(i)
                 
         if overlaps > 0:
-            self.fix_overlap_btn.setText(f"⚡ Chồng lấn ({overlaps})")
+            self.fix_overlap_btn.setText(f"Chồng lấn ({overlaps})")
             self.fix_overlap_btn.setEnabled(True)
         else:
-            self.fix_overlap_btn.setText("⚡ Chồng lấn ▾")
+            self.fix_overlap_btn.setText("Chồng lấn ▾")
             self.fix_overlap_btn.setEnabled(False)
 
     def fix_overlaps(self, mode="keep_prev", all_overlaps=False):

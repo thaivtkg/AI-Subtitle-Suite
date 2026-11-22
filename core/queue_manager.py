@@ -61,23 +61,29 @@ class QueueManager(QObject):
             return candidates[0][0]
         return None
 
-    def add_video(self, vid_path, project_id=None, project_root=None):
-        if not vid_path or not os.path.exists(vid_path):
-            return False
-
+    def _allocate_item_key(self, vid_path, project_id=None, project_root=None):
         item_key = str(vid_path)
         if item_key in self._items:
             existing = self._items[item_key]
             if not (project_id is not None or project_root is not None):
-                return False
+                return None
             if self._matches_binding(existing, project_id, project_root):
-                return False
+                return None
             suffix = project_id or os.path.normpath(str(project_root))
             item_key = f"{vid_path}::project::{suffix}"
             counter = 2
             while item_key in self._items:
                 item_key = f"{vid_path}::project::{suffix}::{counter}"
                 counter += 1
+        return item_key
+
+    def add_video(self, vid_path, project_id=None, project_root=None):
+        if not vid_path or not os.path.exists(vid_path):
+            return False
+
+        item_key = self._allocate_item_key(vid_path, project_id, project_root)
+        if item_key is None:
+            return False
 
         base_path = os.path.splitext(vid_path)[0]
         potential_srt = f"{base_path}.srt"
@@ -141,6 +147,56 @@ class QueueManager(QObject):
             self._items[item_key]["srt_path"] = srt_path
             self._items[item_key]["status"] = "Ready"
             self.queue_updated.emit()
+
+    def replace_video_for_project(
+        self,
+        old_identifier,
+        new_vid_path,
+        project_id=None,
+        project_root=None,
+        fallback_srt_path=None,
+    ):
+        """Replace a project's video item in the queue while keeping its subtitle binding."""
+        if not new_vid_path or not os.path.exists(new_vid_path):
+            return None
+
+        old_key = None
+        if old_identifier:
+            old_key = self._find_item_key(old_identifier, project_id, project_root)
+        if old_key is None and self.active_item_key in self._items:
+            active_data = self._items[self.active_item_key]
+            if not (project_id or project_root) or self._matches_binding(
+                active_data, project_id, project_root
+            ):
+                old_key = self.active_item_key
+
+        old_data = self._items.pop(old_key, {}) if old_key is not None else {}
+        srt_path = old_data.get("srt_path") or fallback_srt_path
+        if srt_path and not os.path.exists(srt_path):
+            srt_path = None
+
+        existing_new_key = self._find_item_key(new_vid_path, project_id, project_root)
+        if existing_new_key is not None:
+            new_key = existing_new_key
+        else:
+            new_key = self._allocate_item_key(new_vid_path, project_id, project_root)
+            if new_key is None:
+                new_key = str(new_vid_path)
+
+        self._items[new_key] = {
+            "video_path": str(new_vid_path),
+            "srt_path": srt_path,
+            "status": "Ready" if srt_path else "Waiting",
+            "metadata": None,
+            "project_id": project_id,
+            "project_root": project_root,
+        }
+        self._last_added_key = new_key
+        self.active_item_key = new_key
+        self.active_vid = str(new_vid_path)
+        self.queue_updated.emit()
+        self.active_changed.emit(new_key)
+        return new_key
 
     def update_metadata(self, vid_path, metadata_dict):
         item_key = self._find_item_key(vid_path)

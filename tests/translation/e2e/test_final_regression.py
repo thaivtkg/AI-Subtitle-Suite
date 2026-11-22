@@ -160,7 +160,8 @@ def test_tc15_11_empty_output_guard():
         wait_for(harness, lambda: harness.translation_controller.status == "ERROR")
         wait_for(harness, lambda: not harness.translation_controller.worker.isRunning())
         assert harness.model.get_all_data()[0]["status"] == "ERROR"
-        assert harness.model.get_all_data()[0]["translation"] == "Lỗi: Model trả về bản dịch rỗng."
+        assert harness.model.get_all_data()[0]["translation"] == ""
+        assert harness.translation_controller.currentError == "Lỗi: Model trả về bản dịch rỗng."
     finally:
         harness.close()
 

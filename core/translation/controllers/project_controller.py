@@ -97,6 +97,10 @@ class ProjectController(QObject):
     def activePronounPair(self):
         return self._active_pronoun_pair
 
+    @activePronounPair.setter
+    def activePronounPair(self, value: str):
+        self.setActivePronounPair(value)
+
     @Property(bool, notify=archetypeChanged)
     def isArchetypeLocked(self):
         return self._is_archetype_locked
@@ -268,6 +272,22 @@ class ProjectController(QObject):
         self.archetypeChanged.emit()
         self.markDirty()
 
+    @Slot(str)
+    def setActivePronounPair(self, pair: str):
+        clean_pair = (pair or "").strip()
+        if clean_pair.lower() == "tự do":
+            clean_pair = ""
+        target_locked = bool(clean_pair)
+        if self._active_pronoun_pair != clean_pair or self._is_archetype_locked != target_locked:
+            self._active_pronoun_pair = clean_pair
+            self._is_archetype_locked = target_locked
+            self.archetypeChanged.emit()
+            self.markDirty()
+
+    @Slot(str)
+    def setPronounPair(self, pair: str):
+        self.setActivePronounPair(pair)
+
     @Slot(bool)
     def setIsJaOrigin(self, value: bool) -> None:
         """Cho phép người dùng chủ động đánh dấu hoặc bỏ đánh dấu phụ đề dịch từ tiếng Nhật."""
@@ -418,8 +438,9 @@ class ProjectController(QObject):
             if updated:
                 affected_count += 1
                 curr_status = str(sub.get("status", "PENDING")).upper()
-                new_status = "EDITED" if curr_status not in ("ACCEPTED",) else curr_status
-                self._subtitle_model.update_translation(idx, sub.get("translation", ""), new_status)
+                if trans_replaces > 0:
+                    new_status = "EDITED" if curr_status not in ("ACCEPTED",) else curr_status
+                    self._subtitle_model.update_translation(idx, sub.get("translation", ""), new_status)
                 if orig_replaces > 0:
                     q_idx = self._subtitle_model.index(idx, 0)
                     self._subtitle_model.dataChanged.emit(q_idx, q_idx, [self._subtitle_model.OriginalRole])
@@ -462,8 +483,8 @@ class ProjectController(QObject):
         self.dismissed_auto_terms.clear()
         if hasattr(self.glossary, "_entries"):
             self.glossary._entries.clear()
-        if hasattr(self.entity_dictionary, "_entities"):
-            self.entity_dictionary._entities.clear()
+        if hasattr(self.entity_dictionary, "_entries"):
+            self.entity_dictionary._entries.clear()
         if hasattr(self.translation_memory, "_entries"):
             self.translation_memory._entries.clear()
         self._set_project_state(False, False)
@@ -904,8 +925,8 @@ class ProjectController(QObject):
 
             intelligence = data.get("intelligence", {})
             if isinstance(intelligence, dict):
-                loaded_archetype = ARCHETYPE_PURE
-                loaded_pronoun = ""
+                loaded_archetype = str(intelligence.get("archetype", ARCHETYPE_PURE) or ARCHETYPE_PURE)
+                loaded_pronoun = str(intelligence.get("pronoun_pair", "") or "").strip()
                 loaded_locked = bool(intelligence.get("is_archetype_locked", False))
                 loaded_dismissed = set(intelligence.get("dismissed_auto_terms", []))
                 loaded_is_ja = bool(intelligence.get("is_ja_origin", False))

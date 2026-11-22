@@ -392,7 +392,7 @@ class TestSubtitleGenerationIntegration(unittest.TestCase):
 
         segments, _info = worker._transcribe_with_vad_retry(model, "chunk.wav")
 
-        self.assertEqual(model.thresholds, [0.5, 0.25])
+        self.assertEqual(model.thresholds, [0.5, 0.35])
         self.assertEqual(len(segments), 1)
         self.assertTrue(any("retry" in message.casefold() for message in logs))
 
@@ -437,12 +437,22 @@ class TestSubtitleGenerationIntegration(unittest.TestCase):
         self.assertFalse(os.path.exists(checkpoint + ".tmp"))
 
     def test_checkpoint_and_resume_keep_request_prompt(self):
-        self.service.start_generation(self.request, 300000)
+        self.service.start_generation(self.request, 300000, existing_segments=[])
         checkpoint = self.service.checkpoint_manager.load_checkpoint()
+        initial_id = self.service.initial_state.checkpoint_id
+        history_ids = [cp.checkpoint_id for cp in self.service.checkpoint_history]
 
         self.assertEqual(checkpoint.request_data["prompt_context"], "Terminology: P.")
         self.service.resume_generation()
         self.assertEqual(self.service.current_request.prompt_context, "Terminology: P.")
+        self.assertEqual(self.service.initial_state.checkpoint_id, initial_id)
+        self.assertEqual([cp.checkpoint_id for cp in self.service.checkpoint_history], history_ids)
+        self.service.start_generation(self.request, 300000, existing_segments=[])
+        self.assertEqual(self.service.initial_state.checkpoint_id, initial_id)
+        self.assertEqual(
+            [cp.checkpoint_id for cp in self.service.checkpoint_history][:len(history_ids)],
+            history_ids,
+        )
 
     def test_04_cancel_does_not_commit_partial_batch(self):
         class CancelWhisper(MockWhisperService):
@@ -483,9 +493,21 @@ class TestSubtitleGenerationIntegration(unittest.TestCase):
 
     def test_08_source_fingerprint_mismatch_rejects_resume(self):
         self.service.start_generation(self.request, 300000)
+        checkpoint_path = self.service.checkpoint_manager._get_checkpoint_path()
+        with open(checkpoint_path, "rb") as handle:
+            checkpoint_before = handle.read()
+        artifact = self.project_service.artifact_store.get("sub_123")
+        with open(artifact.path, "rb") as handle:
+            subtitles_before = handle.read()
+        calls_before = self.whisper.call_count
         self.project_service.current_project.source.fingerprint = "NEW_VIDEO_HASH"
         with self.assertRaisesRegex(ValueError, "Source"):
             self.service.resume_generation()
+        self.assertEqual(self.whisper.call_count, calls_before)
+        with open(checkpoint_path, "rb") as handle:
+            self.assertEqual(handle.read(), checkpoint_before)
+        with open(artifact.path, "rb") as handle:
+            self.assertEqual(handle.read(), subtitles_before)
 
     def test_09_subtitle_revision_stale_guard_rejects_commit(self):
         self.service.start_generation(self.request, 300000)
@@ -848,6 +870,53 @@ class TestSubtitleGenerationIntegration(unittest.TestCase):
         )
         self.assertEqual([row["text"] for row in rows], ["one", "two", "three", "four"])
 
+    def test_segment_generation_skips_filled_rows_and_fills_only_unfilled_timing_slots(self):
+        """When 3 rows already have text and 5 rows are empty / placeholder, segment mode skips filled rows."""
+        editor_segments = [
+            {"id": "s1", "start_ms": 0, "end_ms": 1000, "text": "Câu 1"},
+            {"id": "s2", "start_ms": 1000, "end_ms": 2000, "text": "Câu 2"},
+            {"id": "s3", "start_ms": 2000, "end_ms": 3000, "text": "Câu 3"},
+            {"id": "s4", "start_ms": 3000, "end_ms": 4000, "text": ""},
+            {"id": "s5", "start_ms": 4000, "end_ms": 5000, "text": "[ Chưa có nội dung ]"},
+            {"id": "s6", "start_ms": 5000, "end_ms": 6000, "text": "[chưa có nội dung]"},
+            {"id": "s7", "start_ms": 6000, "end_ms": 7000, "text": ""},
+            {"id": "s8", "start_ms": 7000, "end_ms": 8000, "text": "[empty]"},
+        ]
+        self.service.range_segments_provider = lambda: editor_segments
+
+        captured_ranges = []
+
+        def transcribe_remaining(_request, batch, _is_cancelled):
+            captured_ranges.append((batch.start_ms, batch.end_ms))
+            return SubtitleGenerationResult(
+                batch.batch_id,
+                [
+                    WhisperSegmentResult(3100, 3900, "mới 4"),
+                    WhisperSegmentResult(4100, 4900, "mới 5"),
+                    WhisperSegmentResult(5100, 5900, "mới 6"),
+                    WhisperSegmentResult(6100, 6900, "mới 7"),
+                    WhisperSegmentResult(7100, 7900, "mới 8"),
+                ],
+            )
+
+        self.whisper.transcribe_batch = transcribe_remaining
+        request = replace(self.request, batch_mode="segments", batch_size_value=5)
+
+        total, pending = self.service.get_timing_segment_counts()
+        self.assertEqual((total, pending), (8, 5))
+
+        self.service.start_generation(request, 8000)
+
+        self.assertEqual(len(captured_ranges), 1)
+        self.assertEqual(captured_ranges[0], (3000, 8000))  # s4(3000) -> s8(8000)
+        artifact = self.project_service.artifact_store.get("sub_123")
+        rows = self.service.artifact_service.load_data(artifact.path)["segments"]
+        self.assertEqual(len(rows), 8)
+        self.assertEqual(
+            [row["text"] for row in rows],
+            ["Câu 1", "Câu 2", "Câu 3", "mới 4", "mới 5", "mới 6", "mới 7", "mới 8"],
+        )
+
     def test_timing_mode_resume_routes_to_timing_pipeline(self):
         """Resume in Timing Draft must not invoke the subtitle checkpoint flow."""
         class ValueControl:
@@ -906,8 +975,8 @@ class TestSubtitleGenerationIntegration(unittest.TestCase):
         )
         self.assertEqual(panel.generation_service.resume_calls, 0)
 
-    def test_timing_checkpoint_makes_resume_available_in_timing_mode(self):
-        """A saved Timing checkpoint must drive Resume visibility in Timing Draft."""
+    def test_unfinished_timing_checkpoint_makes_resume_available_in_timing_mode(self):
+        """An unfinished Timing batch must drive recovery Resume visibility."""
         class ValueControl:
             def currentData(self):
                 return "timing"
@@ -934,7 +1003,7 @@ class TestSubtitleGenerationIntegration(unittest.TestCase):
                 return types.SimpleNamespace(
                     timing_artifact_id="timing_1",
                     next_segment_index=11,
-                    active_batch=None,
+                    active_batch={"status": "CANCELLED"},
                 )
 
         panel = SubtitleGenerationPanel.__new__(SubtitleGenerationPanel)
@@ -1188,6 +1257,170 @@ class TestSubtitleGenerationIntegration(unittest.TestCase):
         panel.refresh_batch_mode_availability()
         self.assertTrue(panel.cmb_batch_mode.model().item(1).isEnabled())
         self.assertFalse(panel.cmb_batch_mode.view().isRowHidden(1))
+
+    def test_segment_batch_spinbox_capped_at_total_timing_count(self):
+        """spin_batch_val must cap at total existing timing count (1..total) in Full Subtitle + Segment mode."""
+        segments = [
+            {"id": f"s{i}", "start_ms": i * 1000, "end_ms": (i + 1) * 1000, "text": f"Câu {i}" if i < 3 else "[ Chưa có nội dung ]"}
+            for i in range(8)
+        ]
+        gen_service = MagicMock()
+        gen_service.is_running = False
+        gen_service.project_service = MagicMock()
+        gen_service.project_service.current_project = None
+        gen_service.range_segments_provider = lambda: segments
+
+        panel = SubtitleGenerationPanel(gen_service)
+        try:
+            asr_idx = panel.cmb_mode.findData("asr")
+            panel.cmb_mode.setCurrentIndex(asr_idx)
+            seg_idx = panel.cmb_batch_mode.findData("segments")
+            panel.cmb_batch_mode.setCurrentIndex(seg_idx)
+
+            self.assertEqual(panel.spin_batch_val.minimum(), 1)
+            self.assertEqual(panel.spin_batch_val.maximum(), 8)
+            self.assertEqual(panel.spin_batch_val.value(), 5)
+            self.assertEqual(panel.lbl_batch_size_hint.text(), "Tổng 8 câu · 5 câu trống")
+
+            # Cannot increment past total timing count (8)
+            panel.spin_batch_val.setValue(25)
+            self.assertEqual(panel.spin_batch_val.value(), 8)
+        finally:
+            panel.deleteLater()
+
+    def test_timing_worker_emits_live_progress_and_resume_totals(self):
+        """TimingBatchWorker streams progress % and generated/total segment count per yielded segment."""
+        req = TimingRunRequest(
+            video_path="dummy.mp4",
+            start_ms=10000,
+            target_segment_count=5,
+            use_vad=True,
+            start_segment_index=17,
+        )
+        worker = TimingBatchWorker(req)
+        progress_events = []
+        worker.progress_signal.connect(lambda pct, msg: progress_events.append((pct, msg)))
+
+        def fake_transcribe(_path, **kwargs):
+            info = types.SimpleNamespace(
+                duration=20.0,
+                duration_after_vad=12.0,
+                language="ja",
+                language_probability=0.95,
+            )
+
+            def _gen():
+                for idx in range(5):
+                    yield types.SimpleNamespace(
+                        start=float(idx * 2 + 1),
+                        end=float(idx * 2 + 2),
+                        text=f"セリフ {idx + 1}",
+                        no_speech_prob=0.1,
+                        avg_logprob=-0.2,
+                        words=None,
+                    )
+
+            return _gen(), info
+
+        mock_model = types.SimpleNamespace(transcribe=fake_transcribe)
+        mock_wav = MagicMock()
+        mock_wav.getnframes.return_value = 16000 * 120
+        mock_wav.getframerate.return_value = 16000
+
+        with patch("faster_whisper.WhisperModel", return_value=mock_model), \
+             patch("subprocess.run", return_value=types.SimpleNamespace(returncode=0, stderr="")), \
+             patch("os.path.exists", return_value=True), \
+             patch("os.path.getsize", return_value=50000), \
+             patch("wave.open") as mock_wave:
+            mock_wave.return_value.__enter__.return_value = mock_wav
+            worker.run()
+
+        self.assertTrue(any(pct == 20 and "Đã gen 1/5 câu" in msg and "Tổng 17 câu" in msg for pct, msg in progress_events))
+        self.assertTrue(any(pct == 60 and "Đã gen 3/5 câu" in msg and "Tổng 19 câu" in msg for pct, msg in progress_events))
+        self.assertTrue(any(pct == 99 and "Đã gen 5/5 câu" in msg and "Tổng 21 câu" in msg for pct, msg in progress_events))
+        self.assertEqual(progress_events[-1][0], 100)
+        self.assertIn("Đã gen 5/5 câu", progress_events[-1][1])
+
+    def test_full_subtitle_time_and_segment_progress_include_segment_counts(self):
+        """Full Subtitle streams live progress % and segment counts via FasterWhisperService."""
+        service = FasterWhisperService(device="cpu")
+        service.model = MagicMock()
+
+        def fake_transcribe(_path, **kwargs):
+            def _gen():
+                yield types.SimpleNamespace(start=0.5, end=2.0, text="Một", words=None)
+                yield types.SimpleNamespace(start=3.0, end=4.5, text="Hai", words=None)
+                yield types.SimpleNamespace(start=5.0, end=6.5, text="Ba", words=None)
+            return _gen(), types.SimpleNamespace(language="vi")
+
+        service.model.transcribe.side_effect = fake_transcribe
+        orch = SubtitleGenerationService(service, self.project_service)
+        time_events = []
+        orch.on_progress = lambda pct, msg: time_events.append((pct, msg))
+
+        with patch.object(FasterWhisperService, "_extract_batch_audio", return_value=("fake.wav", None)):
+            # 1) Time-based mode across 2 batches (duration 360000ms with default 300000ms batch)
+            orch.start_generation(self.request, 360000)
+
+        self.assertTrue(any(0 < pct < 100 and "Đã gen" in msg and "câu" in msg for pct, msg in time_events))
+        self.assertEqual(time_events[-1][0], 100)
+        self.assertIn("Đã gen 6 câu", time_events[-1][1])
+
+        # 2) Segment-based mode over 3 existing timing slots
+        timing_path = os.path.join(self.test_dir, "timing-progress.srt")
+        with open(timing_path, "w", encoding="utf-8") as handle:
+            handle.write(
+                "1\n00:00:00,000 --> 00:00:02,500\n[ Chưa có nội dung ]\n\n"
+                "2\n00:00:02,500 --> 00:00:05,000\n[ Chưa có nội dung ]\n\n"
+                "3\n00:00:05,000 --> 00:00:07,500\n[ Chưa có nội dung ]\n"
+            )
+        self.project_service.current_project.state.timing = types.SimpleNamespace(
+            timing_artifact_id="timing_prog"
+        )
+        self.project_service.artifact_store.register(
+            types.SimpleNamespace(artifact_id="timing_prog", path=timing_path)
+        )
+        seg_events = []
+        service2 = FasterWhisperService(device="cpu")
+        service2.model = MagicMock()
+        service2.model.transcribe.side_effect = fake_transcribe
+        orch2 = SubtitleGenerationService(service2, self.project_service)
+        orch2.on_progress = lambda pct, msg: seg_events.append((pct, msg))
+        seg_request = replace(self.request, request_id="req_seg_prog", batch_mode="segments", batch_size_value=3)
+
+        with patch.object(FasterWhisperService, "_extract_batch_audio", return_value=("fake.wav", None)):
+            orch2.start_generation(seg_request, 10000)
+
+        self.assertTrue(any("0/3 câu" in msg for _pct, msg in seg_events))
+        self.assertTrue(any("1/3 câu" in msg or "2/3 câu" in msg for _pct, msg in seg_events))
+        self.assertEqual(seg_events[-1][0], 100)
+        self.assertIn("3/3 câu", seg_events[-1][1])
+
+    def test_generation_panel_update_progress_mirrors_window_when_not_queue(self):
+        """SubtitleGenerationPanel._update_progress mirrors % and status to MainWindow when interactive."""
+        panel = SubtitleGenerationPanel.__new__(SubtitleGenerationPanel)
+        panel.progress_bar = types.SimpleNamespace(value=0, setValue=lambda v: setattr(panel.progress_bar, "value", v))
+        panel.lbl_status = types.SimpleNamespace(text="", setText=lambda t: setattr(panel.lbl_status, "text", t))
+        win = types.SimpleNamespace(
+            _queue_generation_active=False,
+            progress_bar=types.SimpleNamespace(value=0, setValue=lambda v: setattr(win.progress_bar, "value", v)),
+            page_dashboard=types.SimpleNamespace(
+                quick_progress=types.SimpleNamespace(value=0, setValue=lambda v: setattr(win.page_dashboard.quick_progress, "value", v))
+            ),
+            lbl_speed_eta=types.SimpleNamespace(text="", setText=lambda t: setattr(win.lbl_speed_eta, "text", t)),
+        )
+        panel._get_window = lambda: win
+
+        panel._update_progress(45, "Đang tạo phụ đề: Đã gen 2/5 câu (45%)")
+        self.assertEqual(panel.progress_bar.value, 45)
+        self.assertEqual(win.progress_bar.value, 45)
+        self.assertEqual(win.page_dashboard.quick_progress.value, 45)
+        self.assertEqual(win.lbl_speed_eta.text, "Đang tạo phụ đề: Đã gen 2/5 câu (45%)")
+
+        win._queue_generation_active = True
+        panel._update_progress(80, "Batch queue")
+        self.assertEqual(panel.progress_bar.value, 80)
+        self.assertEqual(win.progress_bar.value, 45)
 
 
 class TestTimingDraftSettingsContract(unittest.TestCase):

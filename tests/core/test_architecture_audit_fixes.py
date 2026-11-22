@@ -96,7 +96,9 @@ def test_aud_perf_001_ffmpeg_fast_input_seeking():
     )
     batch = SubtitleGenerationBatch("b1", 3600000, 3630000, "RUNNING", 1, "", "")
 
-    with patch("subprocess.run") as mock_run:
+    with patch("subprocess.run") as mock_run, patch("wave.open") as mock_audio:
+        mock_audio.return_value.__enter__.return_value.getnframes.return_value = 480000
+        mock_audio.return_value.__enter__.return_value.getframerate.return_value = 16000
         _, tmp = FasterWhisperService._extract_batch_audio(req, batch)
         cmd = mock_run.call_args[0][0]
 

@@ -175,8 +175,8 @@ def test_timing_batch_worker_downgrades_mid_generation_on_high_vram(tmp_path):
     def fake_whisper_model(path, device=None, compute_type=None, download_root=None):
         created_computes.append(compute_type)
         m = MagicMock()
-        seg1 = MagicMock(start=0.5, end=2.0, words=None)
-        seg2 = MagicMock(start=3.5, end=5.0, words=None)
+        seg1 = MagicMock(start=0.5, end=2.0, words=None, text="テスト1", no_speech_prob=0.0, avg_logprob=-0.2)
+        seg2 = MagicMock(start=3.5, end=5.0, words=None, text="テスト2", no_speech_prob=0.0, avg_logprob=-0.2)
         info = MagicMock(duration=10.0)
         m.transcribe.return_value = ([seg1, seg2], info)
         return m
@@ -243,7 +243,7 @@ def test_project_save_suppresses_zero_subtitle_log(capsys, tmp_path):
     assert "Saving 0 subtitles" not in out
 
 
-def test_rescan_and_batch_rescan_default_vad_to_false(qapp, tmp_path):
+def test_rescan_and_batch_rescan_default_vad_to_true(qapp, tmp_path):
     from ui.Gui import MainWindow
     from workers.SegmentScanWorker import SegmentScanWorker, BatchSegmentScanWorker
 
@@ -267,7 +267,7 @@ def test_rescan_and_batch_rescan_default_vad_to_false(qapp, tmp_path):
         "model_size": "large-v3",
         "compute_type": "int8_float16",
         "language": "ja",
-        "use_vad": True,  # panel setting has use_vad=True, but rescan/batch scan must default to False
+        "use_vad": True,  # panel setting has use_vad=True, and rescan/batch scan now default to True
     }
     win.subtitle_whisper_service = MagicMock(device="cuda")
 
@@ -276,19 +276,19 @@ def test_rescan_and_batch_rescan_default_vad_to_false(qapp, tmp_path):
          patch.object(SegmentScanWorker, "start"), \
          patch.object(BatchSegmentScanWorker, "start"):
 
-        # 1. Quét lại câu có sẵn chữ (scan_mode == 'asr') -> use_vad phải là False
+        # 1. Quét lại câu có sẵn chữ (scan_mode == 'asr') -> use_vad phải là True
         win._on_segment_scan_requested("s1", 1000, 3000)
         assert win.scan_worker.scan_mode == "asr"
-        assert win.scan_worker.request.use_vad is False
+        assert win.scan_worker.request.use_vad is True
 
         # 2. Quét mốc timing cho câu trống (scan_mode == 'timing') -> use_vad phải là True
         win._on_segment_scan_requested("s2", 3500, 5000)
         assert win.scan_worker.scan_mode == "timing"
         assert win.scan_worker.request.use_vad is True
 
-        # 3. Gen Sub hàng loạt các câu đang chọn -> use_vad phải là False
+        # 3. Gen Sub hàng loạt các câu đang chọn -> use_vad phải là True
         win._on_batch_segment_scan_requested([0, 1])
-        assert win._batch_scan_worker.request.use_vad is False
+        assert win._batch_scan_worker.request.use_vad is True
 
 
 def test_subtitle_generation_panel_delete_model_button(qapp):

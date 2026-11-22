@@ -190,3 +190,69 @@ def test_action_relink_video_menu(app, sample_project_env):
     assert os.path.normpath(cur.source.path) == os.path.normpath(new_video)
     assert cur.state.is_video_missing is False
 
+
+def test_replace_corrupted_video_in_open_project_syncs_queue_player_and_subtitles(app, sample_project_env):
+    from PySide6.QtMultimedia import QMediaPlayer
+
+    root = sample_project_env["root"]
+    proj_dir = sample_project_env["proj_dir"]
+    orig_vid = sample_project_env["video_path"]
+
+    win = MainWindow()
+    assert win._open_project_by_path(proj_dir) is True
+
+    cur = win.project_service.current_project
+    assert os.path.normpath(win.queue_mgr.active_vid) == os.path.normpath(orig_vid)
+    assert len(win.sub_editor.all_segments) == 1
+
+    # Simulate corrupted playback error in QMediaPlayer
+    win.video_player._on_player_error(QMediaPlayer.FormatError, "Invalid/corrupt stream")
+    assert not win.video_player.corrupt_banner.isHidden()
+
+    replacement_video = os.path.join(root, "fixed_video.mp4")
+    with open(replacement_video, "wb") as f:
+        f.write(b"FIXED_REPLACEMENT_VIDEO_CONTENT_ABCDEF" * 50)
+
+    with patch("PySide6.QtWidgets.QFileDialog.getOpenFileName", return_value=(replacement_video, "Video Files")), \
+         patch("PySide6.QtWidgets.QMessageBox.question", return_value=QMessageBox.Yes), \
+         patch("workers.TaskQueue.get_video_duration", return_value=12.5):
+        win.video_player.btn_replace_video.click()
+
+    # Project, player, queue, current_vid, and subtitle bindings must all switch to the replacement video
+    assert os.path.normpath(cur.source.path) == os.path.normpath(replacement_video)
+    assert os.path.normpath(win.queue_mgr.active_vid) == os.path.normpath(replacement_video)
+    assert os.path.normpath(win.get_current_video_path()) == os.path.normpath(replacement_video)
+    assert win.project_service.is_current_project_for_video(win.queue_mgr.active_vid) is True
+    assert os.path.normpath(orig_vid) not in {
+        os.path.normpath(d.get("video_path", k)) for k, d in win.queue_mgr.get_items().items()
+    }
+    assert win.video_player.corrupt_banner.isHidden()
+    assert len(win.sub_editor.all_segments) == 1
+    assert win.sub_editor.all_segments[0]["text"] == "Xin chao"
+    assert win.generation_panel.video_duration_ms == 12500
+
+
+def test_replace_video_blocked_while_ai_or_timing_running(app, sample_project_env):
+    root = sample_project_env["root"]
+    proj_dir = sample_project_env["proj_dir"]
+    orig_vid = sample_project_env["video_path"]
+
+    win = MainWindow()
+    assert win._open_project_by_path(proj_dir) is True
+
+    replacement_video = os.path.join(root, "should_not_switch.mp4")
+    with open(replacement_video, "wb") as f:
+        f.write(b"OTHER_VIDEO")
+
+    mock_worker = MagicMock()
+    mock_worker.isRunning.return_value = True
+    win.timing_service.worker = mock_worker
+    try:
+        with patch("PySide6.QtWidgets.QFileDialog.getOpenFileName") as mock_dlg:
+            win._action_relink_video()
+            mock_dlg.assert_not_called()
+        assert os.path.normpath(win.project_service.current_project.source.path) == os.path.normpath(orig_vid)
+    finally:
+        win.timing_service.worker = None
+
+

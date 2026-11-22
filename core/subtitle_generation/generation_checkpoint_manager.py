@@ -1,6 +1,7 @@
 import json
 import os
 from dataclasses import asdict
+from pathlib import Path
 from typing import Optional
 
 from core.subtitle_generation.subtitle_generation_checkpoint import (
@@ -19,7 +20,11 @@ class SubtitleGenerationCheckpointManager:
         project_dir = getattr(self.project_service, "project_dir", None) or getattr(
             project, "project_dir", None
         )
-        if not project or not project_dir:
+        if (
+            not project
+            or not isinstance(project_dir, (str, Path))
+            or not str(project_dir).strip()
+        ):
             return None
         checkpoint_dir = os.path.join(
             project_dir, "artifacts", "subtitle_generation"

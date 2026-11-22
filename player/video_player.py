@@ -144,6 +144,7 @@ class VideoPlayerWidget(QWidget):
     subtitle_placement_preview_changed = Signal(object)
     subtitle_placement_committed = Signal(object)
     pip_requested = Signal()
+    replace_video_requested = Signal()
     def __init__(self, parent=None):
         super().__init__(parent)
         
@@ -187,6 +188,35 @@ class VideoPlayerWidget(QWidget):
         self.view = CustomGraphicsView(self.scene, self.video_item, self.overlay_proxy)
         self.view.viewport().installEventFilter(self)
         layout.addWidget(self.view, stretch=1)
+
+        # Inline banner when playback fails (e.g. corrupted video file)
+        self.corrupt_banner = QWidget(self)
+        self.corrupt_banner.setObjectName("corrupt_video_banner")
+        self.corrupt_banner.setStyleSheet(
+            "QWidget#corrupt_video_banner { "
+            "background-color: rgba(127, 29, 29, 0.85); "
+            "border: 1px solid #EF4444; "
+            "border-radius: 6px; "
+            "}"
+        )
+        banner_layout = QHBoxLayout(self.corrupt_banner)
+        banner_layout.setContentsMargins(10, 6, 10, 6)
+        banner_layout.setSpacing(8)
+        self.lbl_video_error = QLabel("⚠️ Video bị lỗi hoặc không thể phát (corrupted).")
+        self.lbl_video_error.setStyleSheet("color: #FEE2E2; font-size: 12px; font-weight: 500; background: transparent; border: none;")
+        banner_layout.addWidget(self.lbl_video_error, stretch=1)
+        self.btn_replace_video = QPushButton("🔄 Đổi Video Dự Án...")
+        self.btn_replace_video.setObjectName("btn_replace_corrupt_video")
+        self.btn_replace_video.setCursor(Qt.PointingHandCursor)
+        self.btn_replace_video.setStyleSheet(
+            "QPushButton { background: #DC2626; color: #FFFFFF; border: 1px solid #FCA5A5; "
+            "border-radius: 4px; padding: 4px 10px; font-size: 11px; font-weight: 600; }"
+            "QPushButton:hover { background: #B91C1C; }"
+        )
+        self.btn_replace_video.clicked.connect(self.replace_video_requested.emit)
+        banner_layout.addWidget(self.btn_replace_video)
+        self.corrupt_banner.hide()
+        layout.addWidget(self.corrupt_banner)
         
         # =============================================================
         # EMPTY STATE (Placeholder khi chưa có video)
@@ -350,8 +380,26 @@ class VideoPlayerWidget(QWidget):
         self.player.durationChanged.connect(self.duration_changed)
         self.player.playingChanged.connect(self.update_play_button)
         self.player.playingChanged.connect(self._on_playing_changed)
+        if hasattr(self.player, "errorOccurred"):
+            self.player.errorOccurred.connect(self._on_player_error)
+        if hasattr(self.player, "mediaStatusChanged"):
+            self.player.mediaStatusChanged.connect(self._on_media_status_changed)
 
         self.update_play_button()
+
+    def _on_player_error(self, error, error_string=""):
+        if error != QMediaPlayer.NoError and getattr(self, "_original_video_path", None):
+            if hasattr(self, "lbl_video_error"):
+                self.lbl_video_error.setText("⚠️ Video bị lỗi hoặc không thể phát (corrupted).")
+                if error_string:
+                    self.lbl_video_error.setToolTip(str(error_string))
+            if hasattr(self, "corrupt_banner"):
+                self.corrupt_banner.show()
+
+    def _on_media_status_changed(self, status):
+        if status in (QMediaPlayer.LoadedMedia, QMediaPlayer.BufferedMedia):
+            if hasattr(self, "corrupt_banner"):
+                self.corrupt_banner.hide()
 
     def _is_legacy_wmv_format(self, file_path: str) -> bool:
         if not file_path:
@@ -374,25 +422,39 @@ class VideoPlayerWidget(QWidget):
         if not file_path or not os.path.exists(file_path):
             return
 
-        self._original_video_path = file_path
-        self._playback_video_path = file_path
-        self.empty_state_lbl.hide()
-
         from core.video.transcode_service import (
             is_transcode_needed,
             get_cached_transcode,
         )
 
         cached_path = get_cached_transcode(file_path)
+        target_playback_path = cached_path or file_path
+        target_url = QUrl.fromLocalFile(target_playback_path)
+        if (
+            getattr(self, "_original_video_path", None) == file_path
+            and getattr(self, "_playback_video_path", None) == target_playback_path
+            and self.player.source() == target_url
+        ):
+            self.empty_state_lbl.hide()
+            if hasattr(self, "corrupt_banner"):
+                self.corrupt_banner.hide()
+            return
+
+        self._original_video_path = file_path
+        self._playback_video_path = file_path
+        self.empty_state_lbl.hide()
+        if hasattr(self, "corrupt_banner"):
+            self.corrupt_banner.hide()
+
         if cached_path:
             # Cache Hit (< 50ms): Nạp ngay bản Fast-Seek MP4 tối ưu
             self._playback_video_path = cached_path
-            self.player.setSource(QUrl.fromLocalFile(cached_path))
+            self.player.setSource(target_url)
             self.player.pause()
             return
 
         # Nạp video gốc ngay lập tức để người dùng phát mà không chờ đợi
-        self.player.setSource(QUrl.fromLocalFile(file_path))
+        self.player.setSource(target_url)
         self.player.pause()
 
         # Nếu video thuộc định dạng cần tối ưu Fast-Seek, khởi động background transcode
@@ -435,6 +497,7 @@ class VideoPlayerWidget(QWidget):
         if self.player.isPlaying():
             self.player.pause()
         else:
+            self._last_highlighted_stt = None
             self.player.play()
 
     def play_segment(self, start_ms, end_ms=None):
@@ -444,6 +507,7 @@ class VideoPlayerWidget(QWidget):
         if start_ms is None or end_ms is None or not (0 <= start_ms < end_ms):
             return
         self.cancel_segment_playback(pause=True)
+        self._last_highlighted_stt = None
         self.set_position(start_ms)
         self._segment_bounds = (start_ms, end_ms)
         self._segment_playback_active = True
@@ -589,8 +653,19 @@ class VideoPlayerWidget(QWidget):
         # Khi phát tuần tự, hầu hết frame nằm trọn trong câu đang phát
         prev_sub = getattr(self, "_current_playback_sub", None)
         if prev_sub and prev_sub.get('start_ms', 0) <= position < prev_sub.get('end_ms', 0):
-            current_seg = prev_sub
-        elif subs:
+            prev_idx = prev_sub.get('idx')
+            if isinstance(prev_idx, int) and 0 <= prev_idx < len(subs):
+                s_ms, e_ms, txt, st, pr = _extract_segment_info(subs[prev_idx])
+                if s_ms <= position < e_ms:
+                    prev_sub['start_ms'] = s_ms
+                    prev_sub['end_ms'] = e_ms
+                    prev_sub['text'] = txt
+                    prev_sub['stt'] = st or (prev_idx + 1)
+                    prev_sub['style_preset'] = pr
+                    current_seg = prev_sub
+            else:
+                current_seg = prev_sub
+        if current_seg is None and subs:
             # Thuật toán tìm kiếm nhị phân Bisect O(log N) cho danh sách lớn thay vì quét tuyến tính O(N) ở 60 FPS
             if len(subs) > 30:
                 import bisect
@@ -599,47 +674,77 @@ class VideoPlayerWidget(QWidget):
                     if 0 <= c_idx < len(subs):
                         s_ms, e_ms, txt, st, pr = _extract_segment_info(subs[c_idx])
                         if s_ms <= position < e_ms:
-                            if txt and txt != "[ Chưa có nội dung ]":
-                                current_seg = {'stt': st, 'start_ms': s_ms, 'end_ms': e_ms, 'text': txt, 'style_preset': pr}
+                            current_seg = {
+                                'idx': c_idx,
+                                'stt': st or (c_idx + 1),
+                                'start_ms': s_ms,
+                                'end_ms': e_ms,
+                                'text': txt,
+                                'style_preset': pr,
+                            }
                             break
             else:
-                for item in subs:
+                for c_idx, item in enumerate(subs):
                     try:
                         s_ms, e_ms, txt, st, pr = _extract_segment_info(item)
                         if s_ms <= position < e_ms:
-                            if txt and txt != "[ Chưa có nội dung ]":
-                                current_seg = {'stt': st, 'start_ms': s_ms, 'end_ms': e_ms, 'text': txt, 'style_preset': pr}
+                            current_seg = {
+                                'idx': c_idx,
+                                'stt': st or (c_idx + 1),
+                                'start_ms': s_ms,
+                                'end_ms': e_ms,
+                                'text': txt,
+                                'style_preset': pr,
+                            }
                             break
                     except Exception:
                         continue
 
-        # 3. Đẩy lên Overlay để Render Animation và Đồng bộ Table Highlight
+        # 3. Đẩy lên Overlay để Render Animation và Đồng bộ Table Highlight / Ô nhập sub
         if current_seg:
             self._current_playback_sub = current_seg
-            stt_val = int(current_seg.get('stt', 0))
-            preset = str(current_seg.get('style_preset') or 'normal').lower().strip()
-            if self._last_style_preset != preset:
-                self._last_style_preset = preset
-                self._apply_style_preset(preset)
-            render_input = SubtitleRenderInput(
-                segment_id=stt_val,
-                start_ms=int(current_seg.get('start_ms', 0)),
-                end_ms=int(current_seg.get('end_ms', 0)),
-                text=str(current_seg.get('text', '')),
-                style_preset=preset,
-            )
-            
-            visual_time = position
-            if not self.player.isPlaying() and (visual_time - render_input.start_ms < 300):
-                visual_time = render_input.start_ms + 300
-                
-            self.subtitle_overlay.update_subtitle(render_input, visual_time)
+            try:
+                stt_val = int(current_seg.get('stt', 0))
+            except (TypeError, ValueError):
+                stt_val = 0
+            seg_text = str(current_seg.get('text', '') or '')
+            if seg_text.strip() and seg_text.strip() != "[ Chưa có nội dung ]":
+                preset = str(current_seg.get('style_preset') or 'normal').lower().strip()
+                if self._last_style_preset != preset:
+                    self._last_style_preset = preset
+                    self._apply_style_preset(preset)
+                render_input = SubtitleRenderInput(
+                    segment_id=stt_val,
+                    start_ms=int(current_seg.get('start_ms', 0)),
+                    end_ms=int(current_seg.get('end_ms', 0)),
+                    text=seg_text,
+                    style_preset=preset,
+                )
 
-            # [FIX] Kích hoạt thanh Highlight của bảng Editor
-            if self._last_highlighted_stt != stt_val:
+                visual_time = position
+                if not self.player.isPlaying() and (visual_time - render_input.start_ms < 300):
+                    visual_time = render_input.start_ms + 300
+
+                self.subtitle_overlay.update_subtitle(render_input, visual_time)
+            else:
+                self.subtitle_overlay.clear_subtitle()
+
+            # [FIX] Kích hoạt thanh Highlight của bảng Editor & ô nhập sub
+            active_idx = current_seg.get('idx')
+            editor = getattr(main_window, 'sub_editor', None)
+            editor_desynced = (
+                self.player.isPlaying()
+                and editor is not None
+                and isinstance(active_idx, int)
+                and getattr(editor, 'current_index', None) != active_idx
+            )
+            if self._last_highlighted_stt != stt_val or editor_desynced:
                 self._last_highlighted_stt = stt_val
-                if hasattr(main_window, 'sub_editor'):
-                    main_window.sub_editor.highlight_row_by_stt(stt_val)
+                if editor is not None:
+                    if stt_val > 0 and hasattr(editor, 'highlight_row_by_stt'):
+                        editor.highlight_row_by_stt(stt_val)
+                    elif isinstance(active_idx, int) and hasattr(editor, 'sync_playback_highlight'):
+                        editor.sync_playback_highlight(active_idx)
         else:
             self._current_playback_sub = None
             self.subtitle_overlay.clear_subtitle()
@@ -680,8 +785,10 @@ class VideoPlayerWidget(QWidget):
 
     def set_position(self, position):
         self._current_pos_ms = int(position)
-        self._segment_bounds = None
-        self._segment_playback_active = False
+        bounds = getattr(self, "_segment_bounds", None)
+        if bounds and (position < bounds[0] or position >= bounds[1]):
+            self._segment_bounds = None
+            self._segment_playback_active = False
         if hasattr(self, 'sub_controller'):
             if not hasattr(self, 'player') or not getattr(self.player, 'isPlaying', lambda: False)():
                 self._sync_subtitle_position(position)
@@ -691,7 +798,8 @@ class VideoPlayerWidget(QWidget):
         self.update_time_label(position)
 
     def set_volume(self, volume):
-        self.audio_output.setVolume(volume / 100.0)
+        vol = max(0.0, min(1.0, volume / 100.0))
+        self.audio_output.setVolume(vol)
         self.slider_volume.setToolTip(f"Volume: {volume}%")
 
     def update_time_label(self, position=None):

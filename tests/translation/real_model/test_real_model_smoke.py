@@ -87,7 +87,7 @@ def test_t15_r01_real_model_smoke():
         status = str(harness.model.get_all_data()[0].get("status", "")).upper()
         translation = str(harness.model.get_all_data()[0].get("translation", "") or "").strip()
 
-        if status == "ERROR" and translation == "Lỗi: Model trả về bản dịch rỗng.":
+        if status == "ERROR" and controller.currentError == "Lỗi: Model trả về bản dịch rỗng.":
             details[4] = "FINAL CANONICAL STATE: SAFE ERROR"
             details[5] = "UI/MODEL CONSISTENCY: SAFE ERROR"
             details[6] = "ENGINE LIFECYCLE: SAFE ERROR (controller reports Error)"

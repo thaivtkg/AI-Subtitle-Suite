@@ -15,6 +15,9 @@ class ModelMetadata:
     recommended_ctx: int
     download_url: str
     description: str
+    is_cloud: bool = False
+    provider: str = "local"
+    cloud_model_name: str = ""
 
 
 MODEL_CATALOG: Dict[str, ModelMetadata] = {
@@ -112,7 +115,64 @@ MODEL_CATALOG: Dict[str, ModelMetadata] = {
         min_ram_gb=10.0,
         recommended_ctx=4096,
         download_url="https://huggingface.co/bartowski/gemma-2-9b-it-GGUF/resolve/main/gemma-2-9b-it-Q4_K_M.gguf",
-        description="Kiến trúc dịch thuật chuyên sâu từ Google DeepMind. Đảm bảo 100% câu chữ thuần Việt chuẩn ngữ pháp, không bao giờ lẫn ký tự CJK.",
+        description="Kiến trúc dịch thuật chuyên sâu từ Google DeepMind (4-bit). Cân bằng tốt giữa tốc độ và bộ nhớ, không bao giờ lẫn ký tự CJK.",
+    ),
+    "translategemma-9b-q5_k_m": ModelMetadata(
+        model_id="translategemma-9b-q5_k_m",
+        display_name="TranslateGemma / Gemma 2 9B IT (Q5_K_M)",
+        filename="gemma-2-9b-it-Q5_K_M.gguf",
+        size_bytes=7140000000,
+        size_gb_formatted="6.65 GB",
+        min_vram_gb=8.5,
+        min_ram_gb=12.0,
+        recommended_ctx=4096,
+        download_url="https://huggingface.co/bartowski/gemma-2-9b-it-GGUF/resolve/main/gemma-2-9b-it-Q5_K_M.gguf",
+        description="Phiên bản 5-bit lượng tử hóa cao cấp của Google Gemma 2 9B. Giữ trọn độ chính xác Kanji, kính ngữ và sắc thái ngữ pháp tiếng Nhật phức tạp vượt trội so với bản Q4.",
+    ),
+    "gemini-3.8-flash": ModelMetadata(
+        model_id="gemini-3.8-flash",
+        display_name="Google Gemini 3.8 Flash (Cloud API)",
+        filename="gemini-3.8-flash",
+        size_bytes=0,
+        size_gb_formatted="Cloud API",
+        min_vram_gb=0.0,
+        min_ram_gb=0.0,
+        recommended_ctx=65536,
+        download_url="",
+        description="Mô hình đám mây tốc độ cao mới nhất từ Google Gemini API. Không tốn VRAM/RAM cục bộ, dịch tự nhiên đa ngôn ngữ (yêu cầu Gemini API Key).",
+        is_cloud=True,
+        provider="gemini",
+        cloud_model_name="gemini-3.8-flash",
+    ),
+    "gemini-3.1-pro-preview": ModelMetadata(
+        model_id="gemini-3.1-pro-preview",
+        display_name="Google Gemini 3.1 Pro Preview (Cloud API)",
+        filename="gemini-3.1-pro-preview",
+        size_bytes=0,
+        size_gb_formatted="Cloud API",
+        min_vram_gb=0.0,
+        min_ram_gb=0.0,
+        recommended_ctx=65536,
+        download_url="",
+        description="Mô hình suy luận & ngữ cảnh cao cấp từ Google Gemini API cho hội thoại phức tạp và văn phong sâu sắc (yêu cầu Gemini API Key).",
+        is_cloud=True,
+        provider="gemini",
+        cloud_model_name="gemini-3.1-pro-preview",
+    ),
+    "gemini-3.5-flash-lite": ModelMetadata(
+        model_id="gemini-3.5-flash-lite",
+        display_name="Google Gemini 3.5 Flash Lite (Cloud API)",
+        filename="gemini-3.5-flash-lite",
+        size_bytes=0,
+        size_gb_formatted="Cloud API",
+        min_vram_gb=0.0,
+        min_ram_gb=0.0,
+        recommended_ctx=32768,
+        download_url="",
+        description="Mô hình Google Gemini nhẹ, phản hồi cực nhanh và tiết kiệm chi phí qua Cloud API (yêu cầu Gemini API Key).",
+        is_cloud=True,
+        provider="gemini",
+        cloud_model_name="gemini-3.5-flash-lite",
     ),
 }
 
@@ -128,6 +188,9 @@ def calculate_recommendation(
     Trả về: (badge, reason)
     badge: 'RECOMMENDED' | 'COMPATIBLE' | 'NOT_RECOMMENDED'
     """
+    if getattr(model, "is_cloud", False):
+        return "RECOMMENDED", "Chạy trực tiếp trên Google Gemini Cloud API, không tiêu tốn VRAM/RAM cục bộ."
+
     has_gpu = bool(gpu_info.get("has_gpu_hardware", False)) and llama_has_cuda
     vram = float(gpu_info.get("vram_gb", 0.0)) if has_gpu else 0.0
 

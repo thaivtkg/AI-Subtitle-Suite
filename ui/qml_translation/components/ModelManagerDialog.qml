@@ -66,7 +66,7 @@ Dialog {
                 spacing: Theme.spaceSmall
 
                 Text {
-                    text: "◈ Quản Lý Mô Hình Dịch Thuật AI (LLM)"
+                    text: "Quản lý mô hình dịch thuật AI (LLM)"
                     color: Theme.textPrimary
                     font.pixelSize: 15
                     font.bold: true
@@ -119,7 +119,7 @@ Dialog {
 
                 RowLayout {
                     spacing: 6
-                    Text { text: "🖥️ GPU:"; color: "#94A3B8"; font.pixelSize: 12; font.bold: true }
+                    Text { text: "GPU:"; color: "#94A3B8"; font.pixelSize: 12; font.bold: true }
                     Text {
                         text: root.controller && root.controller.hardwareSummary ? root.controller.hardwareSummary.gpu_name : "N/A"
                         color: Theme.textPrimary
@@ -130,18 +130,20 @@ Dialog {
 
                 RowLayout {
                     spacing: 6
-                    Text { text: "⚡ VRAM:"; color: "#94A3B8"; font.pixelSize: 12; font.bold: true }
+                    Text { text: "VRAM:"; color: "#94A3B8"; font.pixelSize: 12; font.bold: true }
                     Text {
                         text: root.controller && root.controller.hardwareSummary ? (root.controller.hardwareSummary.vram_gb.toFixed(1) + " GB") : "0 GB"
                         color: Theme.accentSapphire
                         font.pixelSize: 12
                         font.bold: true
+                        font.family: "JetBrains Mono, Consolas, monospace"
+                        font.features: { "tnum": 1 }
                     }
                 }
 
                 RowLayout {
                     spacing: 6
-                    Text { text: "⚙️ Backend:"; color: "#94A3B8"; font.pixelSize: 12; font.bold: true }
+                    Text { text: "Backend:"; color: "#94A3B8"; font.pixelSize: 12; font.bold: true }
                     Text {
                         text: root.controller && root.controller.hardwareSummary ? root.controller.hardwareSummary.backend_status : "CPU"
                         color: root.controller && root.controller.hardwareSummary && root.controller.hardwareSummary.has_cuda ? Theme.success : Theme.warning
@@ -151,6 +153,118 @@ Dialog {
                 }
 
                 Item { Layout.fillWidth: true }
+            }
+        }
+
+        // ==========================================
+        // GEMINI CLOUD API KEY & TEST CONNECTION
+        // ==========================================
+        Rectangle {
+            id: geminiPanel
+            objectName: "geminiApiPanel"
+            Layout.fillWidth: true
+            implicitHeight: geminiCol.implicitHeight + 18
+            color: Qt.rgba(0.09, 0.13, 0.22, 0.9)
+            border.color: Theme.glassBorderSubtle
+            border.width: 1
+
+            property bool showApiKey: false
+
+            Connections {
+                target: root.controller
+                function onGeminiSettingsChanged() {
+                    if (root.controller && geminiApiKeyField.text !== root.controller.geminiApiKey) {
+                        geminiApiKeyField.text = root.controller.geminiApiKey
+                    }
+                }
+            }
+
+            ColumnLayout {
+                id: geminiCol
+                anchors.fill: parent
+                anchors.leftMargin: 20
+                anchors.rightMargin: 20
+                anchors.topMargin: 9
+                anchors.bottomMargin: 9
+                spacing: 6
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.spaceSmall
+
+                    Text {
+                        text: "Gemini API Key:"
+                        color: "#CBD5E1"
+                        font.pixelSize: 12
+                        font.bold: true
+                    }
+
+                    TextField {
+                        id: geminiApiKeyField
+                        objectName: "geminiApiKeyField"
+                        Layout.fillWidth: true
+                        implicitHeight: 32
+                        placeholderText: "Nhập Google Gemini API Key (AIza...)"
+                        placeholderTextColor: "#64748B"
+                        color: "#F8FAFC"
+                        font.pixelSize: 12
+                        font.family: "JetBrains Mono, Consolas, monospace"
+                        echoMode: geminiPanel.showApiKey ? TextInput.Normal : TextInput.Password
+                        passwordCharacter: "•"
+                        selectByMouse: true
+                        leftPadding: 10
+                        rightPadding: 10
+                        background: Rectangle {
+                            radius: 8
+                            color: "#0B1120"
+                            border.color: geminiApiKeyField.activeFocus ? Theme.accentSapphire : Qt.rgba(1, 1, 1, 0.16)
+                            border.width: 1
+                        }
+                        Component.onCompleted: {
+                            if (root.controller && root.controller.geminiApiKey) {
+                                text = root.controller.geminiApiKey
+                            }
+                        }
+                        onTextChanged: {
+                            if (root.controller && text !== root.controller.geminiApiKey) {
+                                root.controller.setGeminiApiKey(text)
+                            }
+                        }
+                    }
+
+                    AppButton {
+                        objectName: "btnToggleGeminiKeyVisibility"
+                        text: geminiPanel.showApiKey ? "Ẩn" : "Hiện"
+                        implicitHeight: 32
+                        onClicked: geminiPanel.showApiKey = !geminiPanel.showApiKey
+                    }
+
+                    AppButton {
+                        objectName: "btnTestGeminiConnection"
+                        text: (root.controller && root.controller.isTestingGemini) ? "Đang test..." : "Test kết nối"
+                        isPrimary: true
+                        implicitHeight: 32
+                        enabled: root.controller && !root.controller.isTestingGemini
+                        onClicked: {
+                            if (root.controller) {
+                                root.controller.setGeminiApiKey(geminiApiKeyField.text)
+                                root.controller.testGeminiConnection(geminiApiKeyField.text)
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    objectName: "geminiConnectionStatus"
+                    Layout.fillWidth: true
+                    visible: root.controller && root.controller.geminiTestStatus !== ""
+                    text: root.controller ? root.controller.geminiTestStatus : ""
+                    color: (root.controller && root.controller.isTestingGemini)
+                           ? "#38BDF8"
+                           : ((root.controller && root.controller.geminiTestOk) ? "#4ADE80" : "#F87171")
+                    font.pixelSize: 12
+                    elide: Text.ElideRight
+                }
             }
         }
 

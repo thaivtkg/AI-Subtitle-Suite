@@ -104,6 +104,32 @@ class ProjectService:
     def _generate_fingerprint(self, video_path: str) -> SourceInfo:
         return generate_source_info(video_path)
 
+    @staticmethod
+    def _parse_srt_ranges(srt_path: str) -> list[tuple[int, int]]:
+        """Trích xuất danh sách (start_ms, end_ms) từ file SRT."""
+        if not srt_path or not os.path.exists(srt_path):
+            return []
+        ranges = []
+        try:
+            with open(srt_path, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    if "-->" in line:
+                        parts = line.split("-->", 1)
+                        try:
+                            s = parts[0].strip().replace(",", ".")
+                            e = parts[1].strip().replace(",", ".")
+                            sp = s.split(":")
+                            ep = e.split(":")
+                            s_ms = int(sp[0]) * 3600000 + int(sp[1]) * 60000 + int(float(sp[2]) * 1000)
+                            e_ms = int(ep[0]) * 3600000 + int(ep[1]) * 60000 + int(float(ep[2]) * 1000)
+                            if e_ms > s_ms:
+                                ranges.append((s_ms, e_ms))
+                        except Exception:
+                            continue
+        except Exception:
+            pass
+        return ranges
+
     def create_project(self, project_dir: str, name: str, video_path: str) -> Project:
         """Tạo một Project mới hoàn toàn"""
         os.makedirs(project_dir, exist_ok=True)
@@ -427,11 +453,38 @@ class ProjectService:
             try:
                 with open(timing_cp_path, "r", encoding="utf-8") as f:
                     tcp_data = json.load(f)
+                changed = False
                 if (
                     not current_project_id
                     or tcp_data.get("project_id") == current_project_id
                 ) and tcp_data.get("source_fingerprint") != new_fingerprint:
                     tcp_data["source_fingerprint"] = new_fingerprint
+                    changed = True
+
+                # Tự động đồng bộ next_segment_index và last_completed_end_ms với file srt thực tế
+                timing_art_dir = os.path.join(project_dir, "artifacts", "timing")
+                if os.path.exists(timing_art_dir):
+                    srt_files = [
+                        os.path.join(timing_art_dir, f)
+                        for f in os.listdir(timing_art_dir)
+                        if f.endswith(".srt")
+                    ]
+                    if srt_files:
+                        target_srt = srt_files[0]
+                        srt_ranges = self._parse_srt_ranges(target_srt)
+                        if srt_ranges:
+                            actual_count = len(srt_ranges)
+                            max_end_ms = max(s[1] for s in srt_ranges)
+                            if (
+                                actual_count >= tcp_data.get("next_segment_index", 1)
+                                or max_end_ms > tcp_data.get("last_completed_end_ms", 0)
+                            ):
+                                tcp_data["next_segment_index"] = actual_count + 1
+                                tcp_data["last_completed_end_ms"] = max_end_ms
+                                tcp_data["completed_until"] = actual_count
+                                changed = True
+
+                if changed:
                     atomic_save_json(timing_cp_path, tcp_data)
             except Exception as e:
                 print(f"[ProjectService] Warning: Không thể đồng bộ Timing Checkpoint: {e}")
@@ -607,6 +660,11 @@ class ProjectService:
             self._reconcile_checkpoints_for_source(
                 self.project_dir, source_info.fingerprint, video_path
             )
+            # Đồng bộ lại memory state timing nếu checkpoint vừa được cập nhật
+            tcp = self.load_timing_checkpoint()
+            if tcp and hasattr(self.current_project.state, "timing"):
+                self.current_project.state.timing.next_segment_index = tcp.next_segment_index
+                self.current_project.state.timing.completed_until = tcp.completed_until
 
         return self.current_project
 

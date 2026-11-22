@@ -5,6 +5,7 @@ from core.translation.llm.model_manager import ModelManager
 
 class TranslationWorker(QThread):
     progress = Signal(int, str)
+    activity = Signal(int)
     finished = Signal(int, str)
     error = Signal(int, str)
     termsExtracted = Signal(int, list)
@@ -116,29 +117,59 @@ class TranslationWorker(QThread):
 
     def run(self):
         try:
-            # --- 1. KIỂM TRA TỒN TẠI MODEL THẬT (CHẶN HOÀN TOÀN MOCK) ---
-            if not os.path.exists(self.model_path):
-                self.error.emit(self.target_index, f"Lỗi: Không tìm thấy file model tại '{self.model_path}'. Vui lòng đặt file GGUF vào thư mục models/.")
-                return
+            backend_type = self.profile.get("backend_type") or (
+                "llama_cpp" if self.model_path.lower().endswith(".gguf") else "ollama"
+            )
 
-            # --- 2. NẠP MODEL THẬT QUA MODEL MANAGER ---
-            backend_type = "llama_cpp" if self.model_path.lower().endswith(".gguf") else "ollama"
-            manager = ModelManager.get_instance(backend_type)
-            n_ctx = self.profile.get("n_ctx", 4096)
-            n_gpu_layers = self.profile.get("n_gpu_layers", -1)
+            # --- 1. KIỂM TRA TỒN TẠI MODEL HOẶC API KEY ---
+            if backend_type == "gemini":
+                api_key = str(self.profile.get("api_key") or os.getenv("GEMINI_API_KEY", "")).strip()
+                if not api_key:
+                    self.error.emit(
+                        self.target_index,
+                        "Lỗi: Chưa nhập Gemini API Key. Vui lòng mở Trình quản lý mô hình để cấu hình.",
+                    )
+                    return
+                model_identifier = str(self.profile.get("cloud_model_name") or self.profile.get("model_name") or "gemini-3.8-flash")
+                manager = ModelManager.get_instance("gemini")
+                if not manager.load_model(model_identifier, api_key=api_key):
+                    self.error.emit(self.target_index, "Lỗi: Không thể khởi tạo cấu hình Gemini Cloud.")
+                    return
+            else:
+                if not os.path.exists(self.model_path):
+                    self.error.emit(self.target_index, f"Lỗi: Không tìm thấy file model tại '{self.model_path}'. Vui lòng đặt file GGUF vào thư mục models/.")
+                    return
+
+                # --- 2. NẠP MODEL THẬT QUA MODEL MANAGER ---
+                manager = ModelManager.get_instance(backend_type)
+                n_ctx = self.profile.get("n_ctx", 4096)
+                n_gpu_layers = self.profile.get("n_gpu_layers", -1)
+                
+                try:
+                    manager.load_model(self.model_path, n_ctx=n_ctx, n_gpu_layers=n_gpu_layers)
+                except Exception as load_err:
+                    if self._is_cancelled:
+                        return
+                    if n_gpu_layers != 0 and backend_type == "llama_cpp":
+                        print(f"[Worker Warning] GPU load failed ({load_err}), falling back to CPU...")
+                        manager.unload_model()
+                        manager.load_model(self.model_path, n_ctx=min(n_ctx, 2048), n_gpu_layers=0)
+                    else:
+                        raise load_err
+
+            if self._is_cancelled:
+                return
             
-            try:
-                manager.load_model(self.model_path, n_ctx=n_ctx, n_gpu_layers=n_gpu_layers)
-            except Exception as load_err:
-                if n_gpu_layers != 0 and backend_type == "llama_cpp":
-                    print(f"[Worker Warning] GPU load failed ({load_err}), falling back to CPU...")
-                    manager.unload_model()
-                    manager.load_model(self.model_path, n_ctx=min(n_ctx, 2048), n_gpu_layers=0)
-                else:
-                    raise load_err
-            
-            # Tăng max_tokens lên 1024 để model có đủ không gian suy luận và trả kết quả
-            stream = manager.generate_stream(self.prompt, max_tokens=1024)
+            temp = float(self.profile.get("temperature", 0.1))
+            top_p = float(self.profile.get("top_p", 0.90))
+            repeat_penalty = float(self.profile.get("repeat_penalty", 1.05))
+            stream = manager.generate_stream(
+                self.prompt,
+                max_tokens=1024,
+                temperature=temp,
+                top_p=top_p,
+                repeat_penalty=repeat_penalty,
+            )
             
             raw_text = ""
             is_prefilled_think = "<think>" in self.prompt and not self.prompt.rstrip().endswith("</think>")
@@ -147,6 +178,8 @@ class TranslationWorker(QThread):
                 if self._is_cancelled:
                     return
                 chunk = output["choices"][0]["text"] if isinstance(output, dict) else output
+                if chunk:
+                    self.activity.emit(self.target_index)
                 raw_text += chunk
 
                 # --- 3. ẨN THINK VÀ [TỪ GỐC], CHỈ STREAM PHẦN DỊCH ---

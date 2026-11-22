@@ -91,19 +91,14 @@ class GlossaryManager:
             )
             conn.commit()
 
-            if cursor.lastrowid:
-                # If ON CONFLICT DO UPDATE triggered, lastrowid might be 0 in some sqlite versions,
-                # so query id if needed:
-                entry_id = cursor.lastrowid
-                if entry_id == 0:
-                    cursor.execute(
-                        "SELECT id FROM glossary_entries WHERE source_text = ? AND lang_pair = ? AND domain = ?",
-                        (source_text, lang_pair, domain),
-                    )
-                    row = cursor.fetchone()
-                    entry_id = row[0] if row else 0
-                return entry_id
-            return 0
+            cursor.execute(
+                "SELECT id FROM glossary_entries WHERE source_text = ? AND lang_pair = ? AND domain = ?",
+                (source_text, lang_pair, domain),
+            )
+            row = cursor.fetchone()
+            if row:
+                return row[0]
+            return cursor.lastrowid or 0
         finally:
             if not self._is_memory:
                 conn.close()

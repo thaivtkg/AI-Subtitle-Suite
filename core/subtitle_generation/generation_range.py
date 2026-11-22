@@ -65,8 +65,8 @@ def validate_generation_range(
     coverage_segments = []
     for index, segment in enumerate(subtitle_segments or ()):
         if isinstance(segment, dict):
-            start = segment.get("start_ms")
-            end = segment.get("end_ms")
+            start = segment.get("start_ms", segment.get("start"))
+            end = segment.get("end_ms", segment.get("end"))
             segment_id = segment.get("id", index)
         else:
             start = getattr(segment, "start_ms", None)

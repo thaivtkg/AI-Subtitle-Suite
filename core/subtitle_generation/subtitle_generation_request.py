@@ -33,6 +33,13 @@ class SubtitleGenerationRequest:
     vad_threshold: Optional[float] = None
     vad_speech_pad_ms: Optional[int] = None
     vad_max_speech_duration_s: Optional[float] = None
+    min_speech_duration_ms: Optional[int] = None
+    no_speech_threshold: Optional[float] = None
+    log_prob_threshold: Optional[float] = None
+    speech_filter: bool = False
+    hotwords: str = ""
+    patience: Optional[float] = None
+    hallucination_silence_threshold: Optional[float] = None
 
     def __post_init__(self) -> None:
         if self.batch_mode not in {"time", "segments"}:

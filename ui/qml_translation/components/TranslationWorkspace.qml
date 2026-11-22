@@ -14,6 +14,7 @@ Item {
     property string altTranslation: ""
     property string altStyleMode: "CREATIVE"
     property bool altLoading: false
+    property int altTargetIndex: -1
     
     signal translateRequested(string sourceLang)
     signal acceptRequested(string text)
@@ -56,9 +57,9 @@ Item {
             
             Text {
                 text: (typeof translationController !== "undefined" && translationController.currentOriginal !== "")
-                      ? ("⚡ KHÔNG GIAN DỊCH THUẬT (CÂU #" + translationController.currentDisplayIndex + ")")
-                      : "⚡ KHÔNG GIAN DỊCH THUẬT"
-                color: "#FFFFFF"
+                      ? ("Không gian dịch thuật • Câu #" + translationController.currentDisplayIndex)
+                      : "Không gian dịch thuật"
+                color: Theme.textPrimary
                 font.pixelSize: 13
                 font.bold: true
             }
@@ -73,27 +74,27 @@ Item {
                 implicitWidth: statusBadge.implicitWidth + 18
                 implicitHeight: 22
                 radius: 11
-                color: translationController.status === "ACCEPTED" ? Theme.badgeSolidEmerald :
-                       (translationController.status === "TRANSLATED" || translationController.status === "EDITED") ? "#FEF08A" :
-                       translationController.status === "TRANSLATING" ? Qt.rgba(0.0, 0.4, 1.0, 0.20) :
-                       translationController.status === "ERROR" ? "#FFE4E6" : Qt.rgba(0.58, 0.64, 0.72, 0.20)
+                color: translationController.status === "ACCEPTED" ? Qt.rgba(0.06, 0.72, 0.50, 0.15) :
+                       (translationController.status === "TRANSLATED" || translationController.status === "EDITED") ? Qt.rgba(0.96, 0.62, 0.04, 0.15) :
+                       translationController.status === "TRANSLATING" ? Qt.rgba(0.31, 0.27, 0.90, 0.20) :
+                       translationController.status === "ERROR" ? Qt.rgba(0.94, 0.25, 0.37, 0.15) : Qt.rgba(0.58, 0.64, 0.72, 0.15)
                 border.color: translationController.status === "ACCEPTED" ? "#10B981" :
-                              (translationController.status === "TRANSLATED" || translationController.status === "EDITED") ? "#FDE047" :
+                              (translationController.status === "TRANSLATED" || translationController.status === "EDITED") ? "#F59E0B" :
                               translationController.status === "TRANSLATING" ? Theme.accentSapphire :
                               translationController.status === "ERROR" ? "#EF4444" : "#94A3B8"
-                border.width: 1.5
+                border.width: 1
 
                 Text {
                     id: statusBadge
                     anchors.centerIn: parent
-                    text: translationController.status === "ACCEPTED" ? "✓ ĐÃ DUYỆT" :
-                          (translationController.status === "TRANSLATED" || translationController.status === "EDITED") ? "⌛ CHỜ DUYỆT" :
-                          translationController.status === "TRANSLATING" ? "⚡ ĐANG DỊCH" :
-                          translationController.status === "ERROR" ? "🛑 LỖI" : "⏳ CHỜ DỊCH"
-                    color: translationController.status === "ACCEPTED" ? "#FFFFFF" :
-                           (translationController.status === "TRANSLATED" || translationController.status === "EDITED") ? "#854D0E" :
-                           translationController.status === "TRANSLATING" ? "#38BDF8" :
-                           translationController.status === "ERROR" ? "#EF4444" : "#94A3B8"
+                    text: translationController.status === "ACCEPTED" ? "Đã duyệt" :
+                          (translationController.status === "TRANSLATED" || translationController.status === "EDITED") ? "Chờ duyệt" :
+                          translationController.status === "TRANSLATING" ? "Đang dịch" :
+                          translationController.status === "ERROR" ? "Lỗi" : "Chờ dịch"
+                    color: translationController.status === "ACCEPTED" ? "#34D399" :
+                           (translationController.status === "TRANSLATED" || translationController.status === "EDITED") ? "#FBBF24" :
+                           translationController.status === "TRANSLATING" ? "#818CF8" :
+                           translationController.status === "ERROR" ? "#F87171" : "#94A3B8"
                     font.pixelSize: 10
                     font.bold: true
                 }
@@ -130,6 +131,10 @@ Item {
                 }
                 function onAlternativeTranslationReady(idx, altText, mode) {
                     workspace.altLoading = false
+                    if (typeof subListView !== "undefined" && idx !== subListView.currentRawIndex) {
+                        return
+                    }
+                    workspace.altTargetIndex = idx
                     workspace.altTranslation = altText
                     workspace.altStyleMode = mode
                 }
@@ -203,19 +208,18 @@ Item {
                                 Rectangle {
                                     implicitWidth: originalBadgeText.implicitWidth + 16
                                     implicitHeight: 20
-                                    radius: 10
+                                    radius: 6
                                     color: Theme.accentSapphire
 
                                     Text {
                                         id: originalBadgeText
                                         anchors.centerIn: parent
-                                        text: "CÂU GỐC (" + ((typeof translationController !== "undefined" && translationController.currentSourceLanguage)
-                                              ? translationController.currentSourceLanguage.toUpperCase()
-                                              : (langSelector.sourceLang ? langSelector.sourceLang.toUpperCase() : "ENGLISH")) + ")"
+                                        text: "Câu gốc (" + ((typeof translationController !== "undefined" && translationController.currentSourceLanguage)
+                                              ? translationController.currentSourceLanguage
+                                              : (langSelector.sourceLang ? langSelector.sourceLang : "English")) + ")"
                                         color: "#FFFFFF"
                                         font.pixelSize: 10
                                         font.bold: true
-                                        font.letterSpacing: 0.5
                                     }
                                 }
 
@@ -223,9 +227,9 @@ Item {
                                     visible: typeof translationController.currentStartTime !== "undefined" && translationController.currentStartTime !== ""
                                     implicitWidth: timeRangeText.implicitWidth + 16
                                     implicitHeight: 20
-                                    radius: 10
-                                    color: Qt.rgba(0.0, 0.4, 1.0, 0.12)
-                                    border.color: Qt.rgba(0.24, 0.65, 0.98, 0.40)
+                                    radius: 6
+                                    color: Qt.rgba(0.31, 0.27, 0.90, 0.12)
+                                    border.color: Qt.rgba(0.31, 0.27, 0.90, 0.30)
                                     border.width: 1
 
                                     Text {
@@ -234,9 +238,11 @@ Item {
                                         text: (typeof translationController.currentStartTime !== "undefined" ? translationController.currentStartTime : "") +
                                               " ➔ " +
                                               (typeof translationController.currentEndTime !== "undefined" ? translationController.currentEndTime : "")
-                                        color: "#60A5FA"
+                                        color: "#818CF8"
                                         font.pixelSize: 10
                                         font.bold: true
+                                        font.family: "JetBrains Mono, Consolas, monospace"
+                                        font.features: { "tnum": 1 }
                                     }
                                 }
 
@@ -303,21 +309,18 @@ Item {
                                 Rectangle {
                                     implicitWidth: transBadgeText.implicitWidth + 16
                                     implicitHeight: 20
-                                    radius: 10
-                                    gradient: Gradient {
-                                        orientation: Gradient.Horizontal
-                                        GradientStop { position: 0.0; color: Theme.badgePurpleGradientStart }
-                                        GradientStop { position: 1.0; color: Theme.badgePurpleGradientEnd }
-                                    }
+                                    radius: 6
+                                    color: Theme.glassPodRaised
+                                    border.color: Theme.glassBorderSpecularUpper
+                                    border.width: 1
 
                                     Text {
                                         id: transBadgeText
                                         anchors.centerIn: parent
-                                        text: "✨ BẢN DỊCH TIẾNG VIỆT (AI)"
-                                        color: "#FFFFFF"
+                                        text: "Bản dịch tiếng Việt (AI)"
+                                        color: Theme.textPrimary
                                         font.pixelSize: 10
                                         font.bold: true
-                                        font.letterSpacing: 0.5
                                     }
                                 }
 
@@ -327,10 +330,10 @@ Item {
                                     id: btnAltStyle
                                     objectName: "btnAltStyle"
                                     implicitHeight: 22
-                                    implicitWidth: 140
+                                    implicitWidth: 125
                                     contentItem: Text {
-                                        text: "🎲 Đổi văn phong ▼"
-                                        color: Theme.accentPurple
+                                        text: "Đổi văn phong ▼"
+                                        color: Theme.textSecondary
                                         font.pixelSize: 10
                                         font.bold: true
                                         horizontalAlignment: Text.AlignHCenter
@@ -338,8 +341,8 @@ Item {
                                     }
                                     background: Rectangle {
                                         radius: 6
-                                        color: btnAltStyle.hovered ? Qt.rgba(0.5, 0.2, 0.9, 0.15) : Qt.rgba(0.5, 0.2, 0.9, 0.08)
-                                        border.color: Theme.accentPurple
+                                        color: btnAltStyle.hovered ? Theme.glassPodRaised : Theme.glassPodLuminous
+                                        border.color: Theme.glassBorderSpecularUpper
                                         border.width: 1
                                     }
                                     visible: ["TRANSLATED", "EDITED", "ACCEPTED"].indexOf(translationController.status) >= 0
@@ -351,8 +354,8 @@ Item {
                                     visible: typeof translationController !== "undefined" && translationController.ghostText && translationController.ghostText.length > 0 && translationController.status !== "TRANSLATING"
                                     implicitWidth: copilotHintRow.implicitWidth + 14
                                     implicitHeight: 22
-                                    radius: 11
-                                    color: Qt.rgba(0.2, 0.7, 0.9, 0.15)
+                                    radius: 6
+                                    color: Qt.rgba(0.31, 0.27, 0.90, 0.12)
                                     border.color: Theme.accentSapphire
                                     border.width: 1
 
@@ -360,7 +363,6 @@ Item {
                                         id: copilotHintRow
                                         anchors.centerIn: parent
                                         spacing: 4
-                                        Text { text: "💡"; font.pixelSize: 10 }
                                         Text {
                                             text: "Tab: Nhận | Ctrl+→: Từng từ"
                                             color: Theme.accentSapphire
@@ -374,18 +376,20 @@ Item {
                                     visible: translationController.status !== "TRANSLATING" && translationInput.text.trim().length > 0
                                     implicitWidth: confText.implicitWidth + 16
                                     implicitHeight: 22
-                                    radius: 11
-                                    color: "#EDE7F6"
-                                    border.color: "#D1C4E9"
+                                    radius: 6
+                                    color: Theme.glassPodRaised
+                                    border.color: Theme.glassBorderSpecularUpper
                                     border.width: 1
 
                                     Text {
                                         id: confText
                                         anchors.centerIn: parent
-                                        text: "✦ Độ tin cậy: 98%"
-                                        color: "#6A1B9A"
+                                        text: "Độ tin cậy: 98%"
+                                        color: Theme.textSecondary
                                         font.pixelSize: 10
                                         font.bold: true
+                                        font.family: "JetBrains Mono, Consolas, monospace"
+                                        font.features: { "tnum": 1 }
                                     }
                                 }
 
@@ -393,21 +397,22 @@ Item {
                                     visible: translationController.status === "TRANSLATING"
                                     implicitWidth: liveTranslatingRow.implicitWidth + 16
                                     implicitHeight: 20
-                                    radius: 10
-                                    color: Qt.rgba(Theme.accentCyan.r, Theme.accentCyan.g, Theme.accentCyan.b, 0.2)
-                                    border.color: Theme.accentCyan
+                                    radius: 6
+                                    color: Qt.rgba(0.31, 0.27, 0.90, 0.2)
+                                    border.color: Theme.accentSapphire
                                     border.width: 1
 
                                     RowLayout {
                                         id: liveTranslatingRow
                                         anchors.centerIn: parent
                                         spacing: 4
-                                        Text { text: "⚡"; color: Theme.accentCyan; font.pixelSize: 10 }
                                         Text {
-                                            text: "ĐANG DỊCH " + (typeof translationController !== "undefined" && typeof translationController.translationProgress !== "undefined" ? translationController.translationProgress : 0) + "%"
-                                            color: Theme.accentCyan
+                                            text: "Đang dịch " + (typeof translationController !== "undefined" && typeof translationController.translationProgress !== "undefined" ? translationController.translationProgress : 0) + "%"
+                                            color: Theme.accentSapphire
                                             font.pixelSize: 9
                                             font.bold: true
+                                            font.family: "JetBrains Mono, Consolas, monospace"
+                                            font.features: { "tnum": 1 }
                                         }
                                     }
 
@@ -592,25 +597,17 @@ Item {
                                     spacing: 8
 
                                     Text {
-                                        text: scrambleOverlay.currentProgress < 25 ? "⚡" : "🧠"
-                                        color: Theme.accentCyan
-                                        font.pixelSize: 16
-                                        font.bold: true
-                                    }
-
-                                    Text {
-                                        text: scrambleOverlay.currentProgress < 25 ? "ĐANG KHỞI TẠO BỐI CẢNH & NẠP MODEL..." : "AI ĐANG SUY LUẬN NGỮ NGHĨA & DỊCH THUẬT..."
-                                        color: Theme.accentCyan
+                                        text: scrambleOverlay.currentProgress < 25 ? "Đang khởi tạo bối cảnh & nạp model..." : "Đang suy luận ngữ nghĩa & dịch thuật..."
+                                        color: Theme.accentSapphire
                                         font.pixelSize: 13
                                         font.bold: true
-                                        font.letterSpacing: 0.8
                                     }
 
-                                    // Blinking cyber block cursor
+                                    // Blinking cursor
                                     Rectangle {
                                         width: 8
                                         height: 15
-                                        color: Theme.accentCyan
+                                        color: Theme.accentSapphire
                                         radius: 1
                                         SequentialAnimation on opacity {
                                             loops: Animation.Infinite
@@ -633,11 +630,7 @@ Item {
                                         height: parent.height
                                         width: parent.width * Math.min(1.0, Math.max(0.1, scrambleOverlay.currentProgress / 100.0))
                                         radius: 2
-                                        gradient: Gradient {
-                                            orientation: Gradient.Horizontal
-                                            GradientStop { position: 0.0; color: Theme.accentSapphire }
-                                            GradientStop { position: 1.0; color: Theme.accentCyan }
-                                        }
+                                        color: Theme.accentSapphire
                                         Behavior on width { NumberAnimation { duration: 200 } }
                                     }
                                 }
@@ -647,6 +640,8 @@ Item {
                                     text: "Tiến trình: " + scrambleOverlay.currentProgress + "% — Bản dịch sẽ xuất hiện trực tiếp ngay khi có token đầu tiên."
                                     color: Theme.textMuted
                                     font.pixelSize: 11
+                                    font.family: "JetBrains Mono, Consolas, monospace"
+                                    font.features: { "tnum": 1 }
                                 }
                             }
                         }
@@ -676,14 +671,16 @@ Item {
                                 Rectangle {
                                     implicitWidth: altBadgeText.implicitWidth + 14
                                     implicitHeight: 20
-                                    radius: 10
-                                    color: Theme.accentPurple
+                                    radius: 6
+                                    color: Theme.glassPodRaised
+                                    border.color: Theme.accentSapphire
+                                    border.width: 1
 
                                     Text {
                                         id: altBadgeText
                                         anchors.centerIn: parent
-                                        text: "🎲 " + (workspace.altStyleMode === "CREATIVE" ? "PHONG CÁCH PHÓNG KHOÁNG" : "PHONG CÁCH SÁT NGHĨA")
-                                        color: "#FFFFFF"
+                                        text: workspace.altStyleMode === "CREATIVE" ? "Phong cách phóng khoáng" : "Phong cách sát nghĩa"
+                                        color: Theme.textPrimary
                                         font.pixelSize: 10
                                         font.bold: true
                                     }
@@ -747,9 +744,11 @@ Item {
                                     }
                                     onClicked: {
                                         if (typeof translationController !== "undefined") {
-                                            var rowIdx = (typeof subListView !== "undefined" && subListView.currentRawIndex >= 0) ? subListView.currentRawIndex : 0
+                                            var curIdx = (typeof subListView !== "undefined" && subListView.currentRawIndex >= 0) ? subListView.currentRawIndex : 0
+                                            var rowIdx = workspace.altTargetIndex >= 0 ? workspace.altTargetIndex : curIdx
                                             translationController.applyAlternativeTranslation(rowIdx, workspace.altTranslation)
                                             workspace.altTranslation = ""
+                                            workspace.altTargetIndex = -1
                                         }
                                     }
                                 }
@@ -817,23 +816,29 @@ Item {
             Rectangle {
                 implicitWidth: liveWordsRow.implicitWidth + 24
                 implicitHeight: 24
-                radius: 12
-                color: Qt.rgba(Theme.accentPurple.r, Theme.accentPurple.g, Theme.accentPurple.b, 0.15)
-                border.color: Theme.accentPurple
+                radius: 6
+                color: Qt.rgba(0.31, 0.27, 0.90, 0.15)
+                border.color: Theme.accentSapphire
                 border.width: 1
                 RowLayout {
                     id: liveWordsRow
                     anchors.centerIn: parent
                     spacing: 4
-                    Text { text: "📝"; font.pixelSize: 10 }
-                    Text { text: parent.parent.parent.wordCount + " Từ"; color: Theme.accentPurple; font.pixelSize: 11; font.bold: true }
+                    Text {
+                        text: parent.parent.parent.wordCount + " từ"
+                        color: Theme.accentSapphire
+                        font.pixelSize: 11
+                        font.bold: true
+                        font.family: "JetBrains Mono, Consolas, monospace"
+                        font.features: { "tnum": 1 }
+                    }
                 }
             }
 
             Rectangle {
                 implicitWidth: liveCharsRow.implicitWidth + 24
                 implicitHeight: 24
-                radius: 12
+                radius: 6
                 color: Qt.rgba(Theme.textSecondary.r, Theme.textSecondary.g, Theme.textSecondary.b, 0.15)
                 border.color: Theme.textMuted
                 border.width: 1
@@ -841,15 +846,21 @@ Item {
                     id: liveCharsRow
                     anchors.centerIn: parent
                     spacing: 4
-                    Text { text: "🔤"; font.pixelSize: 10 }
-                    Text { text: parent.parent.parent.charCount + " Ký tự"; color: Theme.textPrimary; font.pixelSize: 11; font.bold: true }
+                    Text {
+                        text: parent.parent.parent.charCount + " ký tự"
+                        color: Theme.textPrimary
+                        font.pixelSize: 11
+                        font.bold: true
+                        font.family: "JetBrains Mono, Consolas, monospace"
+                        font.features: { "tnum": 1 }
+                    }
                 }
             }
 
             Rectangle {
                 implicitWidth: liveLinesCountRow.implicitWidth + 24
                 implicitHeight: 24
-                radius: 12
+                radius: 6
                 color: parent.lineCount > 2 ? Qt.rgba(Theme.danger.r, Theme.danger.g, Theme.danger.b, 0.15) : Qt.rgba(Theme.success.r, Theme.success.g, Theme.success.b, 0.15)
                 border.color: parent.lineCount > 2 ? Theme.danger : Theme.success
                 border.width: 1
@@ -857,8 +868,14 @@ Item {
                     id: liveLinesCountRow
                     anchors.centerIn: parent
                     spacing: 4
-                    Text { text: parent.parent.parent.lineCount > 2 ? "🛑" : "🟢"; font.pixelSize: 10 }
-                    Text { text: parent.parent.parent.lineCount + " Dòng"; color: parent.parent.parent.lineCount > 2 ? Theme.danger : Theme.success; font.pixelSize: 11; font.bold: true }
+                    Text {
+                        text: parent.parent.parent.lineCount + " dòng"
+                        color: parent.parent.parent.lineCount > 2 ? Theme.danger : Theme.success
+                        font.pixelSize: 11
+                        font.bold: true
+                        font.family: "JetBrains Mono, Consolas, monospace"
+                        font.features: { "tnum": 1 }
+                    }
                 }
             }
 
@@ -906,48 +923,78 @@ Item {
             Rectangle {
                 implicitWidth: cpsRow.implicitWidth + 24
                 implicitHeight: 24
-                radius: 12
+                radius: 6
                 color: Qt.rgba(parent.cpsColor.r, parent.cpsColor.g, parent.cpsColor.b, 0.15)
                 border.color: parent.cpsColor
                 border.width: 1
                 RowLayout {
                     id: cpsRow
                     anchors.centerIn: parent
-                    spacing: 4
-                    Text { text: parent.parent.parent.cpsColor === Theme.danger ? "🛑" : parent.parent.parent.cpsColor === Theme.warning ? "🟡" : "🟢"; font.pixelSize: 10 }
-                    Text { text: "CPS: " + parent.parent.parent.cps.toFixed(1); color: parent.parent.parent.cpsColor; font.pixelSize: 11; font.bold: true }
+                    spacing: 5
+                    Rectangle {
+                        width: 6; height: 6; radius: 3
+                        color: parent.parent.parent.cpsColor
+                    }
+                    Text {
+                        text: "CPS: " + parent.parent.parent.cps.toFixed(1)
+                        color: parent.parent.parent.cpsColor
+                        font.pixelSize: 11
+                        font.bold: true
+                        font.family: "JetBrains Mono, Consolas, monospace"
+                        font.features: { "tnum": 1 }
+                    }
                 }
             }
             
             Rectangle {
                 implicitWidth: cplRow.implicitWidth + 24
                 implicitHeight: 24
-                radius: 12
+                radius: 6
                 color: Qt.rgba(parent.cplColor.r, parent.cplColor.g, parent.cplColor.b, 0.15)
                 border.color: parent.cplColor
                 border.width: 1
                 RowLayout {
                     id: cplRow
                     anchors.centerIn: parent
-                    spacing: 4
-                    Text { text: parent.parent.parent.cplColor === Theme.danger ? "🛑" : parent.parent.parent.cplColor === Theme.warning ? "🟡" : "🟢"; font.pixelSize: 10 }
-                    Text { text: "CPL: " + parent.parent.parent.cpl + "/42"; color: parent.parent.parent.cplColor; font.pixelSize: 11; font.bold: true }
+                    spacing: 5
+                    Rectangle {
+                        width: 6; height: 6; radius: 3
+                        color: parent.parent.parent.cplColor
+                    }
+                    Text {
+                        text: "CPL: " + parent.parent.parent.cpl + "/42"
+                        color: parent.parent.parent.cplColor
+                        font.pixelSize: 11
+                        font.bold: true
+                        font.family: "JetBrains Mono, Consolas, monospace"
+                        font.features: { "tnum": 1 }
+                    }
                 }
             }
             
             Rectangle {
                 implicitWidth: linesRow.implicitWidth + 24
                 implicitHeight: 24
-                radius: 12
+                radius: 6
                 color: Qt.rgba(parent.lineCountColor.r, parent.lineCountColor.g, parent.lineCountColor.b, 0.15)
                 border.color: parent.lineCountColor
                 border.width: 1
                 RowLayout {
                     id: linesRow
                     anchors.centerIn: parent
-                    spacing: 4
-                    Text { text: parent.parent.parent.lineCountColor === Theme.danger ? "🛑" : "🟢"; font.pixelSize: 10 }
-                    Text { text: parent.parent.parent.lineCount + " Dòng"; color: parent.parent.parent.lineCountColor; font.pixelSize: 11; font.bold: true }
+                    spacing: 5
+                    Rectangle {
+                        width: 6; height: 6; radius: 3
+                        color: parent.parent.parent.lineCountColor
+                    }
+                    Text {
+                        text: parent.parent.parent.lineCount + " dòng"
+                        color: parent.parent.parent.lineCountColor
+                        font.pixelSize: 11
+                        font.bold: true
+                        font.family: "JetBrains Mono, Consolas, monospace"
+                        font.features: { "tnum": 1 }
+                    }
                 }
             }
             Item { Layout.fillWidth: true }
@@ -963,115 +1010,9 @@ Item {
             Layout.topMargin: 4
             spacing: 6
             visible: typeof translationController !== "undefined" && (
-                translationController.currentOriginal !== "" ||
-                (translationController.currentAppliedTerms && translationController.currentAppliedTerms.length > 0)
+                (translationController.currentAppliedTerms && translationController.currentAppliedTerms.length > 0) ||
+                (translationController.currentOriginal !== "" && translationController.currentTranslation !== "" && translationController.status !== "TRANSLATING")
             )
-
-            // THẺ CHỦ NGỮ (SUBJECT TAG CHIP)
-            Rectangle {
-                id: subjectTagChip
-                objectName: "subjectTagChip"
-                visible: typeof translationController !== "undefined" && translationController.currentOriginal !== ""
-                implicitHeight: 26
-                implicitWidth: subjectChipRow.implicitWidth + 20
-                radius: 13
-                color: subjectChipMouse.containsMouse ? Qt.rgba(0.545, 0.361, 0.965, 0.28) : Qt.rgba(0.545, 0.361, 0.965, 0.18)
-                border.color: "#8B5CF6"
-                border.width: 1.5
-
-                RowLayout {
-                    id: subjectChipRow
-                    anchors.centerIn: parent
-                    spacing: 6
-
-                    Text {
-                        text: (typeof translationController !== "undefined" && translationController.currentSubjectTag && translationController.currentSubjectTag.is_detected) ? "👑" : "👤"
-                        font.pixelSize: 11
-                        Layout.alignment: Qt.AlignVCenter
-                    }
-
-                    Text {
-                        text: "Chủ ngữ:"
-                        color: "#C4B5FD"
-                        font.pixelSize: 11
-                        font.bold: true
-                        Layout.alignment: Qt.AlignVCenter
-                    }
-
-                    Text {
-                        objectName: "subjectTagText"
-                        text: (typeof translationController !== "undefined" && translationController.currentSubjectTag && translationController.currentSubjectTag.text)
-                              ? translationController.currentSubjectTag.text
-                              : "Tự do"
-                        color: "#F8FAFC"
-                        font.pixelSize: 11
-                        font.bold: true
-                        Layout.alignment: Qt.AlignVCenter
-                    }
-
-                    Text {
-                        text: "▾"
-                        color: "#A78BFA"
-                        font.pixelSize: 10
-                        font.bold: true
-                        Layout.alignment: Qt.AlignVCenter
-                    }
-                }
-
-                MouseArea {
-                    id: subjectChipMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    ToolTip.visible: containsMouse
-                    ToolTip.text: "Nhấp để chọn nhanh cặp ngôi xưng / chủ ngữ cho câu thoại"
-                    onClicked: subjectPronounMenu.open()
-                }
-
-                Menu {
-                    id: subjectPronounMenu
-                    y: subjectTagChip.height + 4
-                    width: 290
-                    background: Rectangle {
-                        color: "#0F172A"
-                        border.color: "#8B5CF6"
-                        border.width: 1
-                        radius: 8
-                    }
-
-                    Repeater {
-                        model: [
-                            { pair: "Ta - Ngươi", label: "👑 Ta ➔ Ngươi (Ngạo mạn / Chiến đấu)" },
-                            { pair: "Tôi - Cậu", label: "👤 Tôi ➔ Cậu (Đồng trang lứa / Hiện đại)" },
-                            { pair: "Tớ - Cậu", label: "🌸 Tớ ➔ Cậu (Thanh xuân / Học đường)" },
-                            { pair: "Anh - Em", label: "💫 Anh ➔ Em (Lãng mạn / Thân thiết)" },
-                            { pair: "Em - Tiền bối", label: "🎓 Em ➔ Tiền bối (Senpai - Kouhai)" },
-                            { pair: "Tự do", label: "🔮 Tự do (Tự động theo ngữ cảnh)" }
-                        ]
-                        delegate: MenuItem {
-                            id: pronItem
-                            implicitHeight: 32
-                            background: Rectangle {
-                                color: pronItem.highlighted ? Qt.rgba(0.545, 0.361, 0.965, 0.25) : "transparent"
-                                radius: 4
-                            }
-                            contentItem: Text {
-                                text: modelData.label
-                                color: "#F8FAFC"
-                                font.pixelSize: 12
-                                font.bold: (typeof translationController !== "undefined" && translationController.currentSubjectTag && translationController.currentSubjectTag.pair === modelData.pair)
-                                verticalAlignment: Text.AlignVCenter
-                                leftPadding: 8
-                            }
-                            onTriggered: {
-                                if (typeof translationController !== "undefined") {
-                                    translationController.setSubjectPronoun(modelData.pair)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
 
             Repeater {
                 model: (typeof translationController !== "undefined" && translationController.currentAppliedTerms) ? translationController.currentAppliedTerms : []
@@ -1088,9 +1029,9 @@ Item {
                         anchors.centerIn: parent
                         spacing: 6
 
-                        Text {
-                            text: "🏷️"
-                            font.pixelSize: 11
+                        Rectangle {
+                            width: 6; height: 6; radius: 3
+                            color: modelData.is_glossary ? "#10B981" : "#818CF8"
                             Layout.alignment: Qt.AlignVCenter
                         }
 
@@ -1112,7 +1053,7 @@ Item {
 
                         Text {
                             text: modelData.target
-                            color: modelData.is_glossary ? "#34D399" : "#60A5FA"
+                            color: modelData.is_glossary ? "#34D399" : "#818CF8"
                             font.pixelSize: 11
                             font.bold: true
                             Layout.alignment: Qt.AlignVCenter
@@ -1131,17 +1072,19 @@ Item {
                             id: btnPinChip
                             implicitWidth: 18
                             implicitHeight: 18
-                            radius: 9
-                            color: chipMouse.containsMouse ? Qt.rgba(0.15, 0.45, 0.95, 0.18) : Qt.rgba(0.0, 0.0, 0.0, 0.05)
-                            border.color: chipMouse.containsMouse ? "#2563EB" : Qt.rgba(0.0, 0.0, 0.0, 0.15)
+                            radius: 4
+                            color: chipMouse.containsMouse ? Qt.rgba(0.31, 0.27, 0.90, 0.18) : Qt.rgba(0.0, 0.0, 0.0, 0.05)
+                            border.color: chipMouse.containsMouse ? Theme.accentSapphire : Qt.rgba(0.0, 0.0, 0.0, 0.15)
                             border.width: 1
                             visible: !modelData.is_glossary
                             Layout.alignment: Qt.AlignVCenter
 
                             Text {
                                 anchors.centerIn: parent
-                                text: "📌"
-                                font.pixelSize: 10
+                                text: "+"
+                                color: Theme.accentSapphire
+                                font.pixelSize: 11
+                                font.bold: true
                             }
                         }
                     }
@@ -1176,10 +1119,10 @@ Item {
                          translationController.status !== "TRANSLATING"
                 implicitHeight: 26
                 implicitWidth: extractBtnRow.implicitWidth + 20
-                radius: 13
+                radius: 6
                 color: extractMouse.containsMouse ? Theme.glassPodRaised : Theme.glassPodLuminous
                 border.color: extractMouse.containsMouse ? Theme.accentSapphire : Theme.glassBorderSpecularUpper
-                border.width: 1.5
+                border.width: 1
 
                 RowLayout {
                     id: extractBtnRow
@@ -1187,14 +1130,8 @@ Item {
                     spacing: 6
 
                     Text {
-                        text: "🔍"
-                        font.pixelSize: 11
-                        Layout.alignment: Qt.AlignVCenter
-                    }
-
-                    Text {
                         text: "Tra từ gốc & nghĩa"
-                        color: "#60A5FA"
+                        color: "#818CF8"
                         font.pixelSize: 11
                         font.bold: true
                         Layout.alignment: Qt.AlignVCenter
@@ -1218,8 +1155,11 @@ Item {
         }
         
         Text {
+            objectName: "translationErrorDetails"
             visible: translationController.status === "ERROR"
-            text: "Dịch thất bại. Lỗi xử lý mô hình AI."
+            text: translationController.currentError || "Dịch thất bại. Vui lòng thử lại để xem chi tiết lỗi."
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
             color: Theme.danger
             font.pixelSize: 12
             Layout.fillWidth: true
@@ -1305,7 +1245,7 @@ Item {
 
                 AppButton {
                     objectName: "btnHotkeys"
-                    text: "⌨ Phím tắt (F1)"
+                    text: "Phím tắt (F1)"
                     Layout.alignment: Qt.AlignVCenter
                     Layout.preferredWidth: 120
                     Layout.minimumWidth: 85
@@ -1315,9 +1255,9 @@ Item {
 
                 AppButton {
                     objectName: "btnRetry"
-                    text: "⚡ Dịch lại"
+                    text: "Dịch lại"
                     Layout.alignment: Qt.AlignVCenter
-                    Layout.preferredWidth: 105
+                    Layout.preferredWidth: 95
                     Layout.minimumWidth: 70
                     isDarkGlass: true
                     visible: ["ERROR", "TRANSLATED", "EDITED", "ACCEPTED"].indexOf(translationController.status) >= 0
@@ -1328,9 +1268,9 @@ Item {
 
                 AppButton {
                     objectName: "btnCancelTranslation"
-                    text: "🛑 Hủy dịch (Esc)"
+                    text: "Hủy dịch (Esc)"
                     Layout.alignment: Qt.AlignVCenter
-                    Layout.preferredWidth: 125
+                    Layout.preferredWidth: 120
                     Layout.minimumWidth: 85
                     isDestructive: true
                     visible: translationController.status === "TRANSLATING"
@@ -1342,7 +1282,7 @@ Item {
                     objectName: "btnTranslate"
                     visible: translationController.status !== "TRANSLATING" &&
                              ["TRANSLATED", "EDITED", "ACCEPTED"].indexOf(translationController.status) < 0
-                    text: "⚡ Dịch (Ctrl+T)"
+                    text: "Dịch (Ctrl+T)"
                     Layout.alignment: Qt.AlignVCenter
                     Layout.preferredWidth: 112
                     Layout.minimumWidth: 80
@@ -1354,7 +1294,7 @@ Item {
 
                 AppButton {
                     objectName: "btnAccept"
-                    text: "✓ Chấp nhận (Accept) ➔"
+                    text: "Chấp nhận (Accept) ➔"
                     Layout.alignment: Qt.AlignVCenter
                     Layout.preferredWidth: 148
                     Layout.minimumWidth: 100
@@ -1436,7 +1376,7 @@ Item {
         id: altStyleMenu
         width: 260
         MenuItem {
-            text: "✨ Phóng khoáng (Tự nhiên, biểu cảm)"
+            text: "Phóng khoáng (Tự nhiên, biểu cảm)"
             font.pixelSize: 11
             onTriggered: {
                 var rowIdx = (typeof subListView !== "undefined" && subListView.currentRawIndex >= 0) ? subListView.currentRawIndex : 0
@@ -1444,7 +1384,7 @@ Item {
             }
         }
         MenuItem {
-            text: "📐 Sát nghĩa (Literal, chuẩn xác)"
+            text: "Sát nghĩa (Chuẩn xác, bám sát câu)"
             font.pixelSize: 11
             onTriggered: {
                 var rowIdx = (typeof subListView !== "undefined" && subListView.currentRawIndex >= 0) ? subListView.currentRawIndex : 0

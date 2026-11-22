@@ -105,3 +105,28 @@ def test_playhead_edge_guard_auto_scroll(qapp):
     assert timeline.horizontalScrollBar().value() > 0
 
     timeline.close()
+
+
+def test_playhead_overlay_stops_at_subtitle_track_bottom(qapp):
+    timeline = TimelineWidget()
+    timeline.load_project_data(duration_ms=20000, segments=[])
+    timeline.resize(600, 300)
+    timeline.show()
+    timeline._show_range_row()
+    qapp.processEvents()
+
+    container = timeline.container
+    expected_bottom = container.track.y() + container.track.height()
+    assert container.gap_row.isVisible()
+    assert container.playhead.y() == 0
+    assert container.playhead.height() == expected_bottom
+    playhead_bottom_in_tl = container.playhead.mapTo(timeline, container.playhead.rect().bottomLeft()).y()
+    assert playhead_bottom_in_tl < container.gap_row.y()
+
+    # Scrolling during playback must keep gap_row stationary (no horizontal jitter)
+    gap_geo_before = container.gap_row.geometry()
+    timeline.update_playhead(10000)
+    qapp.processEvents()
+    assert container.gap_row.geometry() == gap_geo_before
+
+    timeline.close()

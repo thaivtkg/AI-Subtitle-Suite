@@ -54,6 +54,19 @@ class TestTimingNudgeAndSettings(unittest.TestCase):
         self.assertEqual(seg["start"], "00:00:16,100")
         self.assertEqual(seg["end"], "00:00:19,100")
 
+    def test_nudge_does_not_reemit_selection_and_seek_playhead(self):
+        from core.subtitle_editing.selection_controller import SubtitleSelectionController
+
+        controller = SubtitleSelectionController()
+        self.editor.selection_controller = controller
+        self.editor.select_segment(1)
+        emitted = []
+        controller.selection_changed.connect(lambda *args: emitted.append(args))
+
+        self.editor.nudge_selected_segment(100, target="both")
+
+        self.assertEqual(emitted, [])
+
     def test_nudge_start_only(self):
         self.editor.select_segment(0)
         self.editor.nudge_selected_segment(-500, target="start")

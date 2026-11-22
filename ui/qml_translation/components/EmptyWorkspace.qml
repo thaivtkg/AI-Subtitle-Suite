@@ -27,11 +27,11 @@ Item {
 
             Text {
                 Layout.alignment: Qt.AlignHCenter
-                text: "⚡ HƯỚNG DẪN THAO TÁC NHANH"
+                text: "Hướng dẫn thao tác nhanh"
                 color: Theme.accentSapphire
                 font.pixelSize: 14
                 font.bold: true
-                font.letterSpacing: 1.5
+                font.letterSpacing: 0.5
             }
 
             Text {
@@ -100,7 +100,7 @@ Item {
                 Layout.preferredWidth: 260
                 Layout.topMargin: Theme.spaceMedium
                 visible: (typeof subtitleModel === "undefined" || subtitleModel === null || subtitleModel.rowCount() === 0)
-                text: "📥 Nạp phụ đề từ Timeline"
+                text: "Nạp phụ đề từ Timeline"
                 tooltip: "Nạp toàn bộ các câu phụ đề từ Timeline vào không gian dịch"
                 onClicked: {
                     if (typeof translationStudioPage !== "undefined" && translationStudioPage !== null) {

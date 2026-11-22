@@ -113,3 +113,65 @@ def test_translation_controller_current_subject_tag_property(qapp):
     tc.setSubjectPronoun("Anh - Em")
     assert tc.currentSubjectTag["pair"] == "Anh - Em"
     assert "Anh ➔ Em" in tc.currentSubjectTag["text"] or "Anh - Em" in tc.currentSubjectTag["text"]
+
+
+def test_pure_free_mode_omits_context_in_prompt(qapp):
+    """Kiểm tra khi chọn 'Tự do', prompt dịch hoàn toàn không chứa ngữ cảnh câu trước/sau để dịch thuần túy."""
+    from unittest.mock import MagicMock
+    from core.translation.models.subtitle import SubtitleModel
+    from core.translation.controllers.translation_controller import TranslationController
+
+    model = SubtitleModel()
+    model.load_data([
+        {"id": "1", "original": "Câu 1 ngữ cảnh trước", "translation": "Bản dịch 1", "status": "ACCEPTED"},
+        {"id": "2", "original": "決まってるわ", "translation": "", "status": "PENDING"},
+        {"id": "3", "original": "Câu 3 ngữ cảnh sau", "translation": "", "status": "PENDING"},
+    ])
+
+    captured_prompts = []
+
+    class DummyWorker:
+        def __init__(self, idx, prompt, profile):
+            captured_prompts.append(prompt)
+            self.progress = MagicMock()
+            self.finished = MagicMock()
+            self.error = MagicMock()
+            self.termsExtracted = MagicMock()
+
+        def isRunning(self): return False
+        def start(self): pass
+
+    tc = TranslationController(model, worker_factory=DummyWorker)
+    tc.loadSubtitle(1)
+
+    # Đặt chủ ngữ sang 'Tự do' (Dịch thuần tự do)
+    tc.setSubjectPronoun("Tự do")
+    tc.requestTranslation(1, "Japanese", "Vietnamese", "")
+
+    assert len(captured_prompts) == 1
+    prompt = captured_prompts[0]
+    # Xác nhận ngữ cảnh trước và sau ĐÃ ĐƯỢC LOẠI BỎ hoàn toàn
+    assert "--- PREVIOUS SUBTITLES ---" not in prompt
+    assert "--- NEXT SUBTITLES ---" not in prompt
+    assert "Câu 1 ngữ cảnh trước" not in prompt
+    assert "Câu 3 ngữ cảnh sau" not in prompt
+    # Chỉ chứa câu hiện tại để dịch thuần túy
+    assert "--- CURRENT SUBTITLE TO TRANSLATE ---" in prompt
+    assert "決まってるわ" in prompt
+
+
+def test_model_catalog_contains_translategemma_q4_and_q5():
+    """Kiểm tra danh mục model catalog có cả 2 phiên bản Q4_K_M và Q5_K_M của TranslateGemma."""
+    from core.translation.core.model_catalog import MODEL_CATALOG
+
+    assert "translategemma-9b-q4_k_m" in MODEL_CATALOG
+    assert "translategemma-9b-q5_k_m" in MODEL_CATALOG
+
+    q4 = MODEL_CATALOG["translategemma-9b-q4_k_m"]
+    q5 = MODEL_CATALOG["translategemma-9b-q5_k_m"]
+
+    assert q4.filename == "gemma-2-9b-it-Q4_K_M.gguf"
+    assert q5.filename == "gemma-2-9b-it-Q5_K_M.gguf"
+    assert "Q5_K_M" in q5.display_name
+    assert "Q5_K_M.gguf" in q5.download_url
+    assert q5.min_vram_gb > q4.min_vram_gb

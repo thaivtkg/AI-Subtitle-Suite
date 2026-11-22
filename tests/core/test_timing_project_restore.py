@@ -4,10 +4,13 @@ import shutil
 import tempfile
 import unittest
 from unittest.mock import MagicMock
+from types import SimpleNamespace
 
 from PySide6.QtWidgets import QApplication
 
 from core.artifacts.artifact_store import ArtifactStore
+from core.artifacts.artifact import Artifact
+from core.artifacts.artifact_types import ArtifactStatus, ArtifactType
 from core.project.project_state import TimingState
 from core.services.project_service import ProjectService
 from core.subtitle_generation.faster_whisper_service import FasterWhisperService
@@ -32,6 +35,214 @@ class TestTimingProjectRestore(unittest.TestCase):
         service = ProjectService(ArtifactStore())
         service.create_project(project_dir, "video.mp4", video_path)
         return root, project_dir, service
+
+    def test_resume_uses_33_editor_segments_when_artifact_id_collides(self):
+        root, project_dir, service = self._project()
+        try:
+            timing_service = self._commit_finished_batch(service)
+            timing_id = service.current_project.state.timing.timing_artifact_id
+            timing_path = service.artifact_store.get(timing_id).path
+            segments = [
+                {"start_ms": i * 10000, "end_ms": i * 10000 + 3060, "text": f"Old {i}"}
+                for i in range(1, 34)
+            ]
+            with open(timing_path, "w", encoding="utf-8") as handle:
+                for i, segment in enumerate(segments, 1):
+                    handle.write(
+                        f"{i}\n{timing_service._ms_to_time_str(segment['start_ms'])} --> "
+                        f"{timing_service._ms_to_time_str(segment['end_ms'])}\nOld {i}\n\n"
+                    )
+            checkpoint = service.load_timing_checkpoint()
+            checkpoint.next_segment_index = 26
+            checkpoint.last_completed_end_ms = 253060
+            service.save_timing_checkpoint(checkpoint)
+            service.current_project.state.timing.next_segment_index = 26
+            subtitle_path = os.path.join(project_dir, "subtitle.json")
+            with open(subtitle_path, "w", encoding="utf-8") as handle:
+                handle.write('{"segments": []}')
+            service.artifact_store.register(Artifact(
+                artifact_id=timing_id, artifact_type=ArtifactType.SUBTITLE,
+                path=subtitle_path, created_at="now", updated_at="now",
+                source_project_id=service.current_project.project_id,
+                status=ArtifactStatus.READY, revision=1, metadata={},
+            ))
+
+            captured = []
+            timing_service._execute_run = lambda **kwargs: captured.append(kwargs)
+            with self.assertRaisesRegex(ValueError, "Editor có nhiều câu"):
+                timing_service.continue_timing(1, {}, existing_segments=segments + [
+                    {"start_ms": 340000, "end_ms": 341000}
+                ])
+            self.assertEqual(service.current_project.state.timing.timing_artifact_id, timing_id)
+            # Unknown editor coverage must use the complete artifact.
+            timing_service.continue_timing(1, {}, existing_segments=None)
+            self.assertEqual(service.load_timing_checkpoint().next_segment_index, 34)
+            timing_service.continue_timing(1, {}, existing_segments=[
+                {"start": row["start_ms"], "end": row["end_ms"], "text": row["text"]}
+                for row in segments
+            ])
+
+            self.assertEqual(service.current_project.state.timing.next_segment_index, 34)
+            self.assertEqual(service.load_timing_checkpoint().next_segment_index, 34)
+            self.assertEqual(captured[0]["start_ms"], segments[-1]["end_ms"])
+            self.assertEqual(
+                service.artifact_store.get(service.current_project.state.timing.timing_artifact_id).path,
+                timing_path,
+            )
+            self.assertEqual(service.artifact_store.get(timing_id).path, subtitle_path)
+            timing_service._on_worker_finished(
+                [{"start_ms": 335000, "end_ms": 336000}], True
+            )
+            with open(timing_path, encoding="utf-8") as handle:
+                timing_text = handle.read()
+            self.assertEqual(timing_text.count("-->"), 34)
+            self.assertIn("Old 33", timing_text)
+            self.assertIn("\n34\n", timing_text)
+            with open(subtitle_path, encoding="utf-8") as handle:
+                self.assertEqual(json.load(handle), {"segments": []})
+            reopened = ProjectService(ArtifactStore())
+            reopened.open_project(project_dir)
+            self.assertEqual(
+                reopened.artifact_store.get(
+                    reopened.current_project.state.timing.timing_artifact_id
+                ).path, timing_path,
+            )
+            self.assertEqual(reopened.artifact_store.get(timing_id).path, subtitle_path)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_resume_button_passes_editor_segments_to_timing_service(self):
+        from ui.Gui import MainWindow
+
+        window = MainWindow.__new__(MainWindow)
+        segments = [{"start_ms": 379060, "end_ms": 383060}]
+        window.sub_editor = SimpleNamespace(all_segments=segments)
+        window._current_range_segments = lambda: segments
+        window.project_service = MagicMock()
+        window.project_service.load_timing_checkpoint.return_value = SimpleNamespace(
+            timing_artifact_id="timing"
+        )
+        window.timing_service = MagicMock()
+
+        MainWindow._resume_timing_draft(window, 5, {"use_vad": True})
+
+        window.timing_service.continue_timing.assert_called_once_with(
+            5, {"use_vad": True}, existing_segments=segments
+        )
+
+    def test_completed_timing_checkpoint_does_not_offer_resume_after_editor_edits(self):
+        from unittest.mock import patch
+
+        root, project_dir, service = self._project()
+        try:
+            self._commit_finished_batch(service)
+            service.current_project.state.timing.status = "IDLE"
+            with patch("core.services.model_manager.ModelManager.is_installed", return_value=False):
+                panel = self._panel(service)
+
+            self.assertFalse(panel._has_resumable_timing_checkpoint())
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_generate_next_timing_batch_appends_without_recovery_prompt(self):
+        from unittest.mock import patch
+        from PySide6.QtWidgets import QMessageBox
+        from ui.Gui import MainWindow
+
+        root, project_dir, service = self._project()
+        try:
+            timing_service = self._commit_finished_batch(service)
+            service.current_project.state.timing.status = "IDLE"
+            artifact_id = service.current_project.state.timing.timing_artifact_id
+            window = MainWindow.__new__(MainWindow)
+            window.project_service = service
+            window.timing_service = timing_service
+            window._current_range_segments = lambda: None
+            window._on_timing_error = lambda error: self.fail(error)
+            runs = []
+            timing_service._execute_run = lambda **kwargs: runs.append(kwargs)
+            with patch("core.services.model_manager.ModelManager.is_installed", return_value=False):
+                panel = self._panel(service)
+            panel.cmb_mode.setCurrentIndex(1)
+            panel.video_duration_ms = 600000
+            panel.spin_batch_val.setValue(3)
+            panel.timing_start_requested.connect(
+                lambda count, settings: MainWindow._start_timing_draft(window, count, settings)
+            )
+            panel.timing_resume_requested.connect(
+                lambda count, settings: MainWindow._resume_timing_draft(window, count, settings)
+            )
+            with patch.object(QMessageBox, "question") as prompt:
+                panel._on_generate_clicked()
+            prompt.assert_not_called()
+            self.assertEqual(runs[0]["start_ms"], 4000)
+            self.assertEqual(runs[0]["target_count"], 3)
+            self.assertEqual(service.current_project.state.timing.timing_artifact_id, artifact_id)
+            timing_service._on_worker_finished([
+                {"start_ms": 5000, "end_ms": 6000},
+                {"start_ms": 7000, "end_ms": 8000},
+                {"start_ms": 9000, "end_ms": 10000},
+            ], False)
+            artifact = service.artifact_store.get(artifact_id)
+            with open(artifact.path, encoding="utf-8") as handle:
+                self.assertEqual(handle.read().count("-->"), 5)
+            self.assertEqual(service.load_timing_checkpoint().next_segment_index, 6)
+            service.current_project.state.timing.status = "COMPLETED"
+            panel._reset_ui_state()
+            with patch.object(QMessageBox, "question") as prompt:
+                panel._on_generate_clicked()
+            prompt.assert_not_called()
+            self.assertEqual(runs[1]["start_ms"], 10000)
+            self.assertEqual(service.current_project.state.timing.timing_artifact_id, artifact_id)
+            timing_service._on_worker_finished([], True)
+            with open(artifact.path, encoding="utf-8") as handle:
+                self.assertEqual(handle.read().count("-->"), 5)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_continue_timing_keeps_editor_edits_and_deleted_rows(self):
+        root, project_dir, service = self._project()
+        try:
+            timing_service = self._commit_finished_batch(service)
+            artifact_id = service.current_project.state.timing.timing_artifact_id
+            runs = []
+            timing_service._execute_run = lambda **kwargs: runs.append(kwargs)
+            edited = [{"start": "00:00:01,200", "end": "00:00:02,500", "text": "Edited\nsubtitle"}]
+            with open(service.artifact_store.get(artifact_id).path, encoding="utf-8") as handle:
+                original_draft = handle.read()
+            timing_service.continue_timing(1, {}, existing_segments=edited)
+            self.assertEqual(runs[0]["start_ms"], 2500)
+            with open(service.artifact_store.get(artifact_id).path, encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), original_draft)
+            timing_service._on_worker_finished([{"start_ms": 5000, "end_ms": 6000}], False)
+            with open(service.artifact_store.get(artifact_id).path, encoding="utf-8") as handle:
+                content = handle.read()
+            self.assertEqual(content.count("-->"), 2)
+            self.assertIn("00:00:01,200 --> 00:00:02,500\nEdited\nsubtitle", content)
+            self.assertNotIn("00:00:03,000", content)
+            reopened = ProjectService(ArtifactStore())
+            reopened.open_project(project_dir)
+            self.assertEqual(reopened.load_timing_checkpoint().next_segment_index, 3)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_continue_timing_after_deleting_all_rows_keeps_empty_editor_authoritative(self):
+        root, project_dir, service = self._project()
+        try:
+            timing_service = self._commit_finished_batch(service)
+            runs = []
+            timing_service._execute_run = lambda **kwargs: runs.append(kwargs)
+            timing_service.continue_timing(1, {}, existing_segments=[])
+            self.assertEqual(runs[0]["start_ms"], 0)
+            timing_service._on_worker_finished([{"start_ms": 5000, "end_ms": 6000}], False)
+            artifact_id = service.current_project.state.timing.timing_artifact_id
+            with open(service.artifact_store.get(artifact_id).path, encoding="utf-8") as handle:
+                content = handle.read()
+            self.assertEqual(content.count("-->"), 1)
+            self.assertTrue(content.startswith("1\n"))
+            self.assertEqual(service.load_timing_checkpoint().next_segment_index, 2)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
 
     @staticmethod
     def _panel(service):
@@ -541,9 +752,13 @@ class TestTimingProjectRestore(unittest.TestCase):
         root, project_dir, service = self._project()
         try:
             self._commit_finished_batch(service)
-            # Đảm bảo checkpoint ở trạng thái resumable (chưa COMPLETED)
+            # A completed batch is not resumable unless an unfinished batch remains.
             service.current_project.state.timing.status = "IDLE"
-            panel = self._panel(service)
+            checkpoint = service.load_timing_checkpoint()
+            checkpoint.active_batch = {"status": "CANCELLED"}
+            service.save_timing_checkpoint(checkpoint)
+            with patch("core.services.model_manager.ModelManager.is_installed", return_value=False):
+                panel = self._panel(service)
             panel.cmb_mode.setCurrentIndex(1)  # timing mode
             panel.video_duration_ms = 600000
             panel._set_ui_state_running = lambda: None
@@ -578,6 +793,168 @@ class TestTimingProjectRestore(unittest.TestCase):
 
             self.assertEqual(len(start_calls), 0)
             self.assertEqual(len(resume_calls), 0)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_start_timing_with_external_srt_continues_from_last_subtitle(self):
+        """start_timing(existing_segments=...) must continue after last external SRT end time."""
+        root, _project_dir, service = self._project()
+        try:
+            timing_service = TimingBatchService(service)
+            captured = []
+            timing_service._execute_run = lambda **kwargs: captured.append(kwargs)
+
+            external_segments = [
+                {"start": 1000, "end": 4000, "text": "Ext line 1"},
+                {"start": 5000, "end": 12500, "text": "Ext line 2"},
+            ]
+            timing_service.start_timing(2, {}, existing_segments=external_segments)
+
+            self.assertEqual(len(captured), 1)
+            self.assertEqual(captured[0]["start_ms"], 12500)
+            cp = service.load_timing_checkpoint()
+            self.assertEqual(cp.next_segment_index, 3)
+            self.assertEqual(cp.last_completed_end_ms, 12500)
+
+            timing_service._on_worker_finished(
+                [{"start_ms": 14000, "end_ms": 16500, "text": ""}],
+                is_end_of_source=True,
+            )
+            from core.srt_parser import SrtParser
+            art = service.artifact_store.get(service.current_project.state.timing.timing_artifact_id)
+            self.assertIsNotNone(art)
+            parsed = SrtParser.parse(art.path)
+            self.assertEqual(len(parsed), 3)
+            self.assertEqual(parsed[0]["text"], "Ext line 1")
+            self.assertEqual(parsed[1]["text"], "Ext line 2")
+            self.assertEqual(parsed[1]["end"], 12500)
+            self.assertEqual(parsed[2]["start"], 14000)
+
+            # Empty trailing VAD result at EOF must still commit preserved external segments.
+            timing_service2 = TimingBatchService(service)
+            timing_service2._execute_run = lambda **kwargs: None
+            timing_service2.start_timing(2, {}, existing_segments=external_segments)
+            timing_service2._on_worker_finished([], is_end_of_source=True)
+            art2 = service.artifact_store.get(service.current_project.state.timing.timing_artifact_id)
+            parsed2 = SrtParser.parse(art2.path)
+            self.assertEqual(len(parsed2), 2)
+            self.assertEqual(parsed2[1]["end"], 12500)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_add_external_srt_then_generate_timing_continues_from_last_segment(self):
+        """Adding external SRT via panel (even over a stale timing checkpoint) continues from its end."""
+        from PySide6.QtWidgets import QFileDialog, QMainWindow
+        from unittest.mock import patch
+        from ui.Gui import MainWindow
+
+        root, project_dir, service = self._project()
+        try:
+            # Seed a stale earlier timing checkpoint to verify external SRT import clears it.
+            self._commit_finished_batch(service)
+            cp = service.load_timing_checkpoint()
+            cp.active_batch = {"status": "CANCELLED"}
+            service.save_timing_checkpoint(cp)
+
+            srt_path = os.path.join(root, "external.srt")
+            with open(srt_path, "w", encoding="utf-8") as handle:
+                handle.write(
+                    "1\n00:00:02,000 --> 00:00:05,000\nFirst line\n\n"
+                    "2\n00:06:30,000 --> 00:06:32,450\nLast line\n\n"
+                )
+
+            with patch("core.services.model_manager.ModelManager.is_installed", return_value=False):
+                panel = self._panel(service)
+
+            win = QMainWindow()
+            win.setCentralWidget(panel)
+
+            class FakeEditor:
+                def __init__(self, project_svc):
+                    self.project_service = project_svc
+                    self.all_segments = []
+                    self.srt_path = None
+                    self.undo_manager = None
+
+                def render_page(self):
+                    pass
+
+                def save_draft(self, filepath=None, silent=False):
+                    target = filepath or self.srt_path or os.path.join(project_dir, "Project.ai-subtitle-draft")
+                    self.project_service.save_draft(target, self.all_segments)
+                    self.srt_path = target
+                    return target
+
+            video_path = os.path.join(root, "video.mp4")
+            item_key = "item_ext_1"
+
+            class FakeQueue:
+                def __init__(self):
+                    self.active_item_key = item_key
+                    self.active_vid = video_path
+                    self.srt_for_item = None
+
+                def get_item(self, key):
+                    if key == item_key:
+                        return {
+                            "project_id": service.current_project.project_id,
+                            "project_root": project_dir,
+                        }
+                    return {}
+
+                def set_srt_for_video(self, key, path):
+                    if key == item_key:
+                        self.srt_for_item = path
+
+                def get_active_data(self):
+                    return video_path, self.srt_for_item
+
+            win.sub_editor = FakeEditor(service)
+            win.queue_mgr = FakeQueue()
+            win.project_service = service
+            win.generation_panel = panel
+            win._queue_project_identity_matches = lambda pid, proot: MainWindow._queue_project_identity_matches(win, pid, proot)
+            win._current_range_segments = lambda: MainWindow._current_range_segments(win)
+            win._on_timing_error = lambda msg: self.fail(f"Unexpected timing error: {msg}")
+
+            timing_service = TimingBatchService(service)
+            captured = []
+            timing_service._execute_run = lambda **kwargs: captured.append(kwargs)
+            win.timing_service = timing_service
+
+            with patch.object(QFileDialog, "getOpenFileName", return_value=(srt_path, "")):
+                panel._on_add_external_srt()
+
+            # Draft saved inside project dir and bound to queue so _current_range_segments succeeds
+            self.assertIsNotNone(win.queue_mgr.srt_for_item)
+            self.assertTrue(win.queue_mgr.srt_for_item.startswith(project_dir))
+            self.assertIsNone(service.load_timing_checkpoint())
+
+            panel.cmb_mode.setCurrentIndex(1)  # Timing Draft (VAD Only)
+            panel.video_duration_ms = 600000
+            panel._set_ui_state_running = lambda: None
+            panel.timing_start_requested.connect(
+                lambda b, s: MainWindow._start_timing_draft(win, b, s)
+            )
+            panel.timing_resume_requested.connect(
+                lambda b, s: self.fail("Should start timing from external SRT end instead of resuming stale checkpoint")
+            )
+
+            panel._on_generate_clicked()
+
+            self.assertEqual(len(captured), 1)
+            self.assertEqual(captured[0]["start_ms"], 392450)
+            self.assertEqual(service.load_timing_checkpoint().next_segment_index, 3)
+
+            # Selecting No (Start Fresh) on a resumable prompt must start at 0ms and ignore editor segments.
+            panel._set_ui_state_running = lambda: None
+            panel.timing_start_requested.disconnect()
+            captured.clear()
+            panel._timing_start_fresh = True
+            MainWindow._start_timing_draft(win, 2, {})
+            self.assertEqual(len(captured), 1)
+            self.assertEqual(captured[0]["start_ms"], 0)
+            self.assertFalse(panel._timing_start_fresh)
         finally:
             shutil.rmtree(root, ignore_errors=True)
 

@@ -37,6 +37,7 @@ def make_controller(mode):
     finally:
         HardwareDetector.get_recommended_profile = original_profile
 
+    controller.loadSubtitle(0)
     return model, controller, factory
 
 
@@ -75,7 +76,8 @@ def test_empty_output_becomes_error(qapp):
     wait_for(qapp, lambda: not controller.worker.isRunning())
 
     assert model.get_all_data()[0]["status"] == "ERROR"
-    assert model.get_all_data()[0]["translation"] == "Lỗi: Model trả về bản dịch rỗng."
+    assert model.get_all_data()[0]["translation"] == ""
+    assert controller.currentError == "Lỗi: Model trả về bản dịch rỗng."
 
 
 def test_error_mode_is_deterministic(qapp):
@@ -86,7 +88,8 @@ def test_error_mode_is_deterministic(qapp):
     wait_for(qapp, lambda: not controller.worker.isRunning())
 
     assert model.get_all_data()[0]["status"] == "ERROR"
-    assert model.get_all_data()[0]["translation"] == "Lỗi: Deterministic test error."
+    assert model.get_all_data()[0]["translation"] == ""
+    assert controller.currentError == "Lỗi: Deterministic test error."
 
 
 def test_slow_mode_allows_selection_switch_without_second_worker(qapp):

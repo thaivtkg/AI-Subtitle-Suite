@@ -43,22 +43,22 @@ ColumnLayout {
             spacing: 6
 
             Text {
-                text: "🟣 NGỮ CẢNH"
-                color: "#FFFFFF"
+                text: "Ngữ cảnh"
+                color: Theme.textPrimary
                 font.pixelSize: 12
                 font.bold: true
             }
             Text {
-                text: "(INSPECTOR)"
-                color: Qt.rgba(1, 1, 1, 0.7)
+                text: "(Inspector)"
+                color: Theme.textMuted
                 font.pixelSize: 11
                 visible: inspectorRoot.width >= 310
             }
             Item { Layout.fillWidth: true }
             Rectangle {
-                radius: 8
-                color: Qt.rgba(1, 1, 1, 0.16)
-                border.color: Qt.rgba(1, 1, 1, 0.3)
+                radius: 6
+                color: Qt.rgba(1, 1, 1, 0.08)
+                border.color: Theme.glassBorderSpecularUpper
                 border.width: 1
                 implicitWidth: closeLbl.implicitWidth + 12
                 implicitHeight: 22
@@ -66,15 +66,15 @@ ColumnLayout {
                     id: closeLbl
                     anchors.centerIn: parent
                     text: "Hot-L & Đóng"
-                    color: "#FFFFFF"
+                    color: Theme.textSecondary
                     font.pixelSize: 11
                 }
             }
         }
 
         Text {
-            text: "⚡ Bấm đúp để sửa nhanh Mốc Giờ & Ràng Buộc ⚙"
-            color: Qt.rgba(1, 1, 1, 0.75)
+            text: "Bấm đúp để sửa nhanh mốc giờ & ràng buộc"
+            color: Theme.textMuted
             font.pixelSize: 11
         }
     }
@@ -204,7 +204,7 @@ ColumnLayout {
 
                 Text {
                     anchors.centerIn: parent
-                    text: "TIMELINE"
+                    text: "Timeline"
                     font.pixelSize: 11
                     font.bold: true
                     color: tabOuterContainer.activeHoverIndex === 0 ? "#FFFFFF" : Qt.rgba(1, 1, 1, 0.55)
@@ -224,7 +224,7 @@ ColumnLayout {
 
                 Text {
                     anchors.centerIn: parent
-                    text: "INTELLIGENCE"
+                    text: "Intelligence"
                     font.pixelSize: 11
                     font.bold: true
                     color: tabOuterContainer.activeHoverIndex === 1 ? "#FFFFFF" : Qt.rgba(1, 1, 1, 0.55)
@@ -244,7 +244,7 @@ ColumnLayout {
 
                 Text {
                     anchors.centerIn: parent
-                    text: "SUMMARY"
+                    text: "Summary"
                     font.pixelSize: 11
                     font.bold: true
                     color: tabOuterContainer.activeHoverIndex === 2 ? "#FFFFFF" : Qt.rgba(1, 1, 1, 0.55)
@@ -353,11 +353,10 @@ ColumnLayout {
                     RowLayout {
                         Layout.fillWidth: true
                         Text {
-                            text: "⏱️ THỜI LƯỢNG & TỐC ĐỘ"
-                            color: "#38BDF8"
+                            text: "Thời lượng & tốc độ"
+                            color: Theme.accentSapphire
                             font.pixelSize: 11
                             font.bold: true
-                            font.letterSpacing: 0.5
                         }
                         Item { Layout.fillWidth: true }
                     }
@@ -366,15 +365,19 @@ ColumnLayout {
                         text: (typeof translationController !== "undefined" && translationController.currentStartTime !== ""
                                ? (translationController.currentStartTime + " ➔ " + translationController.currentEndTime)
                                : "00:01:14.200 ➔ 00:01:17.800")
-                        color: "#F8FAFC"
+                        color: Theme.textPrimary
                         font.pixelSize: 13
                         font.bold: true
+                        font.family: "JetBrains Mono, Consolas, monospace"
+                        font.features: { "tnum": 1 }
                     }
 
                     Text {
                         text: "Thời lượng: 3.60s • Tốc độ: 14 ký tự/giây"
-                        color: "#CBD5E1"
+                        color: Theme.textSecondary
                         font.pixelSize: 11
+                        font.family: "JetBrains Mono, Consolas, monospace"
+                        font.features: { "tnum": 1 }
                     }
                 }
             }
@@ -406,11 +409,10 @@ ColumnLayout {
                     RowLayout {
                         Layout.fillWidth: true
                         Text {
-                            text: "✓ KIỂM TRA QUY CHUẨN (QA)"
-                            color: "#4ADE80"
+                            text: "Kiểm tra quy chuẩn (QA)"
+                            color: Theme.success
                             font.pixelSize: 11
                             font.bold: true
-                            font.letterSpacing: 0.5
                         }
                         Item { Layout.fillWidth: true }
                     }
@@ -477,7 +479,7 @@ ColumnLayout {
                         anchors.rightMargin: 16
                         spacing: 10
 
-                        // Title: 📚 THUẬT NGỮ & THỰC THỂ (count)
+                        // Title: THUẬT NGỮ & THỰC THỂ (count)
                         RowLayout {
                             Layout.fillWidth: true
                             Layout.rightMargin: 4
@@ -488,11 +490,10 @@ ColumnLayout {
                             Text {
                                 id: glossaryTitleText
                                 objectName: "glossaryTitleText"
-                                text: "📚 THUẬT NGỮ & THỰC THỂ (" + (typeof projectController !== "undefined" ? projectController.glossaryTerms.length : 0) + ")"
+                                text: "Thuật ngữ & thực thể (" + (typeof projectController !== "undefined" ? projectController.glossaryTerms.length : 0) + ")"
                                 color: Theme.accentSapphire
                                 font.pixelSize: 11
                                 font.bold: true
-                                font.letterSpacing: 0.5
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 60
                                 elide: Text.ElideRight
@@ -623,7 +624,7 @@ ColumnLayout {
                                         objectName: "btnSaveTerm"
                                         implicitHeight: 24
                                         contentItem: Text {
-                                            text: "📌 Ghim Thuật Ngữ"
+                                            text: "Ghim thuật ngữ"
                                             color: "#FFFFFF"
                                             font.pixelSize: 10
                                             font.bold: true
@@ -817,17 +818,18 @@ ColumnLayout {
                         Rectangle {
                             implicitWidth: summaryBadge.implicitWidth + 14
                             implicitHeight: 20
-                            radius: 10
-                            color: "#AD1457"
+                            radius: 6
+                            color: Theme.glassPodRaised
+                            border.color: Theme.glassBorderSpecularUpper
+                            border.width: 1
 
                             Text {
                                 id: summaryBadge
                                 anchors.centerIn: parent
-                                text: "📌 TÓM TẮT CỐT TRUYỆN"
-                                color: "#FFFFFF"
+                                text: "Tóm tắt cốt truyện"
+                                color: Theme.textPrimary
                                 font.pixelSize: 10
                                 font.bold: true
-                                font.letterSpacing: 0.5
                             }
                         }
                         Item { Layout.fillWidth: true }
@@ -889,9 +891,9 @@ ColumnLayout {
                 objectName: "summaryArchetypeCapsule"
                 Layout.fillWidth: true
                 implicitHeight: summaryCapsuleCol.implicitHeight + 16
-                radius: 12
-                color: Theme.glassPodRaised
-                border.color: Theme.glassBorderSpecularLower
+                radius: 10
+                color: capsuleMouse.containsMouse ? Theme.glassPodRaised : Theme.glassPodLuminous
+                border.color: capsuleMouse.containsMouse ? Theme.accentSapphire : Theme.glassBorderSpecularLower
                 border.width: 1
                 visible: typeof projectController !== "undefined"
 
@@ -905,53 +907,260 @@ ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 6
 
-                        Text {
+                        Rectangle {
                             id: summaryCapsuleIcon
-                            text: {
-                                if (typeof projectController === "undefined") return "🎭"
-                                var list = projectController.archetypeList || []
-                                for (var i = 0; i < list.length; i++) {
-                                    if (list[i].id === projectController.activeArchetype) {
-                                        return list[i].icon || "🎭"
-                                    }
-                                }
-                                return "🎭"
-                            }
-                            font.pixelSize: 13
+                            width: 6; height: 6; radius: 3
+                            color: (typeof projectController !== "undefined" && projectController.activePronounPair) ? Theme.accentSapphire : Theme.textMuted
+                            Layout.alignment: Qt.AlignVCenter
                         }
 
                         Text {
                             id: summaryCapsuleLabel
                             objectName: "summaryCapsuleLabel"
-                            text: typeof projectController !== "undefined" ? projectController.archetypeDisplayLabel : "Tự do"
-                            color: Theme.textOnLightPod
+                            text: typeof projectController !== "undefined" && projectController.archetypeDisplayLabel ? projectController.archetypeDisplayLabel : "Đại từ:"
+                            color: Theme.textSecondary
                             font.pixelSize: 11
                             font.bold: true
                             elide: Text.ElideRight
-                            Layout.fillWidth: true
                         }
 
                         Text {
                             id: summaryCapsulePronouns
                             objectName: "summaryCapsulePronouns"
-                            text: typeof projectController !== "undefined" ? projectController.activePronounPair : ""
+                            text: typeof projectController !== "undefined" && projectController.activePronounPair ? projectController.activePronounPair : "Tự do"
                             color: Theme.accentSapphire
                             font.pixelSize: 11
                             font.bold: true
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                        }
+
+                        Text {
+                            text: "▾"
+                            color: Theme.textMuted
+                            font.pixelSize: 10
+                            Layout.alignment: Qt.AlignVCenter
                         }
                     }
 
                     Text {
                         id: summaryCapsuleStatus
                         objectName: "summaryCapsuleStatus"
-                        text: typeof projectController !== "undefined" && projectController.isArchetypeLocked
-                              ? "🔒 Đã khóa thủ công"
-                              : "✨ Tự động nhận diện sau 2s"
-                        color: typeof projectController !== "undefined" && projectController.isArchetypeLocked
-                               ? "#D97706"
-                               : "#16A34A"
+                        text: typeof projectController !== "undefined" && (projectController.isArchetypeLocked || projectController.activePronounPair)
+                              ? "Đã khóa thủ công"
+                              : "Tự động nhận diện sau 2s"
+                        color: typeof projectController !== "undefined" && (projectController.isArchetypeLocked || projectController.activePronounPair)
+                               ? "#F59E0B"
+                               : "#10B981"
                         font.pixelSize: 10
                         font.bold: true
+                    }
+                }
+
+                MouseArea {
+                    id: capsuleMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    ToolTip.visible: containsMouse
+                    ToolTip.text: "Nhấp để đổi đại từ xưng hô (Pronoun Pair)"
+                    onClicked: pronounMenu.open()
+                }
+
+                Menu {
+                    id: pronounMenu
+                    y: summaryArchetypeCapsule.height + 4
+                    width: Math.max(summaryArchetypeCapsule.width, 290)
+                    topPadding: 6
+                    bottomPadding: 6
+                    leftPadding: 6
+                    rightPadding: 6
+
+                    background: Rectangle {
+                        color: "#151B28"
+                        border.color: Theme.glassBorderSpecularUpper
+                        border.width: 1
+                        radius: 10
+                    }
+
+                    Item {
+                        implicitHeight: 20
+                        implicitWidth: parent.width
+                        Text {
+                            anchors.left: parent.left
+                            anchors.leftMargin: 8
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "Thường dùng"
+                            color: Theme.textMuted
+                            font.pixelSize: 10
+                            font.bold: true
+                        }
+                    }
+
+                    MenuItem {
+                        id: miTaNguoi
+                        implicitHeight: 42
+                        background: Rectangle {
+                            radius: 6
+                            color: miTaNguoi.highlighted ? Qt.rgba(0.31, 0.27, 0.90, 0.15) : "transparent"
+                        }
+                        contentItem: ColumnLayout {
+                            spacing: 2
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Text { text: "Ta ➔ Ngươi"; color: Theme.textPrimary; font.pixelSize: 11; font.bold: true }
+                                Item { Layout.fillWidth: true }
+                                Text { text: "✓"; color: Theme.accentSapphire; font.bold: true; visible: typeof projectController !== "undefined" && projectController.activePronounPair === "Ta - Ngươi" }
+                            }
+                            Text { text: "Khí chất ngạo mạn, chiến đấu, cổ trang"; color: Theme.textMuted; font.pixelSize: 10 }
+                        }
+                        onTriggered: {
+                            if (typeof projectController !== "undefined") projectController.setActivePronounPair("Ta - Ngươi")
+                            if (typeof translationController !== "undefined") translationController.setSubjectPronoun("Ta - Ngươi")
+                        }
+                    }
+
+                    MenuItem {
+                        id: miToiCau
+                        implicitHeight: 42
+                        background: Rectangle {
+                            radius: 6
+                            color: miToiCau.highlighted ? Qt.rgba(0.31, 0.27, 0.90, 0.15) : "transparent"
+                        }
+                        contentItem: ColumnLayout {
+                            spacing: 2
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Text { text: "Tôi ➔ Cậu"; color: Theme.textPrimary; font.pixelSize: 11; font.bold: true }
+                                Item { Layout.fillWidth: true }
+                                Text { text: "✓"; color: Theme.accentSapphire; font.bold: true; visible: typeof projectController !== "undefined" && projectController.activePronounPair === "Tôi - Cậu" }
+                            }
+                            Text { text: "Đồng trang lứa, hiện đại, tự nhiên"; color: Theme.textMuted; font.pixelSize: 10 }
+                        }
+                        onTriggered: {
+                            if (typeof projectController !== "undefined") projectController.setActivePronounPair("Tôi - Cậu")
+                            if (typeof translationController !== "undefined") translationController.setSubjectPronoun("Tôi - Cậu")
+                        }
+                    }
+
+                    MenuItem {
+                        id: miToCau
+                        implicitHeight: 42
+                        background: Rectangle {
+                            radius: 6
+                            color: miToCau.highlighted ? Qt.rgba(0.31, 0.27, 0.90, 0.15) : "transparent"
+                        }
+                        contentItem: ColumnLayout {
+                            spacing: 2
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Text { text: "Tớ ➔ Cậu"; color: Theme.textPrimary; font.pixelSize: 11; font.bold: true }
+                                Item { Layout.fillWidth: true }
+                                Text { text: "✓"; color: Theme.accentSapphire; font.bold: true; visible: typeof projectController !== "undefined" && projectController.activePronounPair === "Tớ - Cậu" }
+                            }
+                            Text { text: "Thanh xuân, bạn bè học đường"; color: Theme.textMuted; font.pixelSize: 10 }
+                        }
+                        onTriggered: {
+                            if (typeof projectController !== "undefined") projectController.setActivePronounPair("Tớ - Cậu")
+                            if (typeof translationController !== "undefined") translationController.setSubjectPronoun("Tớ - Cậu")
+                        }
+                    }
+
+                    Item {
+                        implicitHeight: 20
+                        implicitWidth: parent.width
+                        Text {
+                            anchors.left: parent.left
+                            anchors.leftMargin: 8
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "Tình cảm & Kính ngữ"
+                            color: Theme.textMuted
+                            font.pixelSize: 10
+                            font.bold: true
+                        }
+                    }
+
+                    MenuItem {
+                        id: miAnhEm
+                        implicitHeight: 42
+                        background: Rectangle {
+                            radius: 6
+                            color: miAnhEm.highlighted ? Qt.rgba(0.31, 0.27, 0.90, 0.15) : "transparent"
+                        }
+                        contentItem: ColumnLayout {
+                            spacing: 2
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Text { text: "Anh ➔ Em"; color: Theme.textPrimary; font.pixelSize: 11; font.bold: true }
+                                Item { Layout.fillWidth: true }
+                                Text { text: "✓"; color: Theme.accentSapphire; font.bold: true; visible: typeof projectController !== "undefined" && projectController.activePronounPair === "Anh - Em" }
+                            }
+                            Text { text: "Thân mật, lãng mạn, gia đình"; color: Theme.textMuted; font.pixelSize: 10 }
+                        }
+                        onTriggered: {
+                            if (typeof projectController !== "undefined") projectController.setActivePronounPair("Anh - Em")
+                            if (typeof translationController !== "undefined") translationController.setSubjectPronoun("Anh - Em")
+                        }
+                    }
+
+                    MenuItem {
+                        id: miEmTienBoi
+                        implicitHeight: 42
+                        background: Rectangle {
+                            radius: 6
+                            color: miEmTienBoi.highlighted ? Qt.rgba(0.31, 0.27, 0.90, 0.15) : "transparent"
+                        }
+                        contentItem: ColumnLayout {
+                            spacing: 2
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Text { text: "Em ➔ Tiền bối"; color: Theme.textPrimary; font.pixelSize: 11; font.bold: true }
+                                Item { Layout.fillWidth: true }
+                                Text { text: "✓"; color: Theme.accentSapphire; font.bold: true; visible: typeof projectController !== "undefined" && projectController.activePronounPair === "Em - Tiền bối" }
+                            }
+                            Text { text: "Quan hệ học tập, Senpai - Kouhai"; color: Theme.textMuted; font.pixelSize: 10 }
+                        }
+                        onTriggered: {
+                            if (typeof projectController !== "undefined") projectController.setActivePronounPair("Em - Tiền bối")
+                            if (typeof translationController !== "undefined") translationController.setSubjectPronoun("Em - Tiền bối")
+                        }
+                    }
+
+                    Item {
+                        implicitHeight: 20
+                        implicitWidth: parent.width
+                        Text {
+                            anchors.left: parent.left
+                            anchors.leftMargin: 8
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "Mặc định"
+                            color: Theme.textMuted
+                            font.pixelSize: 10
+                            font.bold: true
+                        }
+                    }
+
+                    MenuItem {
+                        id: miTuDo
+                        implicitHeight: 42
+                        background: Rectangle {
+                            radius: 6
+                            color: miTuDo.highlighted ? Qt.rgba(0.31, 0.27, 0.90, 0.15) : "transparent"
+                        }
+                        contentItem: ColumnLayout {
+                            spacing: 2
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Text { text: "Tự do"; color: Theme.textPrimary; font.pixelSize: 11; font.bold: true }
+                                Item { Layout.fillWidth: true }
+                                Text { text: "✓"; color: Theme.accentSapphire; font.bold: true; visible: typeof projectController !== "undefined" && (!projectController.activePronounPair || projectController.activePronounPair === "") }
+                            }
+                            Text { text: "Tự động nhận diện theo ngữ cảnh từng câu"; color: Theme.textMuted; font.pixelSize: 10 }
+                        }
+                        onTriggered: {
+                            if (typeof projectController !== "undefined") projectController.setActivePronounPair("")
+                            if (typeof translationController !== "undefined") translationController.setSubjectPronoun("Tự do")
+                        }
                     }
                 }
             }
@@ -963,10 +1172,10 @@ ColumnLayout {
                 implicitHeight: 28
                 radius: 14
                 color: (typeof projectController !== "undefined" && projectController.isJaOrigin)
-                       ? Qt.rgba(0.96, 0.45, 0.71, 0.15) 
+                       ? Qt.rgba(0.31, 0.27, 0.90, 0.15) 
                        : Qt.rgba(0.58, 0.64, 0.72, 0.12)
                 border.color: (typeof projectController !== "undefined" && projectController.isJaOrigin)
-                             ? "#F472B6" 
+                             ? Theme.accentSapphire 
                              : "#94A3B8"
                 border.width: 1
 
@@ -976,9 +1185,9 @@ ColumnLayout {
                     anchors.rightMargin: 12
                     spacing: 6
 
-                    Text {
-                        text: (typeof projectController !== "undefined" && projectController.isJaOrigin) ? "🌸" : "🌐"
-                        font.pixelSize: 11
+                    Rectangle {
+                        width: 6; height: 6; radius: 3
+                        color: (typeof projectController !== "undefined" && projectController.isJaOrigin) ? Theme.accentSapphire : Theme.textMuted
                         Layout.alignment: Qt.AlignVCenter
                     }
 
@@ -989,7 +1198,7 @@ ColumnLayout {
                         text: (typeof projectController !== "undefined" && projectController.isJaOrigin)
                               ? "Nguồn: Tiếng Nhật"
                               : "Nguồn: Tiếng Anh bản ngữ"
-                        color: (typeof projectController !== "undefined" && projectController.isJaOrigin) ? "#BE185D" : Theme.textSecondary
+                        color: (typeof projectController !== "undefined" && projectController.isJaOrigin) ? "#818CF8" : Theme.textSecondary
                         font.pixelSize: 10
                         font.bold: true
                     }

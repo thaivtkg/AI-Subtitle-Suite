@@ -95,9 +95,6 @@ class SubtitleSelectionController(QObject):
         self, source: SelectionSource = SelectionSource.PROGRAMMATIC
     ):
         """Bỏ chọn toàn bộ, truyền segment_id = None."""
-        self._last_source = source
-        self._selected_indices = []
-        self._selected_ids = set()
         self.select(-1, None, source)
 
     def request_editor_activation(self, index: int, segment_id: Optional[str]):

@@ -249,8 +249,8 @@ class SubtitleModel(QAbstractListModel):
 
         for i in range(row_idx, len(self._subtitles)):
             self._subtitles[i]["index"] = i + 1
-            if "studio_index" in self._subtitles[i]:
-                self._subtitles[i]["studio_index"] = i
+            if i >= row_idx + 2 and "studio_index" in self._subtitles[i]:
+                self._subtitles[i]["studio_index"] = int(self._subtitles[i]["studio_index"]) + 1
 
         q_start = self.createIndex(row_idx, 0)
         q_end = self.createIndex(len(self._subtitles) - 1, 0)
@@ -283,8 +283,8 @@ class SubtitleModel(QAbstractListModel):
 
         for i in range(row_idx, len(self._subtitles)):
             self._subtitles[i]["index"] = i + 1
-            if "studio_index" in self._subtitles[i]:
-                self._subtitles[i]["studio_index"] = i
+            if i >= row_idx + 1 and "studio_index" in self._subtitles[i]:
+                self._subtitles[i]["studio_index"] = max(0, int(self._subtitles[i]["studio_index"]) - 1)
 
         q_start = self.createIndex(row_idx, 0)
         q_end = self.createIndex(len(self._subtitles) - 1, 0)
@@ -317,8 +317,8 @@ class SubtitleModel(QAbstractListModel):
 
         for i in range(row_idx, len(self._subtitles)):
             self._subtitles[i]["index"] = i + 1
-            if "studio_index" in self._subtitles[i]:
-                self._subtitles[i]["studio_index"] = i
+            if i >= row_idx + 1 and "studio_index" in self._subtitles[i]:
+                self._subtitles[i]["studio_index"] = max(0, int(self._subtitles[i]["studio_index"]) - 1)
 
         q_start = self.createIndex(row_idx, 0)
         q_end = self.createIndex(len(self._subtitles) - 1, 0)
@@ -354,8 +354,8 @@ class SubtitleModel(QAbstractListModel):
 
         for i in range(row_idx, len(self._subtitles)):
             self._subtitles[i]["index"] = i + 1
-            if "studio_index" in self._subtitles[i]:
-                self._subtitles[i]["studio_index"] = i
+            if i >= row_idx + 2 and "studio_index" in self._subtitles[i]:
+                self._subtitles[i]["studio_index"] = int(self._subtitles[i]["studio_index"]) + 1
 
         q_start = self.createIndex(row_idx, 0)
         q_end = self.createIndex(len(self._subtitles) - 1, 0)

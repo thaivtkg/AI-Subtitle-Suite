@@ -57,6 +57,26 @@ def get_video_duration(video_path):
         pass
     return 0.0 
 
+def _format_ffmpeg_progress(msg: str, video_duration: float, label: str) -> tuple[int, str] | None:
+    time_match = re.search(r"time=(\d{2}):(\d{2}):(\d{2}\.\d{2})", msg)
+    speed_match = re.search(r"speed=\s*([\d\.]+)x", msg)
+    if time_match and video_duration > 0:
+        h, m, s = map(float, time_match.groups())
+        current_sec = h * 3600 + m * 60 + s
+        ff_percent = min(100, int((current_sec / video_duration) * 100))
+        stats_str = ""
+        if speed_match:
+            speed = float(speed_match.group(1))
+            if speed > 0:
+                remain_sec = (video_duration - current_sec) / speed
+                hw = get_hardware_stats()
+                stats_str = f" ({speed:.1f}x | Còn: {format_eta(remain_sec)} | {hw})"
+        return ff_percent, f"{label}: {ff_percent}%{stats_str}"
+    if time_match:
+        return 0, f"{label}... (Đang tính toán)"
+    return None
+
+
 # ==========================================
 # 1. HARDSUB WORKER (CHUYÊN TRÁCH RENDER FFMPEG)
 # ==========================================
@@ -107,29 +127,17 @@ class HardsubWorker(QThread):
             safe_video_path = self.video_path.replace('\\', '/')
             safe_out_path = out_video_path.replace('\\', '/')
 
+            if self._is_cancelled:
+                self.error_signal.emit("Đã hủy tiến trình FFmpeg.")
+                return
+
             from core.Backend import burn_hardsub
             
             def hardsub_log_handler(msg):
                 self.log_signal.emit(msg)
-                time_match = re.search(r"time=(\d{2}):(\d{2}):(\d{2}\.\d{2})", msg)
-                speed_match = re.search(r"speed=\s*([\d\.]+)x", msg)
-                
-                if time_match and video_duration > 0:
-                    h, m, s = map(float, time_match.groups())
-                    current_sec = h * 3600 + m * 60 + s
-                    ff_percent = min(100, (current_sec / video_duration) * 100)
-                    
-                    stats_str = ""
-                    if speed_match:
-                        speed = float(speed_match.group(1))
-                        if speed > 0:
-                            remain_sec = (video_duration - current_sec) / speed
-                            hw = get_hardware_stats()
-                            stats_str = f" ({speed:.1f}x | Còn: {format_eta(remain_sec)} | {hw})"
-
-                    self.progress_signal.emit(int(ff_percent), f"Đang Burn Hardsub: {int(ff_percent)}%{stats_str}")
-                elif time_match:
-                    self.progress_signal.emit(0, "Đang Burn Hardsub... (Đang tính toán)")
+                prog = _format_ffmpeg_progress(msg, video_duration, "Đang Burn Hardsub")
+                if prog is not None:
+                    self.progress_signal.emit(prog[0], prog[1])
 
             burn_hardsub(
                 video_path=safe_video_path,
@@ -145,6 +153,7 @@ class HardsubWorker(QThread):
                 segments=self.segments,
                 outline_width=self.outline_width,
                 custom_presets=getattr(self.project_state, "style_presets", None),
+                cancel_check=lambda: self._is_cancelled,
             )
 
             if not self._is_cancelled:

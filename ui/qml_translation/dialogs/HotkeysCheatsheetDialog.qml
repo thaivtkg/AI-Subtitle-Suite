@@ -81,13 +81,7 @@ Dialog {
                 spacing: 8
 
                 Text {
-                    text: "⌨"
-                    color: Theme.accentCyan
-                    font.pixelSize: 16
-                }
-
-                Text {
-                    text: "BẢNG TRA CỨU PHÍM TẮT NHANH (PRO CAT HOTKEYS)"
+                    text: "Bảng tra cứu phím tắt nhanh (Pro CAT Hotkeys)"
                     color: Theme.textPrimary
                     font.pixelSize: 13
                     font.bold: true
@@ -151,7 +145,7 @@ Dialog {
                     spacing: 6
 
                     Text {
-                        text: "✦ BIÊN DỊCH & DUYỆT BÀI (PRO KEY-FLOW)"
+                        text: "Biên dịch & duyệt bài (Pro key-flow)"
                         color: Theme.accentSapphire
                         font.pixelSize: 11
                         font.bold: true
@@ -256,7 +250,7 @@ Dialog {
                     spacing: 8
 
                     Text {
-                        text: "✦ ĐIỀU HƯỚNG & CÔNG CỤ (NAVIGATION & TOOLS)"
+                        text: "Điều hướng & công cụ (Navigation & tools)"
                         color: Theme.accentSapphire
                         font.pixelSize: 11
                         font.bold: true
@@ -317,7 +311,7 @@ Dialog {
                     spacing: 8
 
                     Text {
-                        text: "✦ QUẢN LÝ TỆP & DỰ ÁN (FILE & PROJECT)"
+                        text: "Quản lý tệp & dự án (File & project)"
                         color: Theme.accentSapphire
                         font.pixelSize: 11
                         font.bold: true

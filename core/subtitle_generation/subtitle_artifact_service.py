@@ -3,6 +3,7 @@ import hashlib
 import os
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from core.artifacts.artifact import Artifact
@@ -20,7 +21,7 @@ class SubtitleArtifactService:
         project_dir = getattr(self.project_service, "project_dir", None) or getattr(
             project, "project_dir", None
         )
-        if not project or not project_dir:
+        if not project or not isinstance(project_dir, (str, Path)) or not str(project_dir).strip():
             return None
 
         artifact_store = self.project_service.artifact_store
@@ -58,13 +59,13 @@ class SubtitleArtifactService:
             mark_dirty()
         return artifact
 
-    def create_artifact_with_data(self, data: dict) -> Optional[Artifact]:
+    def create_artifact_with_data(self, data: dict, *, mark_dirty: bool = True) -> Optional[Artifact]:
         """Create the first artifact only after a complete result is ready."""
         project = self.project_service.current_project
         project_dir = getattr(self.project_service, "project_dir", None) or getattr(
             project, "project_dir", None
         )
-        if not project or not project_dir:
+        if not project or not isinstance(project_dir, (str, Path)) or not str(project_dir).strip():
             return None
 
         artifact_store = self.project_service.artifact_store
@@ -94,9 +95,9 @@ class SubtitleArtifactService:
         artifact_store.register(artifact)
         project.state.subtitle_artifact_id = artifact_id
         project.state.active_artifact_id = artifact_id
-        mark_dirty = getattr(self.project_service, "mark_dirty", None)
-        if mark_dirty:
-            mark_dirty()
+        mark_project_dirty = getattr(self.project_service, "mark_dirty", None)
+        if mark_dirty and mark_project_dirty:
+            mark_project_dirty()
         return artifact
 
     @staticmethod

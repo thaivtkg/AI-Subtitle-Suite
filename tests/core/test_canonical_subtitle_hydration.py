@@ -46,6 +46,9 @@ class TestCanonicalSubtitleHydration(unittest.TestCase):
     def tearDown(self):
         from PySide6.QtCore import QEvent
         from PySide6.QtWidgets import QApplication
+        from PySide6.QtTest import QTest
+        # Drain deferred progress resets before destroying the generation panel.
+        QTest.qWait(850)
         self.window.autosave_coordinator.dispose()
         self.window.canonical_save_coordinator.dispose()
         self.window._canonical_status_timer.stop()

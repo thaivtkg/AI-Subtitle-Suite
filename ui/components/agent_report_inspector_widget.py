@@ -231,7 +231,7 @@ class EditableResultReportWidget(QScrollArea):
         self.layout.addWidget(card)
         self.layout.addStretch()
 
-    def render_result(self, step_title: str, result_dict: Dict[str, Any]):
+    def render_result(self, step_title: str, result_dict: Dict[str, Any], target_ids=None):
         self.clear()
 
         has_style = isinstance(result_dict, dict) and "style" in result_dict and bool(result_dict["style"])
@@ -249,15 +249,23 @@ class EditableResultReportWidget(QScrollArea):
             lbl_segs.setStyleSheet("color: #94a3b8; font-size: 10px; margin-top: 4px; margin-bottom: 2px; background: transparent;")
             self.layout.addWidget(lbl_segs)
 
+            from ui.SubEditor import ms_to_time_str
             target_indices = set(result_dict.get("segment_indices", [])) if (isinstance(result_dict, dict) and result_dict.get("segment_indices")) else None
 
+            target_keys = {str(sid) for sid in target_ids} if target_ids is not None else None
             for i, seg in enumerate(segments):
+                if target_keys is not None:
+                    keys = {str(seg[key]) for key in ("id", "segment_id") if seg.get(key) is not None}
+                    if not keys:
+                        keys = {str(i + 1)}
+                    if keys.isdisjoint(target_keys):
+                        continue
                 t_in = seg.get("start", "00:00.000")
                 t_out = seg.get("end", "00:00.000")
                 if isinstance(t_in, (int, float)):
-                    t_in = f"{int(t_in)//60:02d}:{int(t_in)%60:02d}.{int((t_in*1000)%1000):03d}"
+                    t_in = ms_to_time_str(t_in)
                 if isinstance(t_out, (int, float)):
-                    t_out = f"{int(t_out)//60:02d}:{int(t_out)%60:02d}.{int((t_out*1000)%1000):03d}"
+                    t_out = ms_to_time_str(t_out)
                 time_str = f"{t_in} → {t_out}"
                 text = seg.get("text") or seg.get("translation", "")
                 idx_1based = i + 1
@@ -515,7 +523,8 @@ class AgentReportInspectorWidget(QWidget):
     def update_report(self, step_idx: int, step: AgentStep, result: Dict[str, Any]):
         self.lbl_report_title.setText(f"🔍 BÁO CÁO KẾT QUẢ TASK #{step_idx + 1}")
         self.set_badge_status("waiting")
-        self.inspection_card.render_result(step.title, result)
+        target_ids = result.get("indices") if step.tool_name == "run_asr" else None
+        self.inspection_card.render_result(step.title, result, target_ids=target_ids)
         self.btn_approve_next.setEnabled(True)
         self.btn_redo_task.setEnabled(True)
 

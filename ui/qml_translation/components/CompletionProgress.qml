@@ -17,10 +17,12 @@ ColumnLayout {
     RowLayout {
         Layout.fillWidth: true
         Text {
-            text: root.acceptedCount + " / " + root.totalCount + " Accepted"
+            text: root.acceptedCount + " / " + root.totalCount + " đã duyệt"
             color: root.isComplete ? Theme.success : Theme.textSecondary
             font.pixelSize: 12
             font.bold: true
+            font.features: { "tnum": 1 }
+            font.family: "JetBrains Mono, Consolas, monospace"
         }
         Item { Layout.fillWidth: true }
         Text {
@@ -28,6 +30,8 @@ ColumnLayout {
             color: root.isComplete ? Theme.success : Theme.textPrimary
             font.pixelSize: 12
             font.bold: true
+            font.features: { "tnum": 1 }
+            font.family: "JetBrains Mono, Consolas, monospace"
         }
     }
 
@@ -40,7 +44,7 @@ ColumnLayout {
         Rectangle {
             width: parent.width * root.progressRatio
             height: parent.height
-            color: root.isComplete ? Theme.success : Theme.accentCyan
+            color: root.isComplete ? Theme.success : Theme.accentSapphire
             radius: 2
             Behavior on width { NumberAnimation { duration: Theme.animProgress; easing.type: Easing.OutCubic } }
             Behavior on color { ColorAnimation { duration: Theme.animState; easing.type: Easing.OutQuad } }

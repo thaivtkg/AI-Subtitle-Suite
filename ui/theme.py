@@ -31,6 +31,7 @@ class Theme:
     TEXT_MUTED = C.TEXT_MUTED
     TEXT_DISABLED = C.TEXT_DISABLED
     BORDER = C.BORDER
+    BORDER_MUTED = C.BORDER_MUTED
 
     @classmethod
     def get_global_stylesheet(cls):

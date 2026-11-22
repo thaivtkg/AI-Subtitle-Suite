@@ -70,6 +70,8 @@ Item {
                   : ""
             color: Theme.textMuted
             font.pixelSize: 12
+            font.family: "JetBrains Mono, Consolas, monospace"
+            font.features: { "tnum": 1 }
             Layout.alignment: Qt.AlignVCenter
         }
 
@@ -81,15 +83,15 @@ Item {
                 objectName: "btnBatchStart"
             text: {
                 if (root.hasMultiSelection) {
-                    return root.isCompact ? ("⚡ Chọn (" + root.selectedIndices.length + ")") : ("⚡ Dịch đã chọn (" + root.selectedIndices.length + " câu)")
+                    return root.isCompact ? ("Chọn (" + root.selectedIndices.length + ")") : ("Dịch đã chọn (" + root.selectedIndices.length + " câu)")
                 }
                 if (root.pendingCount === 0) {
-                    return "⚡ Đã hoàn tất dịch"
+                    return "Đã hoàn tất dịch"
                 }
                 if (root.isCompact) {
-                    return root.selectedLimit === 0 ? ("⚡ Toàn bộ (" + root.targetCount + ")") : ("⚡ " + root.targetCount + " câu")
+                    return root.selectedLimit === 0 ? ("Toàn bộ (" + root.targetCount + ")") : (root.targetCount + " câu")
                 }
-                return root.selectedLimit === 0 ? ("⚡ Dịch toàn bộ (" + root.targetCount + " câu)") : ("⚡ Dịch hàng loạt (" + root.targetCount + " câu)")
+                return root.selectedLimit === 0 ? ("Dịch toàn bộ (" + root.targetCount + " câu)") : ("Dịch hàng loạt (" + root.targetCount + " câu)")
             }
             tooltip: {
                 if (!root.hasMultiSelection && root.pendingCount === 0) {
@@ -103,13 +105,13 @@ Item {
             onClicked: {
                 if (root.sourceLanguage && root.targetLanguage && root.sourceLanguage.trim().toLowerCase() === root.targetLanguage.trim().toLowerCase()) {
                     if (typeof toast !== "undefined" && toast) {
-                        toast.show("CẢNH BÁO", "Ngôn ngữ nguồn và ngôn ngữ đích không được trùng nhau!")
+                        toast.show("Cảnh báo", "Ngôn ngữ nguồn và ngôn ngữ đích không được trùng nhau!")
                     }
                     return
                 }
                 if (!root.hasValidModel) {
                     if (typeof toast !== "undefined" && toast) {
-                        toast.show("CẢNH BÁO", "Mô hình AI chưa được tải về máy. Vui lòng chọn hoặc tải mô hình!")
+                        toast.show("Cảnh báo", "Mô hình AI chưa được tải về máy. Vui lòng chọn hoặc tải mô hình!")
                     }
                     root.modelManagerClicked()
                     return
@@ -171,7 +173,7 @@ Item {
                     }
                     contentItem: RowLayout {
                         spacing: 8
-                        Text { text: "⚡"; color: Theme.accentSapphire; font.pixelSize: 12 }
+                        Rectangle { width: 6; height: 6; radius: 3; color: Theme.accentSapphire; Layout.alignment: Qt.AlignVCenter }
                         Text {
                             text: "Các câu đã chọn (" + (root.selectedIndices ? root.selectedIndices.length : 0) + ")"
                             color: Theme.textPrimary
@@ -204,7 +206,7 @@ Item {
                     }
                     contentItem: RowLayout {
                         spacing: 8
-                        Text { text: "⚡"; color: Theme.accentSapphire; font.pixelSize: 12 }
+                        Rectangle { width: 6; height: 6; radius: 3; color: Theme.accentSapphire; Layout.alignment: Qt.AlignVCenter }
                         Text {
                             text: "5 câu (Đoạn ngắn)"
                             color: Theme.textPrimary
@@ -237,7 +239,7 @@ Item {
                     }
                     contentItem: RowLayout {
                         spacing: 8
-                        Text { text: "⚡"; color: Theme.accentSapphire; font.pixelSize: 12 }
+                        Rectangle { width: 6; height: 6; radius: 3; color: Theme.accentSapphire; Layout.alignment: Qt.AlignVCenter }
                         Text {
                             text: "10 câu (Thử AI)"
                             color: Theme.textPrimary
@@ -270,7 +272,7 @@ Item {
                     }
                     contentItem: RowLayout {
                         spacing: 8
-                        Text { text: "⚡"; color: Theme.accentSapphire; font.pixelSize: 12 }
+                        Rectangle { width: 6; height: 6; radius: 3; color: Theme.accentSapphire; Layout.alignment: Qt.AlignVCenter }
                         Text {
                             text: "20 câu (Vừa phải)"
                             color: Theme.textPrimary
@@ -303,7 +305,7 @@ Item {
                     }
                     contentItem: RowLayout {
                         spacing: 8
-                        Text { text: "⚡"; color: Theme.accentSapphire; font.pixelSize: 12 }
+                        Rectangle { width: 6; height: 6; radius: 3; color: Theme.accentSapphire; Layout.alignment: Qt.AlignVCenter }
                         Text {
                             text: "50 câu (Khuyên dùng)"
                             color: Theme.textPrimary
@@ -336,7 +338,7 @@ Item {
                     }
                     contentItem: RowLayout {
                         spacing: 8
-                        Text { text: "⚡"; color: "#F59E0B"; font.pixelSize: 12 }
+                        Rectangle { width: 6; height: 6; radius: 3; color: "#F59E0B"; Layout.alignment: Qt.AlignVCenter }
                         Text {
                             text: "Toàn bộ tệp"
                             color: Theme.textPrimary
@@ -405,10 +407,10 @@ Item {
             visible: root.showModelManager
             text: {
                 var mc = root.customModelController || (typeof modelController !== "undefined" ? modelController : null)
-                if (!mc) return "🔮 Mô hình AI ▼"
+                if (!mc) return "Mô hình AI ▼"
                 var name = mc.activeModelDisplayName || "Mô hình AI"
                 var shortName = name.split('/')[0].replace(/\s+(?:Instruct|Distill|Default|IT).*$/i, "").replace(/\s*\(.*\)$/, "").trim()
-                return "🔮 " + shortName + " ▼"
+                return shortName + " ▼"
             }
             tooltip: "Quản lý & Chọn Mô hình AI GGUF"
             onClicked: root.modelManagerClicked()

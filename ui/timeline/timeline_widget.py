@@ -30,14 +30,28 @@ class PlayheadOverlay(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, False)
+        painter.setRenderHint(QPainter.Antialiasing, True)
         
-        # Vẽ kim đỏ nổi bật
+        x = self.playhead_x
+        h = self.height()
+        
+        # 1. Vẽ kim playhead 1.5px hairline needle từ y=0 đến self.height()
         pen = QPen(QColor(Theme.DANGER))
-        pen.setWidth(2)
+        pen.setWidthF(1.5)
         painter.setPen(pen)
-        
-        painter.drawLine(self.playhead_x, 0, self.playhead_x, self.height())
+        painter.drawLine(x, 0, x, h)
+
+        # 2. Vẽ con trỏ diamond handle trên ruler (y: 0..8)
+        from PySide6.QtGui import QPolygonF, QBrush
+        from PySide6.QtCore import QPointF
+        diamond = QPolygonF([
+            QPointF(x, 8),
+            QPointF(x - 5, 0),
+            QPointF(x + 5, 0),
+        ])
+        painter.setBrush(QBrush(QColor(Theme.DANGER)))
+        painter.setPen(Qt.NoPen)
+        painter.drawPolygon(diamond)
 
 class TimelineContainer(QWidget):
     def __init__(self, parent=None):
@@ -110,10 +124,21 @@ class TimelineContainer(QWidget):
         self.layout.addStretch()
 
         self.playhead = PlayheadOverlay(self)
+        self._sync_playhead_geometry()
+
+    def _sync_playhead_geometry(self):
+        waveform_bottom = self.waveform.y() + self.waveform.height()
+        if self.waveform.y() <= 0:
+            waveform_bottom = self.ruler.height() + self.waveform.height()
+        self.playhead.setGeometry(0, 0, self.width(), max(0, waveform_bottom))
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._sync_playhead_geometry()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self.playhead.resize(self.width(), self.height())
+        self._sync_playhead_geometry()
 
 class TimelineWidget(QScrollArea):
     seek_requested = Signal(int)
@@ -144,13 +169,13 @@ class TimelineWidget(QScrollArea):
                 border-radius: 7px;
             }}
             QScrollBar::handle:horizontal {{
-                background: {Theme.CYAN};
+                background: #475569;
                 min-width: 72px;
                 border: 3px solid {Theme.SURFACE_SOFT};
                 border-radius: 7px;
             }}
             QScrollBar::handle:horizontal:hover {{
-                background: {Theme.TEXT_PRIMARY};
+                background: #64748B;
             }}
             QScrollBar::add-line:horizontal,
             QScrollBar::sub-line:horizontal {{
@@ -168,6 +193,16 @@ class TimelineWidget(QScrollArea):
         self.container = TimelineContainer()
         self.container.setObjectName("timeline_container")
         self.setWidget(self.container)
+
+        # Anchor gap_row directly on TimelineWidget (outside the horizontally scrolled
+        # TimelineContainer) so playing/scrolling never causes layout jitter, while keeping
+        # self.container.gap_row and all child attributes intact for callers/tests.
+        self.gap_row = self.container.gap_row
+        self.container.layout.removeWidget(self.gap_row)
+        self.gap_row.setParent(self)
+        self.gap_row.setAutoFillBackground(True)
+        self.gap_row.setStyleSheet(f"QWidget#timeline_gap_row {{ background-color: {Theme.BG_APP}; border-top: 1px solid {Theme.BORDER}; }}")
+        self.gap_row.hide()
 
         self.duration_ms = 0
         self.selected_gap = None
@@ -247,22 +282,46 @@ class TimelineWidget(QScrollArea):
         self._show_range_row()
         self._apply_generation_range(gap.start_ms, gap.end_ms, update_fields=True)
 
+    def _sync_gap_row_geometry(self):
+        if not hasattr(self, "gap_row") or self.gap_row is None:
+            return
+        if self.gap_row.isHidden():
+            self.setViewportMargins(0, 0, 0, 0)
+            return
+        gap_h = max(30, self.gap_row.sizeHint().height())
+        self.setViewportMargins(0, 0, 0, gap_h)
+        vp = self.viewport().geometry()
+        self.gap_row.setGeometry(vp.x(), vp.y() + vp.height(), max(1, vp.width()), gap_h)
+        self.gap_row.raise_()
+
+    def _hide_range_row(self):
+        self.gap_row.hide()
+        self._sync_gap_row_geometry()
+
     def _show_range_row(self):
-        self.container.gap_row.show()
-        scroll_x = self.horizontalScrollBar().value() if self.horizontalScrollBar() else 0
-        if self.container.gap_row.layout():
-            self.container.gap_row.layout().setContentsMargins(8 + max(0, int(scroll_x)), 2, 8, 2)
+        self.gap_row.show()
+        if self.gap_row.layout():
+            self.gap_row.layout().setContentsMargins(8, 2, 8, 2)
         if self._minimum_height_before_gap is None:
             self._minimum_height_before_gap = self.minimumHeight()
         required_height = (
             self.container.ruler.height()
             + self.container.waveform.height()
             + self.container.track.height()
-            + self.container.gap_row.sizeHint().height()
+            + self.gap_row.sizeHint().height()
             + self.horizontalScrollBar().sizeHint().height()
             + 2 * self.frameWidth()
         )
         self.setMinimumHeight(max(self._minimum_height_before_gap, required_height))
+        self._sync_gap_row_geometry()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._sync_gap_row_geometry()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._sync_gap_row_geometry()
 
     def clear_gap_selection(self):
         self.workflow_reset.emit()
@@ -287,7 +346,7 @@ class TimelineWidget(QScrollArea):
         if self.duration_ms > 0:
             self._show_range_row()
         else:
-            self.container.gap_row.hide()
+            self._hide_range_row()
         if self._minimum_height_before_gap is not None and self.duration_ms <= 0:
             self.setMinimumHeight(self._minimum_height_before_gap)
             self._minimum_height_before_gap = None
@@ -412,8 +471,6 @@ class TimelineWidget(QScrollArea):
         """Tự động tắt Auto-scroll nếu người dùng chủ động kéo thanh cuộn"""
         if not self._internal_scroll:
             self.auto_scroll_enabled = False
-        if hasattr(self, "container") and hasattr(self.container, "gap_row") and self.container.gap_row.layout():
-            self.container.gap_row.layout().setContentsMargins(8 + max(0, int(value)), 2, 8, 2)
 
     def reset_auto_scroll(self):
         """Gọi hàm này khi người dùng bấm nút Play video để bật lại cuộn tự động"""
@@ -443,7 +500,7 @@ class TimelineWidget(QScrollArea):
         if duration_ms > 0:
             self._show_range_row()
         else:
-            self.container.gap_row.hide()
+            self._hide_range_row()
             if self._minimum_height_before_gap is not None:
                 self.setMinimumHeight(self._minimum_height_before_gap)
                 self._minimum_height_before_gap = None

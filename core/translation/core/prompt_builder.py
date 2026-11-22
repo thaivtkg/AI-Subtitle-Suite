@@ -161,6 +161,8 @@ def format_chat(system_prompt: str, user_prompt: str, model_family: str = "qwen"
         return (
             f"{system_prompt}\n\n<｜User｜>{user_prompt}<｜Assistant｜><think>\n</think>\n"
         )
+    elif "gemini" in family or "cloud" in family:
+        return f"{system_prompt}\n\n{user_prompt}"
     else:
         return (
             f"<|im_start|>system\n{system_prompt}<|im_end|>\n"

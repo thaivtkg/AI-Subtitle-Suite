@@ -140,26 +140,39 @@ class LiquidNavWidget(QWidget):
         QTimer.singleShot(100, self._update_background_cache)
 
     def _update_physics(self):
+        if not self.isVisible():
+            return
         stiffness = 0.15
         damping = 0.65
-        
+
         f_y = (self._target_y - self._blob_y) * stiffness
         self._blob_vel = (self._blob_vel + f_y) * damping
         self._blob_y += self._blob_vel
-        
+
         f_hy = (self._target_y - self._highlight_y) * (stiffness * 0.6)
         self._highlight_vel = (self._highlight_vel + f_hy) * (damping * 0.9)
         self._highlight_y += self._highlight_vel
-        
+
         f_s = (self._target_scale - self._scale) * 0.2
         self._scale_vel = (self._scale_vel + f_s) * 0.7
         self._scale += self._scale_vel
-        
+
         f_a = (self._target_specular - self._specular_alpha) * 0.2
         self._specular_vel = (self._specular_vel + f_a) * 0.7
         self._specular_alpha += self._specular_vel
 
-        self.update()
+        moving = (
+            abs(self._target_y - self._blob_y) > 0.25
+            or abs(self._blob_vel) > 0.05
+            or abs(self._target_y - self._highlight_y) > 0.25
+            or abs(self._highlight_vel) > 0.05
+            or abs(self._target_scale - self._scale) > 0.002
+            or abs(self._scale_vel) > 0.002
+            or abs(self._target_specular - self._specular_alpha) > 0.2
+            or abs(self._specular_vel) > 0.05
+        )
+        if moving:
+            self.update()
 
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:

@@ -31,12 +31,12 @@ Rectangle {
     Text {
         id: statusText
         anchors.centerIn: parent
-        text: badge.status === "PENDING" ? "○ CHỜ DỊCH" :
-              badge.status === "TRANSLATING" ? "◉ ĐANG DỊCH" :
-              badge.status === "ACCEPTED" ? "✓ ĐÃ DUYỆT" :
-              badge.status === "EDITED" ? "● ĐÃ SỬA" :
-              badge.status === "TRANSLATED" ? "✦ ĐÃ DỊCH" :
-              badge.status === "ERROR" ? "✕ LỖI" : badge.status
+        text: badge.status === "PENDING" ? "○ Chờ dịch" :
+              badge.status === "TRANSLATING" ? "◉ Đang dịch" :
+              badge.status === "ACCEPTED" ? "✓ Đã duyệt" :
+              badge.status === "EDITED" ? "● Đã sửa" :
+              badge.status === "TRANSLATED" ? "✦ Đã dịch" :
+              badge.status === "ERROR" ? "✕ Lỗi" : badge.status
 
         font.pixelSize: 10
         font.bold: true

@@ -186,7 +186,7 @@ ToolBar {
                     Text {
                         id: batchText
                         anchors.centerIn: parent
-                        text: "🌐 " + root.batchLabel
+                        text: root.batchLabel
                         color: Theme.accentSapphire
                         font.pixelSize: 10
                         font.bold: true
@@ -326,7 +326,7 @@ ToolBar {
                 AppButton {
                     objectName: "btnOpenSrt"
                     visible: false
-                    text: root.isCompact ? "SRT" : "📁 Mở SRT"
+                    text: root.isCompact ? "SRT" : "Mở SRT"
                     tooltip: "Mở hoặc đổi file SRT khác — Ctrl + O"
                     enabled: !root.projectMutationLocked
                     onClicked: root.openSrtClicked()
@@ -367,7 +367,7 @@ ToolBar {
                 AppButton {
                     objectName: "btnSave"
                     visible: false
-                    text: "💾 Lưu"
+                    text: "Lưu"
                     tooltip: "Lưu dự án — Ctrl + S"
                     enabled: root.hasProject && !root.isSaved
                     onClicked: root.saveClicked()
@@ -397,7 +397,7 @@ ToolBar {
                 AppButton {
                     objectName: "btnExport"
                     visible: true
-                    text: (root.isCompact || root.isBatchMode) ? "💾 Xuất" : "💾 Xuất SRT"
+                    text: (root.isCompact || root.isBatchMode) ? "Xuất" : "Xuất SRT"
                     tooltip: root.isBatchMode && root.originalSourcePath !== ""
                              ? ("Xuất file phụ đề SRT (Lưu trực tiếp vào: " + root.originalSourcePath + ") — Ctrl + Shift + S")
                              : "Xuất file phụ đề SRT — Ctrl + Shift + S"
@@ -477,7 +477,7 @@ ToolBar {
                         visible: centerCluster.width >= 140
                         Layout.maximumWidth: 175
                         text: {
-                            if (typeof modelController === "undefined") return "🔮 Qwen 2.5 3B ▼"
+                            if (typeof modelController === "undefined") return "Qwen 2.5 3B ▼"
                             var name = modelController.activeModelDisplayName || "Mô hình AI"
                             var shortName = name.split('/')[0].replace(/\s+(?:Instruct|Distill|Default|IT).*$/i, "").replace(/\s*\(.*\)$/, "").trim()
                             if (centerCluster.width < 280) {
@@ -485,7 +485,7 @@ ToolBar {
                             } else {
                                 if (shortName.length > 14) shortName = shortName.substring(0, 14) + "…"
                             }
-                            return "🔮 " + shortName + " ▼"
+                            return shortName + " ▼"
                         }
                         tooltip: typeof modelController !== "undefined"
                                  ? ("Mô hình đang dùng: " + modelController.activeModelDisplayName + " — Click để thay đổi")

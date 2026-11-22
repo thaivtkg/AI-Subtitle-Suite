@@ -134,3 +134,89 @@ def test_softsub_chains_hardsub_when_chk_hardsub_checked(app, tmp_path):
         with patch("PySide6.QtCore.QTimer.singleShot", side_effect=lambda ms, cb: cb()):
             win._trigger_export_softsub()
             assert mock_hardsub.called
+
+def test_chk_hardsub_is_unchecked_by_default(app):
+    """
+    Verify chk_hardsub is unchecked by default to prevent unwanted hardsub burn on softsub export.
+    """
+    win = MainWindow()
+    assert win.page_export.chk_hardsub.isChecked() is False
+
+def test_softsub_does_not_chain_hardsub_by_default(app, tmp_path):
+    """
+    Verify softsub export does NOT chain hardsub by default.
+    """
+    win = MainWindow()
+    fake_video = tmp_path / "softsub_only.mp4"
+    fake_video.write_bytes(b"dummy")
+    
+    win.queue_mgr.add_video(str(fake_video))
+    win.queue_mgr.set_active(str(fake_video))
+    win.page_export.out_edit.setText(str(tmp_path))
+    win.sub_editor.all_segments = [
+        {"stt": "1", "start": "00:00:01,000", "end": "00:00:03,000", "text": "Câu test softsub only"}
+    ]
+    win.page_export.chk_srt.setChecked(True)
+    # Ensure default is kept (False)
+    assert win.page_export.chk_hardsub.isChecked() is False
+    
+    with patch.object(win, "_trigger_export_hardsub") as mock_hardsub:
+        with patch("PySide6.QtCore.QTimer.singleShot", side_effect=lambda ms, cb: cb()):
+            win._trigger_export_softsub()
+            assert not mock_hardsub.called
+
+def test_clear_files_cancels_running_worker(app):
+    """
+    Verify that clear_files() safely cancels active worker and resets UI status.
+    """
+    win = MainWindow()
+    mock_worker = MagicMock()
+    mock_worker.isRunning.return_value = True
+    win.worker = mock_worker
+    win.page_dashboard.card_status_val.setText("Processing")
+
+    with patch("PySide6.QtWidgets.QMessageBox.question", return_value=QMessageBox.Discard):
+        win.clear_files()
+
+    assert mock_worker.cancel.called
+    assert win.page_dashboard.card_status_val.text() == "Idle"
+
+def test_on_queue_item_removed_cancels_running_worker(app):
+    """
+    Verify that removing the video item being processed cancels the worker.
+    """
+    win = MainWindow()
+    mock_worker = MagicMock()
+    mock_worker.isRunning.return_value = True
+    mock_worker.video_path = "D:/dummy/active.mp4"
+    win.worker = mock_worker
+
+    win.on_queue_item_removed_handler("D:/dummy/active.mp4")
+
+    assert mock_worker.cancel.called
+
+def test_burn_hardsub_cancel_check_prevents_cpu_fallback(tmp_path):
+    """
+    Verify burn_hardsub aborts immediately when cancel_check returns True,
+    and does NOT fall back to CPU libx264.
+    """
+    from core.Backend import burn_hardsub
+    video = tmp_path / "test.mp4"
+    video.write_bytes(b"dummy")
+    srt = tmp_path / "test.srt"
+    srt.write_text("1\n00:00:01,000 --> 00:00:02,000\nHi\n", encoding="utf-8")
+    output = tmp_path / "out.mp4"
+
+    with patch("core.Backend.detect_video_encoder", return_value=("h264_nvenc", "NVIDIA NVENC")):
+        with patch("subprocess.Popen") as mock_popen:
+            # cancel_check returns True immediately
+            burn_hardsub(
+                str(video),
+                str(srt),
+                str(output),
+                video_resolution=(1280, 720),
+                cancel_check=lambda: True,
+            )
+            # Popen should not even be called when already cancelled
+            assert not mock_popen.called
+

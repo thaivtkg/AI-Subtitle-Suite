@@ -305,7 +305,7 @@ def rescan_subtitles(
 def run_asr(
     language: str = "auto",
     limit: Optional[int] = None,
-    indices: Optional[List[int]] = None,
+    indices: Optional[List[Any]] = None,
     segments: Optional[List[Dict[str, Any]]] = None,
     video_path: Optional[str] = None,
     whisper_service: Optional[Any] = None,
@@ -359,7 +359,8 @@ def run_asr(
         # Nếu danh sách câu mục tiêu rỗng (ví dụ: VAD trả về 0 câu mới) -> không quét bất kỳ câu nào
         if target_indices is not None and not targets_to_scan:
             return {
-                "status": "ok",
+                "status": "ok" if not indices else "error",
+                "error": None if not indices else "Không tìm thấy câu phụ đề được yêu cầu",
                 "language": language,
                 "limit": limit,
                 "indices": [],
@@ -397,10 +398,10 @@ def run_asr(
         from core.subtitle_generation.subtitle_generation_request import SubtitleGenerationRequest
         from core.subtitle_generation.subtitle_generation_batch import SubtitleGenerationBatch
         from core.subtitle_generation.generation_validator import SubtitleGenerationValidator
-        from core.subtitle_generation.language_utils import normalize_to_iso_code, get_initial_prompt_for_language
+        from core.subtitle_generation.language_utils import normalize_to_iso_code
 
         iso_lang = normalize_to_iso_code(language) if language != "auto" else None
-        prompt_ctx = get_initial_prompt_for_language(iso_lang) if iso_lang == "ja" else ""
+        prompt_ctx = str(kwargs.get("prompt_context") or "").strip()
 
         c_type = compute_type or getattr(svc, "current_compute_type", None) or "float16"
         proj_id = kwargs.get("project_id") or getattr(svc, "project_id", "agent_project")
@@ -418,7 +419,7 @@ def run_asr(
             min_silence_ms=300,
             word_timestamps=False,
             prompt_context=prompt_ctx,
-            condition_on_previous_text=True,
+            condition_on_previous_text=bool(kwargs.get("condition_on_previous_text", True)),
         )
 
         modified_segs = [dict(s) for s in segs]
@@ -432,7 +433,8 @@ def run_asr(
             st_ms = time_str_to_ms(sc.get("start", "00:00:00,000"))
             en_ms = time_str_to_ms(sc.get("end", "00:00:00,000"))
             segments_data.append({
-                "id": seg_id,
+                # Worker correlation keys must be unique even when subtitle IDs are missing.
+                "id": str(i),
                 "start_ms": st_ms,
                 "end_ms": en_ms,
                 "scan_mode": "asr",
@@ -446,18 +448,20 @@ def run_asr(
 
         scanned_texts = {}
         def on_segment_done(sid, text):
+            scanned_texts[str(sid)] = text
+
+        def on_error(error):
             nonlocal last_error
-            if text.startswith("[Lỗi nhận diện:"):
-                last_error = text
-            else:
-                scanned_texts[str(sid)] = text
+            last_error = error
 
         worker.segment_completed_signal.connect(on_segment_done)
+        worker.segment_error_signal.connect(lambda sid, error: on_error(error))
+        worker.error_signal.connect(on_error)
         worker.run()
 
         for i, original_s, seg_id in targets_to_scan:
             sc = modified_segs[i]
-            sid_str = str(seg_id)
+            sid_str = str(i)
             if sid_str in scanned_texts:
                 sc["text"] = scanned_texts[sid_str]
                 sc["original_text"] = scanned_texts[sid_str]
@@ -742,19 +746,25 @@ def translate_subtitles(
         sc = dict(s)
         idx_1based = i + 1
 
-        # Resolve all possible identifiers for this segment
-        candidate_ids = {idx_1based}
-        for key in ("id", "stt", "segment_id", "index"):
+        # Resolve ordered identifiers: prefer explicit segment/STT keys over 1-based list position
+        ordered_cids = []
+        for key in ("segment_id", "id", "stt", "index"):
             val = sc.get(key)
             if isinstance(val, int):
-                candidate_ids.add(val)
+                ordered_cids.append(val)
             elif str(val or "").isdigit():
-                candidate_ids.add(int(val))
+                ordered_cids.append(int(val))
             elif val:
-                candidate_ids.add(str(val))
+                ordered_cids.append(str(val))
+        if idx_1based not in ordered_cids:
+            ordered_cids.append(idx_1based)
 
-        # Chỉ xử lý các câu nằm trong segment_indices (hoặc toàn bộ nếu scope == "all")
-        if target_indices is not None and not (candidate_ids & target_indices):
+        explicit_match_ids = ordered_cids[:-1] if len(ordered_cids) > 1 and ordered_cids[-1] == idx_1based else ordered_cids
+        in_target = (
+            target_indices is None
+            or any(cid in target_indices for cid in (explicit_match_ids or [idx_1based]))
+        )
+        if not in_target:
             # BẢO TOÀN NGUYÊN VẸN 100% CÁC CÂU KHÔNG ĐƯỢC CHỌN
             translated.append(sc)
             continue
@@ -771,19 +781,18 @@ def translate_subtitles(
         if existing_trans and existing_trans != clean_orig and not existing_trans.startswith(f"[{target_lang.upper()}]"):
             translated_text = existing_trans
 
-        # Bước B: Khai thác từ project.aisrt theo ID hoặc Index (CAT Studio)
+        # Bước B: Khai thác từ project.aisrt theo Original Text hoặc ID ưu tiên
+        if not translated_text and clean_orig in aisrt_subtitles_by_text:
+            translated_text = aisrt_subtitles_by_text[clean_orig]
+
         if not translated_text:
-            for cid in candidate_ids:
+            for cid in ordered_cids:
                 if str(cid) in aisrt_subtitles_by_id:
                     translated_text = aisrt_subtitles_by_id[str(cid)]
                     break
                 if isinstance(cid, int) and cid in aisrt_subtitles_by_idx:
                     translated_text = aisrt_subtitles_by_idx[cid]
                     break
-
-        # Bước C: Khai thác từ project.aisrt theo Original Text
-        if not translated_text and clean_orig in aisrt_subtitles_by_text:
-            translated_text = aisrt_subtitles_by_text[clean_orig]
 
         # Bước D: Khai thác từ Translation Memory (dict hoặc đối tượng TranslationMemory)
         if not translated_text and clean_orig in tm_dict:

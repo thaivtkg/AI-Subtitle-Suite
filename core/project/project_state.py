@@ -1,6 +1,34 @@
 from dataclasses import dataclass, field
 from typing import List, Optional
+import unicodedata
 from core.subtitle_placement import SubtitlePlacementState
+
+
+_LEGACY_VAD_PRESET_MAP = {
+    "": "standard",
+    "standard": "standard",
+    "anime_ja_shared": "standard",
+    "cfg9": "cfg9",
+    "anime_ja_large_v3": "anime_ja_large_v3",
+    "anime_ja_kotoba": "anime_ja_kotoba",
+    "live_action": "live_action",
+    "live-action / phim người đóng (18+)": "live_action",
+    "live-action / tokusatsu (18+)": "live_action",
+    "live-action 18+": "live_action",
+    "live-action / tokusatsu": "live_action",
+    "custom": "custom",
+}
+
+
+def normalize_vad_preset_key(preset: Optional[str]) -> str:
+    """Chuẩn hóa key preset VAD (hỗ trợ tương thích ngược tên preset cũ trong dự án/cấu hình)."""
+    raw = unicodedata.normalize("NFC", str(preset or "")).strip()
+    if not raw:
+        return "standard"
+    mapped = _LEGACY_VAD_PRESET_MAP.get(raw.casefold())
+    if mapped is not None:
+        return mapped
+    return raw
 
 @dataclass
 class WorkspaceState:
@@ -31,7 +59,9 @@ class TimingState:
     vad_threshold: float = 0.50
     vad_speech_pad_ms: int = 400
     vad_max_speech_duration_s: float = 30.0
+    condition_on_previous_text: bool = True
     apply_preset_to_rescan: bool = False
+    specialized_model: str = ""
 
     status: str = "IDLE"  # IDLE, RUNNING, COMPLETED, FAILED
     batch_size: int = 10
@@ -39,6 +69,9 @@ class TimingState:
     completed_until: int = 0
     timing_artifact_id: Optional[str] = None
     checkpoint_id: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        self.vad_preset = normalize_vad_preset_key(self.vad_preset)
 # ---------------------------------
 
 @dataclass

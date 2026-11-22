@@ -213,7 +213,8 @@ class TestGlossaryPromptABInfluence(unittest.TestCase):
 
         self.service.transcribe_batch(request_ja, self.batch, lambda: False)
         passed_prompt = self.fake_model.kwargs.get("initial_prompt", "")
-        self.assertIn("先輩, 後輩, お姉さま, 先生", passed_prompt)
+        self.assertIn("先輩、後輩、お姉さま、先生", passed_prompt)
+        self.assertFalse(passed_prompt.startswith("Terminology:"))
 
     def test_tier1_budget_pressure_never_truncates_top_honorifics(self):
         """Khi danh sách từ mồi quá dài, phần đuôi bị cắt nhưng top honorifics không bao giờ bị cắt."""

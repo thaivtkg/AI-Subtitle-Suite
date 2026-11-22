@@ -102,6 +102,19 @@ def _format_ass_timestamp(val) -> str:
     return f"{hours}:{minutes:02d}:{seconds:02d}.{centiseconds:02d}"
 
 
+def _resolve_placement_xy(placement_state) -> tuple[float, float]:
+    if not placement_state:
+        return 0.5, 0.85
+    mode = str(getattr(placement_state, "mode", "bottom")).lower()
+    if mode == "top":
+        return 0.5, 0.12
+    if mode == "center":
+        return 0.5, 0.5
+    if mode == "custom":
+        return float(getattr(placement_state, "x", 0.5)), float(getattr(placement_state, "y", 0.85))
+    return 0.5, 0.85
+
+
 def _build_multistyle_ass(segments, width, height, placement_state, global_style, custom_presets=None):
     from core import subtitle_ass
     from core.subtitle_quality.style_preset_resolver import StylePresetResolver
@@ -152,8 +165,7 @@ Style: Style_Whisper,{font_name},{whisper_size},{color_whisper},{color_whisper},
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     dialogues = []
-    x = getattr(placement_state, "x", 50.0) if placement_state else 50.0
-    y = getattr(placement_state, "y", 85.0) if placement_state else 85.0
+    x, y = _resolve_placement_xy(placement_state)
 
     for seg in segments:
         preset = (seg.get("style_preset") or "normal").lower().strip()
@@ -210,14 +222,15 @@ Style: Default,{font_name},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H000000
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """.format(width=width, height=height, font_name=font_name, font_size=font_size)
 
+    px, py = _resolve_placement_xy(placement_state)
     dialogues = []
     for segment in segments:
         text = subtitle_ass.build_ass_dialogue(
             segment.get("text", ""),
             width,
             height,
-            placement_state.x,
-            placement_state.y,
+            px,
+            py,
         )
         dialogues.append(
             f"Dialogue: 0,{ass_time(segment['start'])},{ass_time(segment['end'])},Default,,0,0,0,,{text}"
@@ -267,7 +280,84 @@ def detect_video_encoder(ffmpeg_path: str = None) -> tuple[str, str]:
     return _CACHED_VIDEO_ENCODER
 
 
-def burn_hardsub(video_path, srt_path, output_path, font_size=42, font_color="white", font_name="Arial", progress_callback=None, log_callback=None, process_callback=None, placement_state=None, video_resolution=None, segments=None, outline_width=2.0, custom_presets=None):
+def _run_ffmpeg_with_fallback(
+    cmd_builder,
+    encoder: str,
+    log_callback=None,
+    process_callback=None,
+    cancel_check=None,
+    error_context: str = "render video",
+):
+    creation_flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+
+    def _execute_ffmpeg(codec):
+        if cancel_check and cancel_check():
+            return -15
+        cmd = cmd_builder(codec)
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            universal_newlines=True,
+            encoding='utf-8',
+            errors='ignore',
+            creationflags=creation_flags
+        )
+
+        if process_callback:
+            process_callback(process)
+
+        try:
+            for line in process.stdout:
+                if cancel_check and cancel_check():
+                    if process.poll() is None:
+                        try:
+                            process.terminate()
+                            process.kill()
+                        except Exception:
+                            pass
+                    break
+                cleaned_line = line.strip()
+                if cleaned_line:
+                    if log_callback and any(k in cleaned_line for k in ["frame=", "time=", "size=", "bitrate=", "Stream #", "Error"]):
+                        log_callback(f"[FFmpeg] {cleaned_line}")
+        finally:
+            if process.stdout:
+                process.stdout.close()
+
+            if process.poll() is None:
+                try:
+                    process.terminate()
+                    process.kill()
+                except Exception:
+                    pass
+            process.wait()
+
+        return process.returncode
+
+    if cancel_check and cancel_check():
+        return -15, "cancel"
+
+    ret = _execute_ffmpeg(encoder)
+    if cancel_check and cancel_check():
+        return -15, "cancel"
+
+    if ret not in (0, -9, -15) and encoder != "libx264":
+        if log_callback:
+            log_callback(f"[FFmpeg] GPU encoder {encoder} thất bại (mã {ret}), tự động chuyển về CPU (libx264)...")
+        ret = _execute_ffmpeg("libx264")
+
+    if cancel_check and cancel_check():
+        return -15, "cancel"
+
+    if ret not in (0, -9, -15):
+        raise Exception(f"FFmpeg gặp lỗi khi {error_context} (Mã lỗi: {ret})")
+
+    outcome = "success" if ret == 0 else "cancel"
+    return ret, outcome
+
+
+def burn_hardsub(video_path, srt_path, output_path, font_size=42, font_color="white", font_name="Arial", progress_callback=None, log_callback=None, process_callback=None, placement_state=None, video_resolution=None, segments=None, outline_width=2.0, custom_presets=None, cancel_check=None):
     base_name, _ = os.path.splitext(output_path)
     final_output_path = f"{base_name}.mp4"
 
@@ -317,66 +407,37 @@ def burn_hardsub(video_path, srt_path, output_path, font_size=42, font_color="wh
     safe_font_name = str(font_name).replace('\\', r'\\').replace(',', r'\,').replace("'", r"\'")
 
     use_temp_ass = (temp_ass is not None)
-    creation_flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+    sub_filter = (
+        f"subtitles='{formatted_subtitle_path}'"
+        if use_temp_ass
+        else f"subtitles='{formatted_subtitle_path}':force_style='FontSize={font_size},FontName={safe_font_name},PrimaryColour=&H00FFFFFF&'"
+    )
 
     def _build_cmd(codec):
-        return [
+        cmd = [
             ffmpeg_path, "-y",
             "-i", video_path,
-            "-vf", f"subtitles='{formatted_subtitle_path}'" if use_temp_ass else f"subtitles='{formatted_subtitle_path}':force_style='FontSize={font_size},FontName={safe_font_name},PrimaryColour=&H00FFFFFF&'",
+            "-vf", sub_filter,
             "-c:v", codec,
-            "-c:a", "aac", 
+            "-c:a", "aac",
             "-async", "1",
             "-ignore_unknown",
-            final_output_path
+            final_output_path,
         ]
-
-    def _execute_ffmpeg(codec):
-        cmd = _build_cmd(codec)
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            universal_newlines=True,
-            encoding='utf-8',
-            errors='ignore',
-            creationflags=creation_flags
-        )
-
-        if process_callback:
-            process_callback(process)
-
-        try:
-            for line in process.stdout:
-                cleaned_line = line.strip()
-                if cleaned_line:
-                    if log_callback and any(k in cleaned_line for k in ["frame=", "time=", "size=", "bitrate=", "Stream #", "Error"]):
-                        log_callback(f"[FFmpeg] {cleaned_line}")
-        finally:
-            if process.stdout:
-                process.stdout.close()
-
-            if process.poll() is None:
-                try:
-                    process.terminate()
-                    process.kill()
-                except Exception:
-                    pass
-            process.wait()
-
-        return process.returncode
+        return cmd
 
     outcome = "failure"
     try:
-        ret = _execute_ffmpeg(encoder)
-        if ret not in (0, -9, -15) and encoder != "libx264":
-            if log_callback:
-                log_callback(f"[FFmpeg] GPU encoder {encoder} thất bại (mã {ret}), tự động chuyển về CPU (libx264)...")
-            ret = _execute_ffmpeg("libx264")
-
-        if ret not in (0, -9, -15):
-            raise Exception(f"FFmpeg gặp lỗi khi render hardsub (Mã lỗi: {ret})")
-        outcome = "success" if ret == 0 else "cancel"
+        ret, outcome = _run_ffmpeg_with_fallback(
+            _build_cmd,
+            encoder=encoder,
+            log_callback=log_callback,
+            process_callback=process_callback,
+            cancel_check=cancel_check,
+            error_context="render hardsub",
+        )
+        if outcome == "cancel":
+            return
 
         if log_callback:
             log_callback(f"[FFmpeg] Hoàn tất: {os.path.basename(final_output_path)}")

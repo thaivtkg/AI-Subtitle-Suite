@@ -111,13 +111,12 @@ class TimelineController(QObject):
             return
         if source == SelectionSource.TIMELINE:
             return
+        if not segment_ids or len(segment_ids) <= 1:
+            return
         if hasattr(self.ui, "clear_gap_selection"):
             self.ui.clear_gap_selection()
 
         track = self.ui.container.track
-        if not segment_ids:
-            return
-
         track.set_selection(set(segment_ids))
         track.update()
         if hasattr(self.ui, "refresh_segment_focus"):
@@ -178,7 +177,11 @@ class TimelineController(QObject):
             if len(selected_ids) == 1:
                 segment_id = next(iter(selected_ids))
                 index = next((i for i, s in enumerate(track.segments) if s.segment_id == segment_id), -1)
-                self.selection_controller.select(index, segment_id, SelectionSource.TIMELINE)
+                self._syncing_track_selection = True
+                try:
+                    self.selection_controller.select(index, segment_id, SelectionSource.TIMELINE)
+                finally:
+                    self._syncing_track_selection = False
             elif len(selected_ids) > 1:
                 indices = [i for i, s in enumerate(track.segments) if s.segment_id in selected_ids]
                 self._syncing_track_selection = True
@@ -508,7 +511,9 @@ class TimelineController(QObject):
         if not command.can_execute(None):
             return False
         if hasattr(self.undo_manager, "push"):
-            self.undo_manager.push(TimelineCommandAdapter(command))
+            self.undo_manager.push(
+                TimelineCommandAdapter(command, after_mutate=self.data_provider.sync_back_to_editor)
+            )
             return True
         return self.undo_manager.execute_command(command, self.state_manager)
 

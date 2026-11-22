@@ -89,12 +89,18 @@ class CatStudioPage(BasePage):
             return None
 
     @property
-    def subject_tag_chip_item(self) -> QQuickItem:
-        return self.driver.find_qml_item(self.LOC_SUBJECT_TAG_CHIP, root_item=self.root_qml)
+    def subject_tag_chip_item(self) -> Optional[QQuickItem]:
+        try:
+            return self.driver.find_qml_item(self.LOC_SUBJECT_TAG_CHIP, root_item=self.root_qml)
+        except LookupError:
+            return None
 
     @property
-    def subject_tag_text_item(self) -> QQuickItem:
-        return self.driver.find_qml_item(self.LOC_SUBJECT_TAG_TEXT, root_item=self.root_qml)
+    def subject_tag_text_item(self) -> Optional[QQuickItem]:
+        try:
+            return self.driver.find_qml_item(self.LOC_SUBJECT_TAG_TEXT, root_item=self.root_qml)
+        except LookupError:
+            return None
 
     # -------------------------------------------------------------------------
     # User Actions
@@ -154,11 +160,13 @@ class CatStudioPage(BasePage):
 
     def get_subject_tag_text(self) -> str:
         """Returns the text displayed on the QML Subject Tag Chip."""
-        return str(self.subject_tag_text_item.property("text"))
+        item = self.subject_tag_text_item
+        return str(item.property("text")) if item else ""
 
     def is_subject_tag_visible(self) -> bool:
         """Returns whether the Subject Tag Chip is visible in QML."""
-        return bool(self.subject_tag_chip_item.property("visible"))
+        item = self.subject_tag_chip_item
+        return bool(item and item.property("visible"))
 
     def set_subject_pronoun(self, pronoun_pair: str) -> CatStudioPage:
         """Sets the subject pronoun pair on the controller and waits for QML reactivity."""

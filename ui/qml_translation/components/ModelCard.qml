@@ -17,6 +17,7 @@ Rectangle {
     property string recommendationBadge: modelData ? (modelData.recommendation || modelData.badge || "") : ""
     property string recommendationReason: modelData ? (modelData.recommendation_reason || modelData.reason || "") : ""
     property string status: modelData ? (modelData.status || "") : "NOT_DOWNLOADED"
+    property bool isCloud: modelData && modelData.is_cloud ? true : false
     property int downloadPercent: modelData ? (modelData.download_percent !== undefined ? modelData.download_percent : (modelData.progress_percent || 0)) : 0
     property string downloadSpeed: modelData ? (modelData.download_speed || modelData.speed || "") : ""
     property string downloadEta: modelData ? (modelData.download_eta || modelData.eta || "") : ""
@@ -24,9 +25,9 @@ Rectangle {
     readonly property bool isDownloaded: status === "DOWNLOADED" || status === "ACTIVE" || (modelData && modelData.is_downloaded)
     readonly property bool isDownloading: status === "DOWNLOADING" || (modelData && modelData.is_downloading)
     readonly property bool isActive: status === "ACTIVE" || (modelData && modelData.is_active)
-    readonly property bool canDownload: (status === "NOT_DOWNLOADED" || (!isDownloaded && !isDownloading)) && (modelData ? modelData.can_download : true)
+    readonly property bool canDownload: !isCloud && (status === "NOT_DOWNLOADED" || (!isDownloaded && !isDownloading)) && (modelData ? modelData.can_download : true)
     readonly property bool canSelect: isDownloaded && !isActive && (modelData ? modelData.can_select : true)
-    readonly property bool canDelete: isDownloaded && !isActive && (modelData ? modelData.can_delete : true)
+    readonly property bool canDelete: !isCloud && isDownloaded && !isActive && (modelData ? modelData.can_delete : true)
 
     signal downloadClicked(string modelId)
     signal cancelClicked(string modelId)
@@ -95,9 +96,9 @@ Rectangle {
                     id: badgeText
                     anchors.centerIn: parent
                     text: {
-                        if (root.recommendationBadge === "RECOMMENDED") return "★ KHUYÊN DÙNG"
-                        if (root.recommendationBadge === "COMPATIBLE") return "✓ TƯƠNG THÍCH"
-                        return "⚠ CHƯA TỐI ƯU"
+                        if (root.recommendationBadge === "RECOMMENDED") return "Khuyên dùng"
+                        if (root.recommendationBadge === "COMPATIBLE") return "Tương thích"
+                        return "Chưa tối ưu"
                     }
                     color: {
                         if (root.recommendationBadge === "RECOMMENDED") return "#34D399"
@@ -123,6 +124,8 @@ Rectangle {
                 color: Theme.textSecondary
                 font.pixelSize: 13
                 font.bold: true
+                font.family: "JetBrains Mono, Consolas, monospace"
+                font.features: { "tnum": 1 }
             }
         }
 
@@ -149,12 +152,16 @@ Rectangle {
                     color: Theme.accentCyan
                     font.pixelSize: 12
                     font.bold: true
+                    font.family: "JetBrains Mono, Consolas, monospace"
+                    font.features: { "tnum": 1 }
                 }
                 Item { Layout.fillWidth: true }
                 Text {
                     text: root.downloadSpeed + (root.downloadEta !== "" ? (" · ETA: " + root.downloadEta) : "")
                     color: Theme.textMuted
                     font.pixelSize: 12
+                    font.family: "JetBrains Mono, Consolas, monospace"
+                    font.features: { "tnum": 1 }
                 }
             }
 
@@ -180,21 +187,21 @@ Rectangle {
             Layout.topMargin: Theme.spaceXs
             spacing: Theme.spaceSmall
 
-            // Tag trạng thái: Active hoặc Downloaded
+            // Tag trạng thái: Active, Downloaded hoặc cần API Key
             Rectangle {
                 implicitWidth: statusLabel.implicitWidth + 16
                 implicitHeight: 24
                 radius: 8
-                visible: (root.isActive || root.isDownloaded) && !root.isDownloading
-                color: root.isActive ? Qt.rgba(0.0, 0.4, 1.0, 0.12) : Qt.rgba(0.06, 0.72, 0.50, 0.12)
-                border.color: root.isActive ? Theme.accentSapphire : "#10B981"
+                visible: (root.isActive || root.isDownloaded || root.isCloud) && !root.isDownloading
+                color: root.isActive ? Qt.rgba(0.0, 0.4, 1.0, 0.12) : (root.isDownloaded ? Qt.rgba(0.06, 0.72, 0.50, 0.12) : Qt.rgba(0.96, 0.62, 0.04, 0.15))
+                border.color: root.isActive ? Theme.accentSapphire : (root.isDownloaded ? "#10B981" : "#F59E0B")
                 border.width: 1
 
                 Text {
                     id: statusLabel
                     anchors.centerIn: parent
-                    text: root.isActive ? "⚡ ĐANG SỬ DỤNG" : "✓ ĐÃ TẢI VỀ"
-                    color: root.isActive ? Theme.accentSapphire : "#34D399"
+                    text: root.isActive ? "Đang sử dụng" : (root.isCloud ? (root.isDownloaded ? "Sẵn sàng (Cloud)" : "Cần API Key") : "Đã tải về")
+                    color: root.isActive ? Theme.accentSapphire : (root.isDownloaded ? "#34D399" : "#FBBF24")
                     font.pixelSize: 11
                     font.bold: true
                 }

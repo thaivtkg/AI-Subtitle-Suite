@@ -109,6 +109,8 @@ class LiquidOverlayWidget(QWidget):
                 self._blob_x = 4.0
 
     def _update_physics(self):
+        if not self.isVisible() or (self.target is not None and not self.target.isVisible()):
+            return
         if self.parent() and (self.width() != self.parent().width() or self.height() != self.parent().height()):
             self._sync_geometry()
 

@@ -20,6 +20,23 @@ class SubtitleController(QObject):
         self.is_enabled = True  # Trạng thái của Checkbox "Show Subtitle"
         
 
+    @staticmethod
+    def _read_text_with_fallback(path: str) -> str:
+        """Read subtitle/draft text safely across UTF-8 and legacy regional encodings."""
+        with open(path, 'rb') as f:
+            raw = f.read()
+        for enc in ('utf-8-sig', 'utf-8', 'utf-16', 'cp1258', 'cp1252', 'shift_jis', 'gbk'):
+            try:
+                return raw.decode(enc)
+            except UnicodeDecodeError:
+                continue
+        return raw.decode('utf-8', errors='replace')
+
+    _NON_SUBTITLE_MEDIA_EXTS = (
+        '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.webm', '.flv', '.m4v', '.ts',
+        '.m2ts', '.mp3', '.wav', '.aac', '.flac', '.ogg', '.m4a',
+    )
+
     def load_srt(self, srt_path):
         import re
         import json
@@ -30,30 +47,43 @@ class SubtitleController(QObject):
 
         if not srt_path or not os.path.exists(srt_path):
             return
+        if str(srt_path).lower().endswith(self._NON_SUBTITLE_MEDIA_EXTS):
+            return
+        try:
+            if os.path.getsize(srt_path) > 20 * 1024 * 1024:
+                return
+        except OSError:
+            return
 
         try:
-            # [P2-T10] NẾU LÀ ĐỊNH DẠNG ARTIFACT DRAFT (.ai-subtitle-draft)
-            if srt_path.endswith('.ai-subtitle-draft'):
-                with open(srt_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                for seg in data.get("segments", []):
-                    start_ms = seg.get("start_ms", 0)
-                    end_ms = seg.get("end_ms", 0)
+            content_raw = self._read_text_with_fallback(srt_path)
+            # [P2-T10] NẾU LÀ ĐỊNH DẠNG ARTIFACT DRAFT (.ai-subtitle-draft) HOẶC JSON (.aisrt/.sub.json)
+            if srt_path.endswith('.ai-subtitle-draft') or srt_path.endswith('.aisrt') or srt_path.endswith('.json'):
+                data = json.loads(content_raw)
+                segs = data.get("segments", data.get("subtitles", [])) if isinstance(data, dict) else []
+                for idx, seg in enumerate(segs):
+                    start_ms = seg.get("start_ms")
+                    if start_ms is None and "start" in seg:
+                        start_ms = self.time_str_to_ms(seg["start"])
+                    end_ms = seg.get("end_ms")
+                    if end_ms is None and "end" in seg:
+                        end_ms = self.time_str_to_ms(seg["end"])
                     text = seg.get("text", "")
-                    stt = seg.get("id", 0)
-                    self.subtitles.append((start_ms, end_ms, text, stt))
-            
+                    stt = seg.get("stt", seg.get("id", idx + 1))
+                    self.subtitles.append((int(start_ms or 0), int(end_ms or 0), text, stt))
+
             # NẾU LÀ ĐỊNH DẠNG SRT TRUYỀN THỐNG
             else:
-                with open(srt_path, 'r', encoding='utf-8') as f:
-                    content = f.read().replace('\r\n', '\n')
+                content = content_raw.replace('\r\n', '\n').replace('\r', '\n')
                 blocks = re.split(r'\n{2,}', content.strip())
                 for block in blocks:
                     lines = block.strip().split('\n')
                     if len(lines) >= 2 and '-->' in lines[1]:
-                        try: stt = int(lines[0].strip('\ufeff').strip()) 
-                        except ValueError: continue
-                        
+                        try:
+                            stt = int(lines[0].strip('\ufeff').strip())
+                        except ValueError:
+                            continue
+
                         times = lines[1].split(' --> ')
                         start_ms = self.time_str_to_ms(times[0])
                         end_ms = self.time_str_to_ms(times[1])

@@ -71,13 +71,23 @@ class TranslationBatchWorker(QRunnable):
             
         return chunks
 
+    @staticmethod
+    def _format_timestamp(val) -> str:
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            ms = max(0, int(val))
+            h, rem = divmod(ms, 3600000)
+            m, rem = divmod(rem, 60000)
+            s, ms_part = divmod(rem, 1000)
+            return f"{h:02d}:{m:02d}:{s:02d},{ms_part:03d}"
+        return str(val or "00:00:00,000")
+
     def _format_srt_chunk(self, chunk: list[dict]) -> str:
         lines = []
         for seg in chunk:
             idx = seg.get("stt", "1")
-            start = seg.get("start", "00:00:00,000")
-            end = seg.get("end", "00:00:00,000")
-            text = seg.get("original_text", seg.get("text", ""))
+            start = self._format_timestamp(seg.get("start", "00:00:00,000"))
+            end = self._format_timestamp(seg.get("end", "00:00:00,000"))
+            text = seg.get("original_text") or seg.get("text", "")
             lines.append(f"{idx}\n{start} --> {end}\n{text}\n")
         return "\n".join(lines)
 
@@ -107,7 +117,7 @@ class TranslationBatchWorker(QRunnable):
                 
                 tm_matches = []
                 for seg in chunk:
-                    orig = seg.get("original_text", "").strip()
+                    orig = (seg.get("original_text") or seg.get("text") or "").strip()
                     if orig and orig != "[Unknown Source]":
                         matches = self.tm_manager.find_matches(orig)
                         if matches:
@@ -217,6 +227,8 @@ class TranslationBatchWorker(QRunnable):
             result_chunk = []
             for i, o_seg in enumerate(original_chunk):
                 new_seg = o_seg.copy()
+                if not new_seg.get("original_text"):
+                    new_seg["original_text"] = o_seg.get("text", "")
                 new_seg["text"] = parsed[i]["text"]
                 result_chunk.append(new_seg)
                 

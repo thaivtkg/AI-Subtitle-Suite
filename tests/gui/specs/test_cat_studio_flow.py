@@ -194,11 +194,11 @@ def test_flow_cat_studio_translate_button_visible_under_draft_or_idle_status(cat
     driver.assert_visible(btn_translate, True)
 
 
-def test_flow_cat_studio_subject_tag_chip_and_pronoun_override(cat_studio_driver):
+def test_flow_cat_studio_subject_tag_chip_removed_for_pure_free_translation(cat_studio_driver):
     """
     PLAN-CAT-SUBJECT-TAG-AND-GEMMA-ENHANCEMENT-001 & PLAN-UI-DRIVER-E2E-VERIFICATION-001:
-    Verify via QtDriver on real QML Scene Graph that subjectTagChip displays detected anime
-    pronouns ('Ta ➔ Ngươi (俺様)') and updates live when setSubjectPronoun is triggered.
+    Verify via QtDriver on real QML Scene Graph that subjectTagChip is completely removed
+    from the UI so that translation operates purely and freely without persona tag overhead.
     """
     page_widget, cat_page, driver = cat_studio_driver
 
@@ -207,11 +207,9 @@ def test_flow_cat_studio_subject_tag_chip_and_pronoun_override(cat_studio_driver
     ])
     driver.wait_ms(100)
 
-    assert cat_page.is_subject_tag_visible() is True
-    assert cat_page.get_subject_tag_text() == "Ta ➔ Ngươi (俺様)"
-
-    cat_page.set_subject_pronoun("Tao - Mày")
-    assert cat_page.get_subject_tag_text() == "Tao ➔ Mày (俺様)"
+    # Thẻ chủ ngữ đã được loại bỏ hoàn toàn khỏi giao diện QML
+    assert cat_page.is_subject_tag_visible() is False
+    assert cat_page.subject_tag_chip_item is None
 
 
 

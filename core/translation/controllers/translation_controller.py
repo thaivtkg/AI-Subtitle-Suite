@@ -33,6 +33,7 @@ class TranslationController(QObject):
         self._current_display_index = -1
         self._selection_changed_during_translation = False
         self._current_translation = ""
+        self._translation_before_request = ""
         self._current_original = ""
         self._current_start_time = ""
         self._current_end_time = ""
@@ -50,14 +51,21 @@ class TranslationController(QObject):
         self.alt_worker = None
         self._extract_worker = None
         self.hardware_profile = HardwareDetector.get_recommended_profile()
+        self.hardware_profile.setdefault("temperature", 0.1)
+        self.hardware_profile.setdefault("top_p", 0.90)
+        self.hardware_profile.setdefault("repeat_penalty", 1.05)
         self._glossary = None
         self._entities = None
         self._translation_memory = None
         self._project_controller = None
         self._subtitle_model.modelReset.connect(self._emit_progress)
         self._subtitle_model.dataChanged.connect(self._emit_progress)
+        self._subtitle_model.rowsInserted.connect(self._emit_progress)
+        self._subtitle_model.rowsRemoved.connect(self._emit_progress)
         self._subtitle_model.modelReset.connect(self._emit_qa_status)
         self._subtitle_model.dataChanged.connect(self._emit_qa_status)
+        self._subtitle_model.rowsInserted.connect(self._emit_qa_status)
+        self._subtitle_model.rowsRemoved.connect(self._emit_qa_status)
         self._progress_timer = QTimer(self)
         self._progress_timer.setInterval(250)
         self._progress_timer.timeout.connect(self._on_thinking_progress_tick)
@@ -134,20 +142,32 @@ class TranslationController(QObject):
             self._progress_timer.stop()
 
     def _on_translation_timeout(self):
-        """Watchdog Timeout: Tự động ngắt worker nếu mô hình bị treo quá 90 giây mà không trả về kết quả."""
-        if self._status == "TRANSLATING":
-            target_idx = self._active_translation_index
-            self.cancelTranslation()
-            error_msg = "Thời gian suy luận vượt quá 90s. Vui lòng kiểm tra tải mô hình hoặc cấu hình GPU."
-            if target_idx >= 0:
-                self._subtitle_model.update_translation(target_idx, error_msg, "ERROR")
-                if self._current_index == target_idx:
-                    self._status = "ERROR"
-                    self._current_translation = error_msg
-                    self.statusChanged.emit(self._status)
-                    self.translationUpdated.emit(error_msg)
-                self.translationFailed.emit(target_idx, error_msg)
-            self._set_engine_status("Error")
+        """Stop the active request when the model stops producing output."""
+        target_idx = self._active_translation_index
+        if not self._is_model_valid():
+            return
+        subtitles = self._subtitle_model.get_all_data()
+        if not 0 <= target_idx < len(subtitles):
+            return
+        timeout_s = self._watchdog_timer.interval() // 1000
+        previous_translation = subtitles[target_idx].get("translation") or self._translation_before_request
+        self.cancelTranslation()
+        error_msg = (
+            f"Thời gian chờ phản hồi từ mô hình vượt quá {timeout_s}s. "
+            "Đã yêu cầu dừng tác vụ và giữ lại bản dịch hiện có."
+        )
+        subtitles[target_idx]["translation_error"] = error_msg
+        self._subtitle_model.update_translation(target_idx, previous_translation, "ERROR")
+        if self._current_index == target_idx:
+            self._status = "ERROR"
+            self._current_translation = previous_translation
+            self.statusChanged.emit(self._status)
+            self.translationUpdated.emit(previous_translation)
+        elif self._current_index >= 0:
+            self.loadSubtitle(self._current_index)
+        self.translationFailed.emit(target_idx, error_msg)
+        self.notify.emit("ERROR", error_msg)
+        self._set_engine_status("Error")
 
     @Slot()
     def _is_model_valid(self) -> bool:
@@ -183,7 +203,8 @@ class TranslationController(QObject):
                 pass
         try:
             from core.translation.llm.model_manager import ModelManager
-            ModelManager.get_instance().cancel()
+            if ModelManager._instance is not None:
+                ModelManager._instance.cancel()
         except Exception:
             pass
 
@@ -279,6 +300,14 @@ class TranslationController(QObject):
 
     @Property(str, notify=statusChanged)
     def status(self): return self._status
+
+    @Property(str, notify=statusChanged)
+    def currentError(self):
+        if self._status == "ERROR" and self._is_model_valid():
+            subtitles = self._subtitle_model.get_all_data()
+            if 0 <= self._current_index < len(subtitles):
+                return subtitles[self._current_index].get("translation_error", "")
+        return ""
 
     @Property(int, notify=statusChanged)
     def activeTranslationIndex(self):
@@ -442,20 +471,25 @@ class TranslationController(QObject):
             subtitles[self._current_index]["subject_pronoun_pair"] = pair or "Tự do"
         self._manual_pronoun_pair = "" if pair.lower() == "tự do" else pair
         if self._project_controller is not None:
-            self._project_controller._active_pronoun_pair = self._manual_pronoun_pair
-            if hasattr(self._project_controller, "archetypeChanged"):
-                try:
-                    self._project_controller.archetypeChanged.emit()
-                except Exception:
-                    pass
+            if hasattr(self._project_controller, "setActivePronounPair"):
+                self._project_controller.setActivePronounPair(self._manual_pronoun_pair)
+            else:
+                self._project_controller._active_pronoun_pair = self._manual_pronoun_pair
+                if hasattr(self._project_controller, "archetypeChanged"):
+                    try:
+                        self._project_controller.archetypeChanged.emit()
+                    except Exception:
+                        pass
         self.currentSubjectTagChanged.emit()
 
     @Slot(int)
     def loadSubtitle(self, index):
         if index < 0: 
-            if self.is_busy():
-                self.cancelTranslation()
-            self._active_translation_index = -1
+            # Only cancel an active worker when the queue itself is actually empty (not on a filtered 0-row view)
+            if self._is_model_valid() and len(self._subtitle_model.get_all_data()) == 0:
+                if self.is_busy():
+                    self.cancelTranslation()
+                self._active_translation_index = -1
             self._current_index = -1
             self._current_display_index = -1
             self._current_original = ""
@@ -520,6 +554,19 @@ class TranslationController(QObject):
         self.appliedTermsChanged.emit()
         self.currentSubjectTagChanged.emit()
 
+    def _resolve_model_family(self) -> str:
+        backend_type = str(self.hardware_profile.get("backend_type") or "").lower()
+        model_name = str(self.hardware_profile.get("model_name") or "").lower()
+        if backend_type == "gemini" or "gemini" in model_name:
+            return "gemini"
+        if "gemma" in model_name:
+            return "gemma"
+        if "llama" in model_name:
+            return "llama"
+        if "deepseek" in model_name:
+            return "deepseek"
+        return "qwen"
+
     @Slot()
     def markAsEdited(self):
         if self._status in ["PENDING", "TRANSLATED", "ACCEPTED"]:
@@ -530,8 +577,12 @@ class TranslationController(QObject):
     def updateCurrentTranslation(self, text: str):
         self._current_translation = text
         self._status = "EDITED"
-        if 0 <= self._active_translation_index < len(self._subtitle_model.get_all_data()):
-            self._subtitle_model.update_translation(self._active_translation_index, text, "EDITED")
+        target_idx = self._current_index
+        if (
+            0 <= target_idx < len(self._subtitle_model.get_all_data())
+            and target_idx != self._active_translation_index
+        ):
+            self._subtitle_model.update_translation(target_idx, text, "EDITED")
         self.statusChanged.emit(self._status)
         self.translationUpdated.emit(self._current_translation)
         self._update_ghost_text()
@@ -589,32 +640,46 @@ class TranslationController(QObject):
     def requestTranslation(self, index, source_lang, target_lang, story_summary):
         subtitles = self._subtitle_model.get_all_data()
         if index < 0 or index >= len(subtitles):
+            self.translationFailed.emit(index, "Chỉ số phụ đề không hợp lệ.")
             return
 
         # Gate 1: Data Sanity Check (Bỏ qua câu rỗng hoặc placeholder)
         current_raw = (subtitles[index].get("original") or "").strip()
         if not current_raw or current_raw in {"[ Chưa có nội dung ]", "[Chưa có nội dung]"}:
-            self.notify.emit("WARNING", "Phân đoạn phụ đề trống hoặc không có nội dung để dịch!")
+            msg = "Phân đoạn phụ đề trống hoặc không có nội dung để dịch!"
+            self.notify.emit("WARNING", msg)
+            self.translationFailed.emit(index, msg)
             return
 
         # AUD-CONCUR-001: Khóa kiểm tra bận liên luồng toàn bộ worker LLM
         if self.is_busy():
+            self.translationFailed.emit(index, "Hệ thống dịch đang bận.")
             return
 
-        if not source_lang or (source_lang == "English" and getattr(self, "_current_source_language", "English") != "English"):
-            source_lang = self._current_source_language
+        detected_src = getattr(self, "_current_source_language", "English")
+        if not source_lang or (
+            source_lang == "English"
+            and detected_src not in ("English", target_lang)
+        ):
+            source_lang = detected_src
 
         # Gate 2: Language Sanity Check (Chặn nguồn trùng đích)
         if source_lang and target_lang and source_lang.strip().lower() == target_lang.strip().lower():
-            self.notify.emit("WARNING", "Ngôn ngữ nguồn và ngôn ngữ đích không được trùng nhau!")
+            msg = "Ngôn ngữ nguồn và ngôn ngữ đích không được trùng nhau!"
+            self.notify.emit("WARNING", msg)
+            self.translationFailed.emit(index, msg)
             return
 
         # Gate 3: Model Readiness Check (Chặn khi model chưa sẵn sàng)
         mc = getattr(self, "_model_controller", None)
         if mc is not None and hasattr(mc, "hasValidModel") and not mc.hasValidModel:
-            self.notify.emit("WARNING", "Mô hình AI chưa sẵn sàng hoặc chưa được tải về máy!")
+            msg = "Mô hình AI chưa sẵn sàng hoặc chưa được tải về máy!"
+            self.notify.emit("WARNING", msg)
+            self.translationFailed.emit(index, msg)
             return
 
+        self._translation_before_request = subtitles[index].get("translation", "")
+        subtitles[index].pop("translation_error", None)
         self._active_translation_index = index
         self._selection_changed_during_translation = False
         self._status = "TRANSLATING"
@@ -634,6 +699,9 @@ class TranslationController(QObject):
         if self.translation_memory:
             hit = self.translation_memory.lookup(current)
             if hit:
+                self._active_translation_index = -1
+                self._translation_progress = 100
+                self.translationProgressChanged.emit(100)
                 self._subtitle_model.update_translation(index, hit.target_text, "TRANSLATED")
                 self._status = "TRANSLATED"
                 self._current_translation = hit.target_text
@@ -657,6 +725,19 @@ class TranslationController(QObject):
 
         entity_hits = self.entities.match(current, word_boundary=True) if self.entities else ()
         active_pronoun = self._resolve_pronoun_pair_for_index(index, current)
+        sub_override = (subtitles[index].get("subject_pronoun_pair") or "").strip()
+        proj_pronoun = (
+            getattr(self._project_controller, "activePronounPair", "")
+            if self._project_controller
+            else self._manual_pronoun_pair
+        )
+        is_free_mode = (
+            sub_override.lower() == "tự do"
+            or (bool(proj_pronoun) and proj_pronoun.strip().lower() == "tự do")
+            or not active_pronoun
+        )
+        prompt_prev = None if is_free_mode else prev_ctx
+        prompt_next = None if is_free_mode else next_ctx
         active_archetype = (
             getattr(self._project_controller, "activeArchetype", "")
             if self._project_controller
@@ -667,23 +748,15 @@ class TranslationController(QObject):
             if self._project_controller
             else False
         )
-        model_name = (self.hardware_profile.get("model_name") or "").lower()
-        if "gemma" in model_name:
-            model_family = "gemma"
-        elif "llama" in model_name:
-            model_family = "llama"
-        elif "deepseek" in model_name:
-            model_family = "deepseek"
-        else:
-            model_family = "qwen"
+        model_family = self._resolve_model_family()
 
         prompt = PromptBuilder.build(
             story_summary,
             source_lang,
             target_lang,
-            prev_ctx,
+            prompt_prev,
             current,
-            next_ctx,
+            prompt_next,
             glossary_hits=tuple(enriched_glossary_hits),
             entity_hits=tuple(entity_hits),
             active_pronoun_pair=active_pronoun,
@@ -700,11 +773,14 @@ class TranslationController(QObject):
         if hasattr(self.worker, "termsExtracted"):
             self.worker.termsExtracted.connect(self.on_terms_extracted)
         self.worker.progress.connect(self.on_progress)
+        if hasattr(self.worker, "activity"):
+            self.worker.activity.connect(self.on_activity)
         self.worker.finished.connect(self.on_finished)
         self.worker.error.connect(self.on_error)
         self._progress_timer.start()
         if hasattr(self, "_watchdog_timer"):
-            self._watchdog_timer.start(90000)
+            # Loading model weights and evaluating the prompt precede the first token.
+            self._watchdog_timer.start(300_000)
         self.worker.start()
 
     @Slot(int, list)
@@ -715,13 +791,28 @@ class TranslationController(QObject):
             if index == self._current_index:
                 self.appliedTermsChanged.emit()
 
-    @Slot(int, str)
-    def on_progress(self, index, text):
-        if not self._is_model_valid():
+    @Slot(int)
+    def on_activity(self, index):
+        if not self._is_model_valid() or index != self._active_translation_index:
+            return
+        if not 0 <= index < len(self._subtitle_model.get_all_data()):
             return
         sender = self.sender()
         if sender is not None and sender is not self.worker:
             return
+        self._watchdog_timer.start(90_000)
+
+    @Slot(int, str)
+    def on_progress(self, index, text):
+        if not self._is_model_valid():
+            return
+        if index != self._active_translation_index:
+            return
+        sender = self.sender()
+        if sender is not None and sender is not self.worker:
+            return
+        if text:
+            self.on_activity(index)
         if hasattr(self, "_progress_timer") and self._progress_timer.isActive():
             self._progress_timer.stop()
         self._subtitle_model.update_translation(index, text, "TRANSLATING")
@@ -739,26 +830,18 @@ class TranslationController(QObject):
     def on_finished(self, index, text):
         if not self._is_model_valid():
             return
+        if index != self._active_translation_index:
+            return
+        sender = self.sender()
+        if sender is not None and sender is not self.worker:
+            return
         if hasattr(self, "_progress_timer") and self._progress_timer.isActive():
             self._progress_timer.stop()
         if hasattr(self, "_watchdog_timer") and self._watchdog_timer.isActive():
             self._watchdog_timer.stop()
-        sender = self.sender()
-        if sender is not None and sender is not self.worker:
-            return
         clean_text = self._clean_translated_text(text)
         if not clean_text:
-            message = "Lỗi: Model trả về bản dịch rỗng."
-            self._subtitle_model.update_translation(index, message, "ERROR")
-            if index == self._active_translation_index:
-                self._active_translation_index = -1
-                if self._current_index >= 0 and index == self._current_index:
-                    self._status = "ERROR"
-                    self._current_translation = message
-                    self.statusChanged.emit(self._status)
-                    self.translationUpdated.emit(message)
-            self._set_engine_status("Error")
-            self.translationFailed.emit(index, message)
+            self.on_error(index, "Model trả về bản dịch rỗng.")
             return
 
         # Lưu trữ auto_terms từ worker nếu chưa lưu qua signal
@@ -767,6 +850,9 @@ class TranslationController(QObject):
             if 0 <= index < len(subtitles) and not subtitles[index].get("auto_terms"):
                 subtitles[index]["auto_terms"] = self.worker.extracted_terms
 
+        subtitles = self._subtitle_model.get_all_data()
+        if 0 <= index < len(subtitles):
+            subtitles[index].pop("translation_error", None)
         self._subtitle_model.update_translation(index, clean_text, "TRANSLATED")
         self.appliedTermsChanged.emit()
         self._translation_progress = 100
@@ -787,20 +873,27 @@ class TranslationController(QObject):
     def on_error(self, index, err_msg):
         if not self._is_model_valid():
             return
+        if index != self._active_translation_index:
+            return
+        subtitles = self._subtitle_model.get_all_data()
+        if not 0 <= index < len(subtitles):
+            return
+        sender = self.sender()
+        if sender is not None and sender is not self.worker:
+            return
         if hasattr(self, "_progress_timer") and self._progress_timer.isActive():
             self._progress_timer.stop()
         if hasattr(self, "_watchdog_timer") and self._watchdog_timer.isActive():
             self._watchdog_timer.stop()
-        sender = self.sender()
-        if sender is not None and sender is not self.worker:
-            return
         message = f"Lỗi: {err_msg}"
-        self._subtitle_model.update_translation(index, message, "ERROR")
+        preserved_translation = subtitles[index].get("translation") or self._translation_before_request
+        subtitles[index]["translation_error"] = message
+        self._subtitle_model.update_translation(index, preserved_translation, "ERROR")
         if index == self._active_translation_index:
             self._active_translation_index = -1
             if self._current_index >= 0 and index == self._current_index:
                 self._status = "ERROR"
-                self._current_translation = message
+                self._current_translation = preserved_translation
                 self.statusChanged.emit(self._status)
                 self.translationUpdated.emit(self._current_translation)
         self._translation_progress = 0
@@ -902,15 +995,7 @@ class TranslationController(QObject):
         story_summary = getattr(self._project_controller, "storySummary", "") if self._project_controller else ""
         target_lang = "Vietnamese"
 
-        model_name = (self.hardware_profile.get("model_name") or "").lower()
-        if "gemma" in model_name:
-            model_family = "gemma"
-        elif "llama" in model_name:
-            model_family = "llama"
-        elif "deepseek" in model_name:
-            model_family = "deepseek"
-        else:
-            model_family = "qwen"
+        model_family = self._resolve_model_family()
 
         profile = dict(self.hardware_profile)
         if style_mode == "CREATIVE":
@@ -925,13 +1010,26 @@ class TranslationController(QObject):
             if self._project_controller
             else ""
         )
+        sub_override = (subtitles[index].get("subject_pronoun_pair") or "").strip()
+        proj_pronoun = (
+            getattr(self._project_controller, "activePronounPair", "")
+            if self._project_controller
+            else self._manual_pronoun_pair
+        )
+        is_free_mode = (
+            sub_override.lower() == "tự do"
+            or (bool(proj_pronoun) and proj_pronoun.strip().lower() == "tự do")
+            or not active_pronoun
+        )
+        prompt_prev = None if is_free_mode else prev_ctx
+        prompt_next = None if is_free_mode else next_ctx
         prompt = PromptBuilder.build(
             story_summary,
             source_lang,
             target_lang,
-            prev_ctx,
+            prompt_prev,
             current,
-            next_ctx,
+            prompt_next,
             glossary_hits=tuple(enriched_glossary_hits),
             entity_hits=tuple(entity_hits),
             active_pronoun_pair=active_pronoun,
@@ -1001,8 +1099,7 @@ class TranslationController(QObject):
 
         source_lang = "Japanese" if getattr(self._project_controller, "isJaOrigin", False) else "English"
         target_lang = "Vietnamese"
-        model_name = (self.hardware_profile.get("model_name") or "").lower()
-        model_family = "gemma" if "gemma" in model_name else ("llama" if "llama" in model_name else ("deepseek" if "deepseek" in model_name else "qwen"))
+        model_family = self._resolve_model_family()
 
         prompt = PromptBuilder.build_alignment(
             source_sub=original,

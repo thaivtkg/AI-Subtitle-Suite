@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 class AppSettings:
     DEFAULT_SETTINGS = {
         "active_model_id": "translategemma-9b-q4_k_m",
+        "gemini_api_key": "",
         "custom_n_ctx": 4096,
         "custom_n_gpu_layers": -1,
         "recent_files": [],
@@ -74,6 +75,14 @@ class AppSettings:
     @active_model_id.setter
     def active_model_id(self, value: str) -> None:
         self.set("active_model_id", value)
+
+    @property
+    def gemini_api_key(self) -> str:
+        return str(self.get("gemini_api_key", "") or "")
+
+    @gemini_api_key.setter
+    def gemini_api_key(self, value: str) -> None:
+        self.set("gemini_api_key", str(value or "").strip())
 
     @property
     def recent_files(self) -> List[str]:

@@ -20,12 +20,8 @@ def test_normalize_to_iso_code():
 
 
 def test_get_initial_prompt_for_japanese():
-    prompt = get_initial_prompt_for_language("ja")
-    assert prompt != ""
-    # Chứa các từ cảm thán / đệm thông dụng trong tiếng Nhật
-    for token in ["はい", "うん", "そう", "あの", "よし", "では", "違う"]:
-        assert token in prompt, f"Kỳ vọng từ đệm '{token}' có trong initial prompt tiếng Nhật!"
-
+    # Không còn hardcode prompt mồi tiếng Nhật ẩn trong mã nguồn
+    assert get_initial_prompt_for_language("ja") == ""
     assert get_initial_prompt_for_language(None) == ""
     assert get_initial_prompt_for_language("") == ""
     assert get_initial_prompt_for_language("unknown") == ""

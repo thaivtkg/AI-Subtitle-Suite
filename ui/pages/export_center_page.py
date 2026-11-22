@@ -1,14 +1,16 @@
+import os
 from typing import Optional
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QFileDialog,
     QFrame,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -25,13 +27,26 @@ class ExportCenterPage(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(14)
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(16, 16, 16, 16)
+        root_layout.setSpacing(12)
 
         title = QLabel("🚀 Export & Delivery Center")
         title.setStyleSheet(f"font-size: 15px; font-weight: bold; color: {Theme.TEXT_PRIMARY}; border: none;")
-        layout.addWidget(title)
+        root_layout.addWidget(title)
+
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setObjectName("export_center_scroll_area")
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        self.scroll_content = QWidget()
+        self.scroll_content.setObjectName("export_center_scroll_content")
+        self.scroll_content.setStyleSheet("background: transparent;")
+        layout = QVBoxLayout(self.scroll_content)
+        layout.setContentsMargins(0, 0, 6, 0)
+        layout.setSpacing(14)
 
         # 1. Format Selection Card
         fmt_frame = QFrame()
@@ -48,9 +63,12 @@ class ExportCenterPage(QWidget):
         fmt_layout.addWidget(lbl_f_title)
 
         self.chk_srt = QCheckBox("SubRip Subtitle (*.srt) — Chuẩn phát hành quốc tế")
+        self.chk_srt.setObjectName("chk_srt")
         self.chk_srt.setChecked(True)
         self.chk_vtt = QCheckBox("WebVTT (*.vtt) — Chuẩn Web & HTML5 Video")
+        self.chk_vtt.setObjectName("chk_vtt")
         self.chk_txt = QCheckBox("Plain Text (*.txt) — Bản gỡ băng thuần văn bản")
+        self.chk_txt.setObjectName("chk_txt")
 
         fmt_layout.addWidget(self.chk_srt)
         fmt_layout.addWidget(self.chk_vtt)
@@ -73,7 +91,9 @@ class ExportCenterPage(QWidget):
         hs_layout.addWidget(lbl_hs_title)
 
         self.chk_hardsub = QCheckBox("Render MP4 Hardsub (Chèn cứng phụ đề vào video)")
-        self.chk_hardsub.setChecked(True)
+        self.chk_hardsub.setObjectName("chk_hardsub")
+        self.chk_hardsub.setChecked(False)
+        self.chk_hardsub.setToolTip("Tự động kích hoạt thêm tiến trình Render Hardsub sau khi xuất xong file phụ đề (Softsub). Mặc định tắt để tránh tiêu tốn CPU/GPU không mong muốn.")
         hs_layout.addWidget(self.chk_hardsub)
         layout.addWidget(hs_frame)
 
@@ -90,14 +110,16 @@ class ExportCenterPage(QWidget):
         lbl_out = QLabel("📁 Thư mục lưu:")
         lbl_out.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-weight: bold; border: none;")
         self.out_edit = QLineEdit()
+        self.out_edit.setObjectName("out_edit")
         self.out_edit.setPlaceholderText("Đường dẫn lưu trữ kết quả...")
-        btn_browse = QPushButton("Chọn...")
-        btn_browse.setObjectName("btn_secondary")
-        btn_browse.clicked.connect(self._select_dir)
+        self.btn_browse = QPushButton("Chọn...")
+        self.btn_browse.setObjectName("btn_browse_out")
+        self.btn_browse.setProperty("variant", "secondary")
+        self.btn_browse.clicked.connect(self._select_dir)
 
         out_layout.addWidget(lbl_out)
         out_layout.addWidget(self.out_edit, stretch=1)
-        out_layout.addWidget(btn_browse)
+        out_layout.addWidget(self.btn_browse)
         layout.addWidget(out_frame)
 
         # 4. External Translation Batching Frame
@@ -113,6 +135,7 @@ class ExportCenterPage(QWidget):
         lbl_batch_title.setStyleSheet(f"font-weight: bold; color: {Theme.CYAN}; border: none;")
         batch_layout.addWidget(lbl_batch_title)
         self.lbl_batch_progress = QLabel("Tiến độ: Chưa có phụ đề trong dự án.")
+        self.lbl_batch_progress.setObjectName("lbl_batch_progress")
         self.lbl_batch_progress.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-size: 11px; border: none;")
         batch_layout.addWidget(self.lbl_batch_progress)
         row_ctrl = QHBoxLayout()
@@ -123,27 +146,31 @@ class ExportCenterPage(QWidget):
         self._total_count = 0
         self._translated_count = 0
         self.spin_batch_start = QSpinBox()
+        self.spin_batch_start.setObjectName("spin_batch_start")
         self.spin_batch_start.setRange(1, 99999)
         self.spin_batch_start.setValue(1)
-        self.spin_batch_start.setFixedWidth(85)
+        self.spin_batch_start.setFixedWidth(120)
         self.spin_batch_start.valueChanged.connect(self._on_batch_start_changed)
         row_ctrl.addWidget(self.spin_batch_start)
         lbl_count = QLabel("Số câu xuất:")
         lbl_count.setStyleSheet(f"color: {Theme.TEXT_PRIMARY}; border: none;")
         row_ctrl.addWidget(lbl_count)
         self.spin_batch_count = QSpinBox()
+        self.spin_batch_count.setObjectName("spin_batch_count")
         self.spin_batch_count.setRange(1, 500)
         self.spin_batch_count.setValue(5)
-        self.spin_batch_count.setFixedWidth(85)
+        self.spin_batch_count.setFixedWidth(120)
         self.spin_batch_count.valueChanged.connect(self._on_batch_count_changed)
         row_ctrl.addWidget(self.spin_batch_count)
         row_ctrl.addStretch()
         self.btn_export_batch = QPushButton("Xuất đợt dịch (SRT)")
-        self.btn_export_batch.setObjectName("btn_secondary")
+        self.btn_export_batch.setObjectName("btn_export_batch")
+        self.btn_export_batch.setProperty("variant", "secondary")
         self.btn_export_batch.clicked.connect(self._on_export_batch_clicked)
         row_ctrl.addWidget(self.btn_export_batch)
         self.btn_import_batch = QPushButton("Nạp bản dịch vào Studio (SRT)")
-        self.btn_import_batch.setObjectName("btn_secondary")
+        self.btn_import_batch.setObjectName("btn_import_batch")
+        self.btn_import_batch.setProperty("variant", "secondary")
         self.btn_import_batch.clicked.connect(self.import_batch_translation_requested.emit)
         row_ctrl.addWidget(self.btn_import_batch)
         batch_layout.addLayout(row_ctrl)
@@ -151,21 +178,26 @@ class ExportCenterPage(QWidget):
 
         layout.addStretch()
 
-        # Action Buttons
+        self.scroll_area.setWidget(self.scroll_content)
+        root_layout.addWidget(self.scroll_area, stretch=1)
+
+        # Action Buttons (pinned below scroll area)
         act_row = QHBoxLayout()
         act_row.setSpacing(10)
 
-        btn_exp_sub = QPushButton("💾 Xuất file Phụ đề (Softsub)")
-        btn_exp_sub.setObjectName("btn_secondary")
-        btn_exp_sub.clicked.connect(self.export_srt_requested.emit)
+        self.btn_exp_sub = QPushButton("💾 Xuất file Phụ đề (Softsub)")
+        self.btn_exp_sub.setObjectName("btn_export_softsub")
+        self.btn_exp_sub.setProperty("variant", "secondary")
+        self.btn_exp_sub.clicked.connect(self.export_srt_requested.emit)
 
-        btn_exp_video = QPushButton("🎬 Render Video Hardsub")
-        btn_exp_video.setObjectName("btn_primary")
-        btn_exp_video.clicked.connect(self.burn_hardsub_requested.emit)
+        self.btn_exp_video = QPushButton("🎬 Render Video Hardsub")
+        self.btn_exp_video.setObjectName("btn_export_hardsub")
+        self.btn_exp_video.setProperty("variant", "primary")
+        self.btn_exp_video.clicked.connect(self.burn_hardsub_requested.emit)
 
-        act_row.addWidget(btn_exp_sub)
-        act_row.addWidget(btn_exp_video, stretch=1)
-        layout.addLayout(act_row)
+        act_row.addWidget(self.btn_exp_sub)
+        act_row.addWidget(self.btn_exp_video, stretch=1)
+        root_layout.addLayout(act_row)
 
     def _select_dir(self):
         d = QFileDialog.getExistingDirectory(self, "Chọn thư mục xuất kết quả")

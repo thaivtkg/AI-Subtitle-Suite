@@ -38,6 +38,13 @@ class SubtitleTrack(QWidget):
         self.duration_ms = 0
         
         self.selected_ids = set()
+        self._anchor_segment_id = ""
+        self._pending_collapse_id = ""
+        self._marquee_start_x = None
+        self._marquee_current_x = None
+        self._marquee_active = False
+        self._marquee_gap = None
+        self._marquee_base_ids = set()
         self.hovered_id = ""
         self.drag_segment_id = ""
         self.edit_mode = EditMode.NONE
@@ -126,7 +133,11 @@ class SubtitleTrack(QWidget):
         self.update()
         
     def set_selection(self, selected_ids: set):
-        self.selected_ids = selected_ids
+        self.selected_ids = set(selected_ids)
+        if len(self.selected_ids) == 1:
+            self._anchor_segment_id = next(iter(self.selected_ids))
+        elif not self.selected_ids:
+            self._anchor_segment_id = ""
         self.update()
 
     def update_geometry_size(self):
@@ -158,46 +169,101 @@ class SubtitleTrack(QWidget):
     def mousePressEvent(self, event):
         self.setFocus()
         if event.button() == Qt.LeftButton:
+            event.accept()
             # The narrow top marker keeps even a 1 ms gap clickable without
             # stealing the existing subtitle edge-drag interaction.
             point = event.position().toPoint()
             gap = self._gap_at(point.x(), marker=point.y() < 5)
             seg, mode = self.get_hit_target(point.x())
-            if gap is not None and (point.y() < 5 or seg is None):
+            if gap is not None and point.y() < 5:
                 self.selected_ids.clear()
+                self._anchor_segment_id = ""
                 self.update()
                 self.gap_clicked.emit(gap)
-                super().mousePressEvent(event)
                 return
-            is_multi = bool(event.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier))
-            
+
+            has_ctrl = bool(event.modifiers() & Qt.ControlModifier)
+            has_shift = bool(event.modifiers() & Qt.ShiftModifier)
+            is_multi = has_ctrl or has_shift
+
             if seg:
-                if is_multi:
+                self._marquee_start_x = None
+                self._marquee_active = False
+                self._pending_collapse_id = ""
+
+                if has_shift:
+                    anchor_id = self._anchor_segment_id or next(iter(self.selected_ids), "")
+                    anchor_idx = next(
+                        (i for i, s in enumerate(self.segments) if s.segment_id == anchor_id),
+                        -1,
+                    )
+                    clicked_idx = next(
+                        (i for i, s in enumerate(self.segments) if s.segment_id == seg.segment_id),
+                        -1,
+                    )
+                    if anchor_idx >= 0 and clicked_idx >= 0:
+                        lo, hi = min(anchor_idx, clicked_idx), max(anchor_idx, clicked_idx)
+                        range_ids = {s.segment_id for s in self.segments[lo : hi + 1]}
+                        if has_ctrl:
+                            self.selected_ids = set(self.selected_ids) | range_ids
+                        else:
+                            self.selected_ids = range_ids
+                    else:
+                        if seg.segment_id in self.selected_ids:
+                            self.selected_ids.remove(seg.segment_id)
+                        else:
+                            self.selected_ids.add(seg.segment_id)
+                            self._anchor_segment_id = seg.segment_id
+                    self.edit_mode = EditMode.NONE
+                elif has_ctrl:
                     if seg.segment_id in self.selected_ids:
                         self.selected_ids.remove(seg.segment_id)
                     else:
                         self.selected_ids.add(seg.segment_id)
+                        self._anchor_segment_id = seg.segment_id
                     self.edit_mode = EditMode.NONE
                 else:
-                    if seg.segment_id not in self.selected_ids:
+                    if seg.segment_id in self.selected_ids and len(self.selected_ids) > 1:
+                        self._pending_collapse_id = seg.segment_id
+                    else:
                         self.selected_ids = {seg.segment_id}
+                        self._anchor_segment_id = seg.segment_id
                     self.edit_mode = mode
                     self.drag_segment_id = seg.segment_id
-                    self.drag_start_x = event.pos().x()
+                    self.drag_start_x = point.x()
                     self.current_delta_ms = 0
                     if mode == EditMode.MOVE:
                         self.setCursor(Qt.ClosedHandCursor)
-                        
+
                 self.update()
                 self.segment_clicked.emit(seg.segment_id, is_multi)
             else:
-                self.selected_ids.clear()
-                self.update()
-                self.selection_cleared.emit()
+                self._marquee_start_x = point.x()
+                self._marquee_current_x = point.x()
+                self._marquee_active = False
+                self._marquee_gap = gap
+                self._marquee_base_ids = set(self.selected_ids) if is_multi else set()
+            return
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
         x = event.pos().x()
+
+        if self._marquee_start_x is not None:
+            self._marquee_current_x = x
+            if abs(x - self._marquee_start_x) >= 6:
+                self._marquee_active = True
+                ms_a = (min(self._marquee_start_x, x) / self.pixels_per_second) * 1000.0
+                ms_b = (max(self._marquee_start_x, x) / self.pixels_per_second) * 1000.0
+                hit_ids = {
+                    s.segment_id
+                    for s in self.segments
+                    if s.end_ms >= ms_a and s.start_ms <= ms_b
+                }
+                self.selected_ids = set(self._marquee_base_ids) | hit_ids
+                self.update()
+            event.accept()
+            return
         
         if self.edit_mode != EditMode.NONE:
             delta_x = x - self.drag_start_x
@@ -310,16 +376,56 @@ class SubtitleTrack(QWidget):
 
         super().mouseMoveEvent(event)
     def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton and self.edit_mode != EditMode.NONE:
-            if self.current_delta_ms != 0:
-                self.edit_committed.emit(self.drag_segment_id, self.edit_mode, self.current_delta_ms)
-            
-            self.edit_mode = EditMode.NONE
-            self.drag_segment_id = ""
-            self.current_delta_ms = 0
-            self.is_snapped = False
-            self.snap_line_x = None
-            self.update()
+        if event.button() == Qt.LeftButton:
+            if self._marquee_start_x is not None:
+                was_marquee = self._marquee_active
+                gap = self._marquee_gap
+                self._marquee_start_x = None
+                self._marquee_current_x = None
+                self._marquee_active = False
+                self._marquee_gap = None
+                self._marquee_base_ids = set()
+                if was_marquee:
+                    if self.selected_ids:
+                        first_id = next((s.segment_id for s in self.segments if s.segment_id in self.selected_ids), "")
+                        if first_id:
+                            self._anchor_segment_id = first_id
+                        self.update()
+                        self.segment_clicked.emit(first_id, len(self.selected_ids) > 1)
+                    else:
+                        self._anchor_segment_id = ""
+                        self.update()
+                        self.selection_cleared.emit()
+                elif gap is not None:
+                    self.selected_ids.clear()
+                    self._anchor_segment_id = ""
+                    self.update()
+                    self.gap_clicked.emit(gap)
+                else:
+                    self.selected_ids.clear()
+                    self._anchor_segment_id = ""
+                    self.update()
+                    self.selection_cleared.emit()
+                event.accept()
+                return
+
+            if self.edit_mode != EditMode.NONE:
+                if self.current_delta_ms != 0:
+                    self.edit_committed.emit(self.drag_segment_id, self.edit_mode, self.current_delta_ms)
+                elif self._pending_collapse_id:
+                    self.selected_ids = {self._pending_collapse_id}
+                    self._anchor_segment_id = self._pending_collapse_id
+                    self.segment_clicked.emit(self._pending_collapse_id, False)
+
+                self._pending_collapse_id = ""
+                self.edit_mode = EditMode.NONE
+                self.drag_segment_id = ""
+                self.current_delta_ms = 0
+                self.is_snapped = False
+                self.snap_line_x = None
+                self.update()
+                event.accept()
+                return
         super().mouseReleaseEvent(event)
 
     def keyPressEvent(self, event):
@@ -350,7 +456,7 @@ class SubtitleTrack(QWidget):
             x1 = self._ms_to_x(gap.start_ms)
             x2 = self._ms_to_x(gap.end_ms)
             marker = QRect(x1, 0, max(8, x2 - x1), 4)
-            painter.fillRect(marker, QColor(Theme.CYAN if gap == self.selected_gap else Theme.WARNING))
+            painter.fillRect(marker, QColor("#4F46E5" if gap == self.selected_gap else Theme.WARNING))
 
         if not self.segments: return
 
@@ -413,17 +519,19 @@ class SubtitleTrack(QWidget):
             is_selected = seg.segment_id in self.selected_ids
             is_hovered = seg.segment_id == self.hovered_id
 
+            raw_data = seg.get_raw_dict() if hasattr(seg, "get_raw_dict") else (seg if isinstance(seg, dict) else {})
+
             if is_selected:
-                bg_color = QColor(Theme.PRIMARY_PURPLE)
-                border_color = QColor(Theme.CYAN)
-                pen_w = 2
+                bg_color = QColor("#1E293B")
+                border_color = QColor("#4F46E5")
+                pen_w = 1
             elif is_hovered:
                 bg_color = QColor(Theme.SURFACE_SOFT)
                 border_color = QColor(Theme.TEXT_SECONDARY)
                 pen_w = 1
             else:
                 bg_color = QColor(Theme.SURFACE_ELEVATED)
-                border_color = QColor("#3B4863")
+                border_color = QColor("#334155")
                 pen_w = 1
             
             if is_dragging:
@@ -436,7 +544,6 @@ class SubtitleTrack(QWidget):
 
             # STT Badge (#1, #2, ...) & text
             cur_x = seg_rect.x() + 5
-            raw_data = seg.get_raw_dict() if hasattr(seg, "get_raw_dict") else (seg if isinstance(seg, dict) else {})
             stt_str = str(raw_data.get("stt") or raw_data.get("index") or (seg_idx + 1))
             badge_text = f"#{stt_str}"
 
@@ -458,7 +565,7 @@ class SubtitleTrack(QWidget):
                     painter.setPen(QPen(badge_border, 1))
                     painter.drawRoundedRect(badge_rect, 3, 3)
 
-                    painter.setPen(QColor(Theme.CYAN if is_selected else Theme.TEXT_SECONDARY))
+                    painter.setPen(QColor("#818CF8" if is_selected else Theme.TEXT_SECONDARY))
                     painter.drawText(badge_rect, Qt.AlignCenter, badge_text)
                     cur_x += badge_w + 5
 
@@ -507,3 +614,11 @@ class SubtitleTrack(QWidget):
         if getattr(self, "is_snapped", False) and getattr(self, "snap_line_x", None) is not None:
             painter.setPen(QPen(QColor(Theme.CYAN), 1))
             painter.drawLine(self.snap_line_x, 0, self.snap_line_x, self.height())
+
+        if getattr(self, "_marquee_active", False) and self._marquee_start_x is not None and self._marquee_current_x is not None:
+            mx1 = min(self._marquee_start_x, self._marquee_current_x)
+            mx2 = max(self._marquee_start_x, self._marquee_current_x)
+            marquee_rect = QRect(mx1, 2, max(1, mx2 - mx1), max(1, self.height() - 4))
+            painter.setBrush(QBrush(QColor(79, 70, 229, 45)))
+            painter.setPen(QPen(QColor("#818CF8"), 1, Qt.DashLine))
+            painter.drawRect(marquee_rect)

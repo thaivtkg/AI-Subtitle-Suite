@@ -166,7 +166,7 @@ def test_flow_rescan_button_click_via_qt_driver_triggers_large_v3_and_vram_guard
     assert win.scan_worker.request.model_size == "large-v3"
     # On <=4.5GB VRAM (e.g. RTX 3050 4GB) or VRAM > 65%, guard automatically selects int8_float16; otherwise float16
     assert win.scan_worker.request.compute_type in ("float16", "int8_float16")
-    assert win.scan_worker.request.use_vad is False
+    assert win.scan_worker.request.use_vad is True
 
     # Simulate worker completion callback and verify UI table updates
     win._on_segment_scan_finished(win.scan_worker.segment_id, "Câu mới từ large-v3")
@@ -216,4 +216,164 @@ def test_flow_activity_log_view_filters_and_noise_suppression_via_qt_driver(main
     driver.wait_ms(50)
     assert "Tự động chuyển sang int8_float16" in log_text.toPlainText()
     assert "Ngươi tìm ta đây rốt cuộc có chuyện gì?" not in log_text.toPlainText()
+
+
+def test_flow_workspace_model_banner_visibility_and_sync(main_window_driver):
+    """
+    Verify top-bar Model & ASR/VAD banners and two separate config dialogs:
+    - Both banners hidden outside Studio Workspace (Dashboard / Queue / Translation).
+    - Visible inside Studio Workspace (tab 1) and sync immediately when switching models or VAD preset.
+    - ModelConfigDialog and AsrVadConfigDialog are separate dialogs hosting detached panel sections cleanly.
+    """
+    from PySide6.QtWidgets import QDialog
+
+    win, driver, _sub_page, _cat_page, _timeline_page = main_window_driver
+    model_banner = getattr(win, "btn_workspace_model_banner", None)
+    vad_banner = getattr(win, "btn_workspace_vad_banner", None)
+    assert model_banner is not None
+    assert vad_banner is not None
+
+    model_dlg = getattr(win, "model_config_dialog", None)
+    vad_dlg = getattr(win, "asr_vad_config_dialog", None)
+    assert isinstance(model_dlg, QDialog)
+    assert isinstance(vad_dlg, QDialog)
+    assert model_dlg is not vad_dlg
+    assert model_dlg.isAncestorOf(win.generation_panel.model_group)
+    assert vad_dlg.isAncestorOf(win.generation_panel.asr_vad_group)
+    assert not model_dlg.isAncestorOf(win.generation_panel.asr_vad_group)
+    assert not vad_dlg.isAncestorOf(win.generation_panel.model_group)
+
+    win.switch_page(0, animate=False)
+    driver.wait_ms(30)
+    assert model_banner.isVisible() is False
+    assert vad_banner.isVisible() is False
+
+    win.switch_page(1, animate=False)
+    driver.wait_ms(30)
+    assert model_banner.isVisible() is True
+    assert vad_banner.isVisible() is True
+    active_model = win.generation_panel._get_effective_model_size()
+    assert active_model in model_banner.text()
+    assert "VAD:" in vad_banner.text()
+
+    idx_k20 = win.generation_panel.cmb_specialized_model.findData("kotoba-whisper-v2.0")
+    assert idx_k20 > 0
+    win.generation_panel.cmb_specialized_model.setCurrentIndex(idx_k20)
+    driver.wait_ms(30)
+    assert "kotoba-whisper-v2.0" in model_banner.text()
+    assert "Chuyên ngữ" in model_banner.text()
+    assert "350ms / 0.25" in vad_banner.text()
+
+    idx_cfg9 = win.generation_panel.cmb_vad_preset.findData("cfg9")
+    assert idx_cfg9 >= 0
+    win.generation_panel.cmb_vad_preset.setCurrentIndex(idx_cfg9)
+    driver.wait_ms(30)
+    assert "CFG-9 · 300ms / 0.35" in vad_banner.text()
+
+    # Single floating dialog rule: opening one automatically closes any previously open dialog
+    from PySide6.QtWidgets import QApplication, QPushButton
+    driver.click(win.btn_workspace_model_banner)
+    driver.wait_ms(30)
+    assert model_dlg.isVisible() is True
+    assert vad_dlg.isVisible() is False
+
+    driver.click(win.btn_workspace_vad_banner)
+    driver.wait_ms(40)
+    assert vad_dlg.isVisible() is True
+    assert model_dlg.isVisible() is False
+    assert not model_dlg.isModal() and not vad_dlg.isModal()
+    assert QApplication.activeModalWidget() not in (model_dlg, vad_dlg)
+
+    for dlg in (model_dlg, vad_dlg):
+        close_btn = dlg.findChild(QPushButton, "btn_dialog_close")
+        assert close_btn is not None
+        assert close_btn.text() == "✕"
+        assert close_btn.width() >= 30
+        assert close_btn.height() >= 26
+        assert close_btn.fontMetrics().horizontalAdvance("✕") <= close_btn.width()
+
+    _, _, pad_hint_lbl = win.generation_panel._vad_row_widgets["speech_pad"]
+    assert pad_hint_lbl.width() >= pad_hint_lbl.sizeHint().width()
+
+    # Opening Hotkeys cheatsheet closes currently open VAD/Model config dialog first
+    from unittest.mock import patch
+    from ui.dialogs.hotkeys_cheatsheet_dialog import HotkeysCheatsheetDialog
+    with patch.object(HotkeysCheatsheetDialog, "exec", return_value=0):
+        win.action_show_hotkeys()
+    driver.wait_ms(20)
+    assert vad_dlg.isVisible() is False
+    assert model_dlg.isVisible() is False
+
+    # Re-open model_dlg, close via its ✕ button, confirm both hidden
+    driver.click(win.btn_workspace_model_banner)
+    driver.wait_ms(30)
+    assert model_dlg.isVisible() is True
+    assert vad_dlg.isVisible() is False
+    driver.click(model_dlg.findChild(QPushButton, "btn_dialog_close"))
+    driver.wait_ms(30)
+    assert model_dlg.isVisible() is False
+    assert vad_dlg.isVisible() is False
+
+    # Also test opening from drawer quick buttons doesn't lock mouse/app
+    p = win.generation_panel
+    win.overlay_host.show()
+    win.overlay_host.resize(900, 650)
+    win.generation_drawer.resize(620, 620)
+    driver.wait_ms(40)
+    assert p.btn_open_model_config_dialog.height() == 34
+    assert p.btn_open_asr_vad_dialog.height() == 34
+    assert abs(p.btn_open_model_config_dialog.width() - p.btn_open_asr_vad_dialog.width()) <= 2
+    assert abs(p.btn_range_timeline.width() - p.btn_range_preview.width()) <= 2
+    assert p.btn_range_timeline.height() == p.btn_range_preview.height() == 34
+    assert abs(p.txt_start.width() - p.btn_range_timeline.width()) <= 2
+    assert abs(p.txt_end.width() - p.btn_range_preview.width()) <= 2
+    assert abs(p.txt_start.width() - p.txt_end.width()) <= 2
+    assert p.txt_start.height() == p.txt_end.height() == 32
+    unit_left = p.cmb_range_unit.mapTo(p.range_group, p.cmb_range_unit.rect().topLeft()).x()
+    unit_right = p.cmb_range_unit.mapTo(p.range_group, p.cmb_range_unit.rect().topRight()).x()
+    start_left = p.txt_start.mapTo(p.range_group, p.txt_start.rect().topLeft()).x()
+    timeline_left = p.btn_range_timeline.mapTo(p.range_group, p.btn_range_timeline.rect().topLeft()).x()
+    end_left = p.txt_end.mapTo(p.range_group, p.txt_end.rect().topLeft()).x()
+    preview_left = p.btn_range_preview.mapTo(p.range_group, p.btn_range_preview.rect().topLeft()).x()
+    start_right = p.txt_start.mapTo(p.range_group, p.txt_start.rect().topRight()).x()
+    timeline_right = p.btn_range_timeline.mapTo(p.range_group, p.btn_range_timeline.rect().topRight()).x()
+    end_right = p.txt_end.mapTo(p.range_group, p.txt_end.rect().topRight()).x()
+    preview_right = p.btn_range_preview.mapTo(p.range_group, p.btn_range_preview.rect().topRight()).x()
+    assert abs(unit_left - start_left) <= 2
+    assert abs(start_left - timeline_left) <= 2
+    assert abs(start_right - timeline_right) <= 2
+    assert abs(end_left - preview_left) <= 2
+    assert abs(unit_right - end_right) <= 2
+    assert abs(unit_right - preview_right) <= 2
+    assert p.cmb_range_unit.width() > 210
+    assert p.cmb_mode.width() > 210
+    assert p.cmb_batch_mode.width() > 210
+    assert p.cmb_range_unit.height() == p.cmb_mode.height() == p.cmb_batch_mode.height() == 32
+    win.overlay_host.hide()
+
+    driver.click(win.generation_panel.btn_open_model_config_dialog)
+    driver.wait_ms(30)
+    assert model_dlg.isVisible() is True
+    assert not model_dlg.isModal()
+    assert QApplication.activeModalWidget() is not model_dlg
+    model_dlg.accept()
+    driver.wait_ms(20)
+
+    win.switch_page(8, animate=False)
+    driver.wait_ms(30)
+    assert model_banner.isVisible() is False
+    assert vad_banner.isVisible() is False
+
+    win.switch_page(2, animate=False)
+    driver.wait_ms(30)
+    assert model_banner.isVisible() is False
+    assert vad_banner.isVisible() is False
+
+    win.generation_panel.cmb_specialized_model.setCurrentIndex(0)
+    win.switch_page(1, animate=False)
+    driver.wait_ms(30)
+    assert model_banner.isVisible() is True
+    assert vad_banner.isVisible() is True
+    assert "Model:" in model_banner.text()
+
 

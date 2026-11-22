@@ -47,6 +47,9 @@ class LlamaCppBackend(BaseInferenceBackend):
         result = self._llm(
             prompt,
             max_tokens=kwargs.get("max_tokens", 256),
+            temperature=kwargs.get("temperature", 0.1),
+            top_p=kwargs.get("top_p", 0.90),
+            repeat_penalty=kwargs.get("repeat_penalty", 1.05),
             stop=[
                 "<|im_end|>", "<end_of_turn>", "<|eot_id|>", "</current_subtitle_to_translate>",
                 "<｜end of sentence｜>", "<｜end▁of▁sentence｜>", "<｜User｜>", "<｜Assistant｜>",
@@ -63,6 +66,9 @@ class LlamaCppBackend(BaseInferenceBackend):
         for chunk in self._llm(
             prompt,
             max_tokens=kwargs.get("max_tokens", 256),
+            temperature=kwargs.get("temperature", 0.1),
+            top_p=kwargs.get("top_p", 0.90),
+            repeat_penalty=kwargs.get("repeat_penalty", 1.05),
             stop=[
                 "<|im_end|>", "<end_of_turn>", "<|eot_id|>", "</current_subtitle_to_translate>",
                 "<｜end of sentence｜>", "<｜end▁of▁sentence｜>", "<｜User｜>", "<｜Assistant｜>",

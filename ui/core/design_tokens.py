@@ -9,24 +9,23 @@ Control 8px / Surface 16px / Glass 24px / Pill for primary actions.
 
 
 class ColorToken:
-    # Surfaces (solid content layers - Deep Slate / Navy Dark)
-    BG_APP = "#0D111A"
-    SURFACE = "#151A27"
-    SURFACE_ELEVATED = "#1E2536"
-    SURFACE_SOFT = "#262E40"
-    BORDER = "#1E293B"
+    # Surfaces (Studio Slate / Charcoal Neutral Palette)
+    BG_APP = "#0B0F17"           # Deep Obsidian Slate (Main backdrop)
+    SURFACE = "#151B28"          # Charcoal Surface (Panels, Sidebars, Cards)
+    SURFACE_ELEVATED = "#1E293B" # Slate 800 Elevated (Active panels, containers)
+    SURFACE_SOFT = "#334155"     # Slate 700 Soft (Hover, dividers, chips)
+    BORDER = "#1E293B"           # Slate 800 Subtle border
+    BORDER_MUTED = "#334155"     # Slate 700 Hairline border
 
-    # Brand / accents
-    PRIMARY = "#6366F1"            # Indigo/Purple 500 (Core Brand Identity)
-    PRIMARY_HOVER = "#4F46E5"      # Indigo 600
-    PRIMARY_PINK = "#EC4899"       # Pink 500
-    PRIMARY_GREEN = "#10B981"      # Emerald 500
-    PRIMARY_GRADIENT = (
-        "qlineargradient(x1: 0, y1: 0, x2: 1, y2: 0, "
-        "stop: 0 #6366F1, stop: 1 #EC4899)"
-    )
-    ACCENT = "#38BDF8"             # Sky/Cyan (Focus ring / Active indicator)
-    ACCENT_HOVER = "#0284C7"       # Sky 600
+    # Single Accent: Indigo / Sky (Eliminating #EC4899 and glowing #38BDF8)
+    PRIMARY = "#4F46E5"          # Indigo 600 (Primary action)
+    PRIMARY_HOVER = "#6366F1"    # Indigo 500
+    PRIMARY_PRESSED = "#4338CA"  # Indigo 700
+    PRIMARY_PINK = "#4F46E5"     # Deprecated alias to Primary
+    PRIMARY_GREEN = "#10B981"    # Emerald 500 (Status only)
+    PRIMARY_GRADIENT = "#4F46E5" # Single-hue solid primary
+    ACCENT = "#6366F1"           # Clean Indigo accent (Focus ring / Active tag)
+    ACCENT_HOVER = "#4F46E5"
 
     # Semantic Status
     SUCCESS = "#10B981"
@@ -34,26 +33,26 @@ class ColorToken:
     WARNING = "#F59E0B"
     INFO = "#3B82F6"
 
-    # Text hierarchy
+    # Text hierarchy (Slate typography)
     TEXT_PRIMARY = "#F8FAFC"       # Slate 50
     TEXT_SECONDARY = "#94A3B8"     # Slate 400
     TEXT_MUTED = "#64748B"         # Slate 500
     TEXT_DISABLED = "#475569"      # Slate 600
 
-    # Functional glass (navigation layer only) + interaction overlays
-    GLASS_SURFACE = "rgba(21, 26, 39, 0.78)"
-    GLASS_EDGE = "rgba(255, 255, 255, 0.06)"
-    GLASS_EDGE_TOP = "rgba(255, 255, 255, 0.14)"
-    HOVER_OVERLAY = "rgba(255, 255, 255, 0.06)"
-    SELECTED_SURFACE = "rgba(99, 102, 241, 0.18)"
+    # Interaction overlays
+    GLASS_SURFACE = "rgba(21, 27, 40, 0.85)"
+    GLASS_EDGE = "rgba(255, 255, 255, 0.05)"
+    GLASS_EDGE_TOP = "rgba(255, 255, 255, 0.10)"
+    HOVER_OVERLAY = "rgba(255, 255, 255, 0.05)"
+    SELECTED_SURFACE = "rgba(79, 70, 229, 0.16)"
 
 
 class RadiusToken:
     INNER = 4      # Checkbox, radio, scrollbar handle, tiny tags
-    CONTROL = 8    # Input, combo, buttons, tabs, list items
-    SURFACE = 16   # Content surfaces, overlays, dialogs
-    FLOATING = 24  # Glass outer (sidebar, dock)
-    PILL = 999     # Primary floating action only
+    CONTROL = 8    # Input, combo, buttons, tabs, list items (6-8px standard)
+    SURFACE = 12   # Content surfaces, cards, dialogs, popovers (10-12px nested)
+    FLOATING = 12  # Glass outer (sidebar dock, overlays)
+    PILL = 8       # Primary actions standardize to 8px control radius (eliminated 999px)
 
 
 class SpacingToken:

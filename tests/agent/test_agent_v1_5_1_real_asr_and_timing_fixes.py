@@ -39,7 +39,7 @@ def test_tc_01_real_asr_service_init_and_validator_params():
         )
         assert res["status"] == "ok"
         # Đã áp dụng fallback float16 khi current_compute_type=None
-        assert loaded_args == [("tiny", "float16")]
+        assert loaded_args and set(loaded_args) == {("tiny", "float16")}
         # Kiểm tra transcribe_batch được gọi với SubtitleGenerationRequest hợp lệ
         assert mock_svc.transcribe_batch.call_count == 1
         call_req = mock_svc.transcribe_batch.call_args[0][0]

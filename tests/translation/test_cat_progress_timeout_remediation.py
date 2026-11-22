@@ -49,11 +49,12 @@ def test_thinking_progress_dynamic_crawls_to_98():
 def test_translation_watchdog_timeout_triggers_error():
     """Tác vụ 3: Watchdog Timeout tự động hủy và đưa về trạng thái ERROR khi worker đơ."""
     model = SubtitleModel()
-    model.load_data([{"id": 1, "original": "Test line", "translation": "", "status": "PENDING"}])
+    model.load_data([{"id": 1, "original": "Test line", "translation": "Bản dịch nháp", "status": "TRANSLATED"}])
     ctrl = TranslationController(model)
     ctrl._status = "TRANSLATING"
     ctrl._active_translation_index = 0
     ctrl._current_index = 0
+    ctrl._translation_before_request = "Bản dịch nháp"
 
     failed_signals = []
     ctrl.translationFailed.connect(lambda idx, err: failed_signals.append((idx, err)))
@@ -61,9 +62,31 @@ def test_translation_watchdog_timeout_triggers_error():
     ctrl._on_translation_timeout()
 
     assert ctrl.status == "ERROR"
-    assert "vượt quá 90s" in ctrl.currentTranslation
+    assert ctrl.currentTranslation == "Bản dịch nháp"
+    assert model.get_item(0)["translation"] == "Bản dịch nháp"
+    assert model.get_item(0)["status"] == "ERROR"
     assert len(failed_signals) == 1
     assert failed_signals[0][0] == 0
+    assert "vượt quá 90s" in failed_signals[0][1]
+    ctrl.shutdown()
+
+
+def test_translation_watchdog_keeps_streamed_draft():
+    model = SubtitleModel()
+    model.load_data([{"id": 1, "original": "なかなかうまいじゃないか。", "translation": "Không tồi chút nào.", "status": "TRANSLATING"}])
+    ctrl = TranslationController(model)
+    ctrl._status = "TRANSLATING"
+    ctrl._active_translation_index = 0
+    ctrl._current_index = 0
+
+    ctrl._on_translation_timeout()
+
+    assert model.get_item(0)["translation"] == "Không tồi chút nào."
+    assert ctrl.currentTranslation == "Không tồi chút nào."
+    assert model.get_item(0)["status"] == "ERROR"
+    ctrl.on_finished(0, "Kết quả đến muộn")
+    assert model.get_item(0)["translation"] == "Không tồi chút nào."
+    assert model.get_item(0)["status"] == "ERROR"
     ctrl.shutdown()
 
 

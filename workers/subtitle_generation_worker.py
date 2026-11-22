@@ -11,6 +11,7 @@ class SubtitleGenerationWorker(QThread):
     """Runs one batch only and returns data to the owner thread for validation/commit."""
 
     batch_success_signal = Signal(object, object)
+    batch_progress_signal = Signal(int, int)
     error_signal = Signal(str)
 
     def __init__(
@@ -39,9 +40,18 @@ class SubtitleGenerationWorker(QThread):
                 self.whisper_service.load_model(self.request.model_size, self.request.compute_type)
             if self._is_cancelled:
                 return
-            result = self.whisper_service.transcribe_batch(
-                self.request, self.batch, lambda: self._is_cancelled
+            register_cb = getattr(
+                self.whisper_service, "set_batch_progress_callback", None
             )
+            if callable(register_cb):
+                register_cb(self.batch_progress_signal.emit)
+            try:
+                result = self.whisper_service.transcribe_batch(
+                    self.request, self.batch, lambda: self._is_cancelled
+                )
+            finally:
+                if callable(register_cb):
+                    register_cb(None)
             if self._is_cancelled:
                 return
             if result.error:

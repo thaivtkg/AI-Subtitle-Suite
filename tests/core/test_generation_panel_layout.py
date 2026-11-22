@@ -139,15 +139,15 @@ class TestGenerationPanelLayout(unittest.TestCase):
 
 
     def test_generate_button_label_switches_with_task_mode(self):
-        """Xác thực nhãn nút Generate tự động chuyển đổi giữa '✨ Generate Subtitle' và '✨ Generate Timing' theo Task Mode."""
+        """Xác thực nhãn nút Generate tự động chuyển đổi giữa 'Generate Subtitle' và 'Generate Timing' theo Task Mode."""
         panel = self._panel()
-        self.assertEqual(panel.btn_generate.text(), "✨ Generate Subtitle")
+        self.assertEqual(panel.btn_generate.text(), "Generate Subtitle")
         idx_timing = panel.cmb_mode.findData("timing")
         panel.cmb_mode.setCurrentIndex(idx_timing)
-        self.assertEqual(panel.btn_generate.text(), "✨ Generate Timing")
+        self.assertEqual(panel.btn_generate.text(), "Generate Timing")
         idx_asr = panel.cmb_mode.findData("asr")
         panel.cmb_mode.setCurrentIndex(idx_asr)
-        self.assertEqual(panel.btn_generate.text(), "✨ Generate Subtitle")
+        self.assertEqual(panel.btn_generate.text(), "Generate Subtitle")
 
 
 if __name__ == "__main__":

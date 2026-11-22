@@ -171,7 +171,7 @@ Item {
                         Text {
                             id: qaFilterText
                             anchors.centerIn: parent
-                            text: qaFilterPill.isActive ? ("✓ Đang lọc " + parent.parent.qaIssuesCount + " lỗi QA") : ("🛑 " + parent.parent.qaIssuesCount + " lỗi QA")
+                            text: qaFilterPill.isActive ? ("✓ Đang lọc " + parent.parent.qaIssuesCount + " lỗi QA") : (parent.parent.qaIssuesCount + " lỗi QA")
                             color: qaFilterPill.isActive ? "#FFFFFF" : "#FCA5A5"
                             font.pixelSize: 10
                             font.bold: true

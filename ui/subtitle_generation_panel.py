@@ -1,12 +1,14 @@
+import os
 import uuid
 
-from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtCore import Qt, Signal, Slot, QSize
 from PySide6.QtWidgets import ( QLineEdit, QListWidget, QListWidgetItem,
 
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFrame,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -26,6 +28,7 @@ from core.subtitle_generation.subtitle_generation_request import (
 )
 from core.project.project_state import TimingState
 from ui.theme import Theme
+from ui.core.icons import get_icon
 
 
 class SubtitleGenerationPanel(QWidget):
@@ -36,8 +39,10 @@ class SubtitleGenerationPanel(QWidget):
     timing_resume_requested = Signal(int, dict)
     timing_cancel_requested = Signal()
     request_context_edit = Signal()
+    request_model_config_dialog = Signal()
+    request_asr_vad_dialog = Signal()
     _timing_settings_controls = (
-        "cmb_model", "cmb_compute", "chk_vad", "chk_fix_overlap", "spin_overlap_gap"
+        "cmb_model", "cmb_specialized_model", "cmb_compute", "chk_vad", "chk_fix_overlap", "spin_overlap_gap"
     )
 
     def __init__(self, generation_service, parent=None):
@@ -45,9 +50,16 @@ class SubtitleGenerationPanel(QWidget):
         self.generation_service = generation_service
         self._context_compiled = None
         self._context_configured = False
+        self._timing_start_fresh = False
         self.video_duration_ms = 0
         self._setup_ui()
         self._connect_signals()
+        self.refresh_history()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.refresh_batch_mode_availability()
+        self._sync_batch_spin_limits(reset_default=False)
 
     def _setup_ui(self):
         # Panel uses global styling from LiquidThemeEngine
@@ -71,10 +83,10 @@ class SubtitleGenerationPanel(QWidget):
             QSizePolicy.Expanding, QSizePolicy.Minimum
         )
         settings_layout = QVBoxLayout(self.settings_scroll_content)
-        settings_layout.setContentsMargins(0, 0, 0, 0)
+        settings_layout.setContentsMargins(0, 0, 8, 0)
         settings_layout.setSpacing(12)
 
-        title = QLabel("✨ Generate Subtitle")
+        title = QLabel("Generate Subtitle")
         title.setProperty("class", "SectionTitle")
         settings_layout.addWidget(title)
         # --- PHASE 5: SUBTITLE SOURCE ---
@@ -83,13 +95,16 @@ class SubtitleGenerationPanel(QWidget):
         settings_layout.addWidget(source_title)
         
         source_h_layout = QHBoxLayout()
+        source_h_layout.setSpacing(8)
         self.cmb_subtitle_source = QComboBox()
         self.cmb_subtitle_source.addItem("Auto-detected SRT", "default")
+        self.cmb_subtitle_source.setFixedHeight(32)
         self.cmb_subtitle_source.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        source_h_layout.addWidget(self.cmb_subtitle_source)
+        source_h_layout.addWidget(self.cmb_subtitle_source, 1)
         
         self.btn_add_external_srt = QPushButton("+ Add SRT...")
         self.btn_add_external_srt.setObjectName("btn_add_external_srt")
+        self.btn_add_external_srt.setFixedHeight(32)
         source_h_layout.addWidget(self.btn_add_external_srt)
         settings_layout.addLayout(source_h_layout)
         
@@ -97,35 +112,43 @@ class SubtitleGenerationPanel(QWidget):
         self.cmb_subtitle_source.currentIndexChanged.connect(self._on_subtitle_source_changed)
 
         # --- PHASE 3: RANGE GENERATION ---
-        self.range_group = QGroupBox("🎯 Generate theo khoảng thời gian")
+        self.range_group = QGroupBox("Generate theo khoảng thời gian")
         range_layout = QVBoxLayout(self.range_group)
         range_layout.setContentsMargins(12, 12, 12, 12)
         range_layout.setSpacing(8)
         
         # RANGE_TIME_INPUT_UNIT_SELECTOR: explicit units prevent 1-5 ambiguity.
-        unit_row = QHBoxLayout()
-        unit_row.addWidget(QLabel("Đơn vị nhập:"))
+        range_grid = QGridLayout()
+        range_grid.setContentsMargins(0, 0, 0, 0)
+        range_grid.setHorizontalSpacing(8)
+        range_grid.setVerticalSpacing(8)
+
+        unit_lbl = QLabel("Đơn vị:")
+        unit_lbl.setFixedWidth(44)
+        unit_tooltip = "Chọn rõ đơn vị trước khi nhập để tránh nhầm 1–5 giây với 1–5 phút."
+        unit_lbl.setToolTip(unit_tooltip)
         self.cmb_range_unit = QComboBox()
         self.cmb_range_unit.addItem("Giây (s)", "seconds")
         self.cmb_range_unit.addItem("Phút (min)", "minutes")
         self._range_input_unit = "seconds"
-        self.cmb_range_unit.setToolTip(
-            "Chọn rõ đơn vị trước khi nhập để tránh nhầm 1–5 giây với 1–5 phút."
-        )
-        unit_row.addWidget(self.cmb_range_unit)
-        unit_row.addStretch()
-        range_layout.addLayout(unit_row)
+        self.cmb_range_unit.setMinimumWidth(140)
+        self.cmb_range_unit.setFixedHeight(32)
+        self.cmb_range_unit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.cmb_range_unit.setToolTip(unit_tooltip)
 
-        time_row = QHBoxLayout()
         self.txt_start = QLineEdit()
         self.txt_start.setPlaceholderText("Ví dụ: 60,5")
+        self.txt_start.setFixedHeight(32)
+        self.txt_start.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.txt_end = QLineEdit()
         self.txt_end.setPlaceholderText("Ví dụ: 70")
-        time_row.addWidget(QLabel("Từ:"))
-        time_row.addWidget(self.txt_start)
-        time_row.addWidget(QLabel("Đến:"))
-        time_row.addWidget(self.txt_end)
-        range_layout.addLayout(time_row)
+        self.txt_end.setFixedHeight(32)
+        self.txt_end.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        lbl_from = QLabel("Từ:")
+        lbl_from.setFixedWidth(44)
+        lbl_to = QLabel("Đến:")
+        lbl_to.setFixedWidth(34)
+
         self.txt_start.textChanged.connect(
             lambda _text: self._clear_range_input_error(self.txt_start)
         )
@@ -136,16 +159,29 @@ class SubtitleGenerationPanel(QWidget):
             lambda _index: self._on_range_unit_changed()
         )
         self._refresh_range_input_help()
-        
-        range_btn_row = QHBoxLayout()
-        self.btn_range_timeline = QPushButton("⏱ Lấy từ vùng Timeline")
+
+        self.btn_range_timeline = QPushButton("Lấy từ vùng Timeline")
+        self.btn_range_timeline.setIcon(get_icon("clock", "#94A3B8", 14))
+        self.btn_range_timeline.setIconSize(QSize(14, 14))
         self.btn_range_timeline.setProperty("variant", "secondary")
+        self.btn_range_timeline.setFixedHeight(34)
+        self.btn_range_timeline.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.btn_range_preview = QPushButton("Preview Range")
         self.btn_range_preview.setProperty("variant", "primary")
-        
-        range_btn_row.addWidget(self.btn_range_timeline)
-        range_btn_row.addWidget(self.btn_range_preview)
-        range_layout.addLayout(range_btn_row)
+        self.btn_range_preview.setFixedHeight(34)
+        self.btn_range_preview.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+
+        range_grid.addWidget(unit_lbl, 0, 0)
+        range_grid.addWidget(self.cmb_range_unit, 0, 1, 1, 3)
+        range_grid.addWidget(lbl_from, 1, 0)
+        range_grid.addWidget(self.txt_start, 1, 1)
+        range_grid.addWidget(lbl_to, 1, 2)
+        range_grid.addWidget(self.txt_end, 1, 3)
+        range_grid.addWidget(self.btn_range_timeline, 2, 1)
+        range_grid.addWidget(self.btn_range_preview, 2, 3)
+        range_grid.setColumnStretch(1, 1)
+        range_grid.setColumnStretch(3, 1)
+        range_layout.addLayout(range_grid)
         
         settings_layout.addWidget(self.range_group)
         
@@ -153,18 +189,52 @@ class SubtitleGenerationPanel(QWidget):
         # ---------------------------------
 
 
-        def _kv_row(label_text, widget, min_width=None):
+        self._vad_row_widgets = {}
+
+        def _kv_row(
+            label_text,
+            widget,
+            min_width=None,
+            hint_text=None,
+            tooltip=None,
+            fixed_width=None,
+            store_key=None,
+            expand=False,
+        ):
             row = QHBoxLayout()
             row.setContentsMargins(0, 2, 0, 2)
             row.setSpacing(12)
             lbl = QLabel(label_text)
             lbl.setProperty("class", "Caption")
             lbl.setFixedWidth(100)
-            target_min_width = min_width if min_width is not None else max(widget.minimumWidth(), 160)
-            widget.setMinimumWidth(target_min_width)
+            if fixed_width is not None:
+                widget.setFixedWidth(fixed_width)
+            elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+                widget.setFixedWidth(min_width if min_width is not None else 148)
+            else:
+                target_min_width = min_width if min_width is not None else max(widget.minimumWidth(), 160)
+                widget.setMinimumWidth(target_min_width)
+            if tooltip:
+                lbl.setToolTip(tooltip)
+                widget.setToolTip(tooltip)
             row.addWidget(lbl)
-            row.addWidget(widget)
-            row.addStretch()
+            if expand and fixed_width is None:
+                widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                row.addWidget(widget, 1)
+            else:
+                row.addWidget(widget)
+            hint_lbl = None
+            if hint_text is not None:
+                hint_lbl = QLabel(hint_text)
+                hint_lbl.setWordWrap(False)
+                hint_lbl.setStyleSheet("color: #64748B; font-size: 11px; background: transparent;")
+                if tooltip:
+                    hint_lbl.setToolTip(tooltip)
+                row.addWidget(hint_lbl)
+            if store_key:
+                self._vad_row_widgets[store_key] = (lbl, widget, hint_lbl)
+            if not (expand and fixed_width is None):
+                row.addStretch()
             return row
 
         mode_layout = QHBoxLayout()
@@ -177,9 +247,10 @@ class SubtitleGenerationPanel(QWidget):
         self.cmb_mode = QComboBox()
         self.cmb_mode.addItem("Full Subtitle (Whisper ASR)", "asr")
         self.cmb_mode.addItem("Timing Draft (VAD Only)", "timing")
-        self.cmb_mode.setMinimumWidth(210)
-        mode_layout.addWidget(self.cmb_mode)
-        mode_layout.addStretch()
+        self.cmb_mode.setMinimumWidth(160)
+        self.cmb_mode.setFixedHeight(32)
+        self.cmb_mode.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        mode_layout.addWidget(self.cmb_mode, 1)
         settings_layout.addLayout(mode_layout)
         # Adapt Qt's int payload to the no-argument policy slot.
         self.cmb_mode.currentIndexChanged.connect(
@@ -192,24 +263,32 @@ class SubtitleGenerationPanel(QWidget):
         model_layout.setContentsMargins(0, 6, 0, 6)
         model_layout.setSpacing(8)
 
+        model_box_width = 188
+
         # --- Model Size row: combo + Download button ---
         model_row = QHBoxLayout()
         model_row.setContentsMargins(0, 2, 0, 2)
-        model_row.setSpacing(8)
+        model_row.setSpacing(10)
         model_lbl = QLabel("Model Size:")
         model_lbl.setProperty("class", "Caption")
         model_lbl.setFixedWidth(100)
         self.cmb_model = QComboBox()
-        self.cmb_model.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.cmb_model.setFixedWidth(model_box_width)
+        self.cmb_model.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.cmb_model.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.btn_download_model = QPushButton("⬇ Download")
         self.btn_download_model.setProperty("variant", "secondary")
         self.btn_download_model.setFixedHeight(28)
+        self.btn_download_model.setFixedWidth(98)
+        self.btn_download_model.setStyleSheet("padding: 2px 6px;")
         self.btn_download_model.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.btn_download_model.setToolTip("Download model from HuggingFace")
         self.btn_download_model.clicked.connect(self._on_download_model_clicked)
-        self.btn_delete_model = QPushButton("🗑️ Xóa")
+        self.btn_delete_model = QPushButton("Xóa")
         self.btn_delete_model.setObjectName("btn_delete_model")
         self.btn_delete_model.setProperty("variant", "danger")
+        self.btn_delete_model.setIcon(get_icon("trash", "#EF4444", 14))
+        self.btn_delete_model.setIconSize(QSize(14, 14))
         self.btn_delete_model.setFixedHeight(28)
         self.btn_delete_model.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.btn_delete_model.setToolTip("Xóa model khỏi máy tính để giải phóng dung lượng ổ đĩa")
@@ -219,25 +298,108 @@ class SubtitleGenerationPanel(QWidget):
         model_row.addWidget(self.cmb_model)
         model_row.addWidget(self.btn_download_model)
         model_row.addWidget(self.btn_delete_model)
+        model_row.addStretch()
         model_layout.addLayout(model_row)
+
+        # --- Specialized Language ASR Model row (kotoba-whisper-v2.0 / v2.2) ---
+        spec_row = QHBoxLayout()
+        spec_row.setContentsMargins(0, 2, 0, 2)
+        spec_row.setSpacing(10)
+        spec_lbl = QLabel("Chuyên Ngữ:")
+        spec_lbl.setProperty("class", "Caption")
+        spec_lbl.setFixedWidth(100)
+        self.cmb_specialized_model = QComboBox()
+        self.cmb_specialized_model.setObjectName("cmb_specialized_model")
+        self.cmb_specialized_model.setFixedWidth(model_box_width)
+        self.cmb_specialized_model.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.cmb_specialized_model.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.cmb_specialized_model.setToolTip(
+            "Chỉ dùng khi muốn thay thế Model Size ở trên bằng model chuyên ngôn ngữ (như kotoba-whisper cho tiếng Nhật)."
+        )
+        self.btn_download_specialized_model = QPushButton("⬇ Download")
+        self.btn_download_specialized_model.setObjectName("btn_download_specialized_model")
+        self.btn_download_specialized_model.setProperty("variant", "secondary")
+        self.btn_download_specialized_model.setFixedHeight(28)
+        self.btn_download_specialized_model.setFixedWidth(98)
+        self.btn_download_specialized_model.setStyleSheet("padding: 2px 6px;")
+        self.btn_download_specialized_model.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.btn_download_specialized_model.setToolTip("Tải model chuyên ngôn ngữ từ HuggingFace")
+        self.btn_download_specialized_model.clicked.connect(self._on_download_specialized_model_clicked)
+        self.btn_download_specialized_model.setVisible(False)
+        self.btn_delete_specialized_model = QPushButton("Xóa")
+        self.btn_delete_specialized_model.setObjectName("btn_delete_specialized_model")
+        self.btn_delete_specialized_model.setProperty("variant", "danger")
+        self.btn_delete_specialized_model.setIcon(get_icon("trash", "#EF4444", 14))
+        self.btn_delete_specialized_model.setIconSize(QSize(14, 14))
+        self.btn_delete_specialized_model.setFixedHeight(28)
+        self.btn_delete_specialized_model.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.btn_delete_specialized_model.setToolTip("Xóa model chuyên ngôn ngữ khỏi ổ đĩa")
+        self.btn_delete_specialized_model.clicked.connect(self._on_delete_specialized_model_clicked)
+        self.btn_delete_specialized_model.setVisible(False)
+        spec_row.addWidget(spec_lbl)
+        spec_row.addWidget(self.cmb_specialized_model)
+        spec_row.addWidget(self.btn_download_specialized_model)
+        spec_row.addWidget(self.btn_delete_specialized_model)
+        spec_row.addStretch()
+        model_layout.addLayout(spec_row)
 
         # --- Compute Type row with recommendation ---
         self.cmb_compute = QComboBox()
-        self.cmb_compute.setMinimumWidth(160)
+        self.cmb_compute.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self._populate_compute_combo()
-        model_layout.addLayout(_kv_row("Compute Type:", self.cmb_compute))
+        model_layout.addLayout(_kv_row("Compute Type:", self.cmb_compute, fixed_width=model_box_width))
 
         self.lbl_effective_compute = QLabel("Effective: not run")
         self.lbl_effective_compute.setProperty("class", "Caption")
         model_layout.addWidget(self.lbl_effective_compute)
 
         self.cmb_language = QComboBox()
+        self.cmb_language.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.cmb_language.addItems(["Auto Detect", "vi", "en", "ja", "ko", "zh"])
-        model_layout.addLayout(_kv_row("Language:", self.cmb_language))
+        model_layout.addLayout(_kv_row("Language:", self.cmb_language, fixed_width=model_box_width))
         settings_layout.addWidget(self.model_group)
 
-        # Populate model combo after widget tree is ready
+        # Populate model combos after widget tree is ready
         self._populate_model_combo()
+        self._populate_specialized_model_combo()
+
+        # Compact shortcut buttons shown inside Drawer only after sections are popped out to dialogs
+        self._settings_layout = settings_layout
+        self.config_shortcuts_group = QWidget(self.settings_scroll_content)
+        self.config_shortcuts_group.setObjectName("config_shortcuts_group")
+        self.config_shortcuts_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.config_shortcuts_group.setMinimumHeight(42)
+        shortcuts_row = QHBoxLayout(self.config_shortcuts_group)
+        shortcuts_row.setContentsMargins(0, 4, 0, 4)
+        shortcuts_row.setSpacing(8)
+        self.btn_open_model_config_dialog = QPushButton("Cấu hình Model…")
+        self.btn_open_model_config_dialog.setObjectName("btn_open_model_config_dialog")
+        self.btn_open_model_config_dialog.setIcon(get_icon("box", "#38BDF8", 14))
+        self.btn_open_model_config_dialog.setIconSize(QSize(14, 14))
+        self.btn_open_model_config_dialog.setProperty("variant", "secondary")
+        self.btn_open_model_config_dialog.setFixedHeight(34)
+        self.btn_open_model_config_dialog.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.btn_open_model_config_dialog.clicked.connect(self.request_model_config_dialog)
+        self.btn_open_model_config_dialog.hide()
+        self.btn_open_asr_vad_dialog = QPushButton("Cấu hình ASR / VAD…")
+        self.btn_open_asr_vad_dialog.setObjectName("btn_open_asr_vad_dialog")
+        self.btn_open_asr_vad_dialog.setIcon(get_icon("sliders", "#38BDF8", 14))
+        self.btn_open_asr_vad_dialog.setIconSize(QSize(14, 14))
+        self.btn_open_asr_vad_dialog.setProperty("variant", "secondary")
+        self.btn_open_asr_vad_dialog.setFixedHeight(34)
+        self.btn_open_asr_vad_dialog.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.btn_open_asr_vad_dialog.clicked.connect(self.request_asr_vad_dialog)
+        self.btn_open_asr_vad_dialog.hide()
+        shortcuts_row.addWidget(self.btn_open_model_config_dialog, 1)
+        shortcuts_row.addWidget(self.btn_open_asr_vad_dialog, 1)
+        self.config_shortcuts_group.hide()
+        settings_layout.addWidget(self.config_shortcuts_group)
+
+        self.asr_vad_group = QGroupBox("ASR / VAD Preset & Thông số")
+        self.asr_vad_group.setObjectName("asr_vad_group")
+        asr_vad_layout = QVBoxLayout(self.asr_vad_group)
+        asr_vad_layout.setContentsMargins(0, 6, 0, 6)
+        asr_vad_layout.setSpacing(8)
 
         advanced_group = QGroupBox("Advanced Settings")
         advanced_layout = QVBoxLayout(advanced_group)
@@ -248,7 +410,7 @@ class SubtitleGenerationPanel(QWidget):
         self.chk_vad.setChecked(True)
         advanced_layout.addWidget(self.chk_vad)
 
-        self.chk_music_mode = QCheckBox("🎵 Chế độ Nhạc / Concert (Tối ưu ngắt câu bài hát)")
+        self.chk_music_mode = QCheckBox("Chế độ Nhạc / Concert (Tối ưu ngắt câu bài hát)")
         self.chk_music_mode.setToolTip(
             "Tắt bộ lọc VAD gây nuốt tiếng hát khi nhạc nền lớn, kích hoạt tách câu tự nhiên theo nhịp điệu bài hát."
         )
@@ -270,44 +432,103 @@ class SubtitleGenerationPanel(QWidget):
 
         self.cmb_vad_preset = QComboBox()
         self.cmb_vad_preset.setObjectName("cmb_vad_preset")
-        self.cmb_vad_preset.addItem("Standard (Mặc định)", "standard")
-        self.cmb_vad_preset.addItem("★ CFG-9 Anime JA (Tối ưu tách câu)", "cfg9")
-        self.cmb_vad_preset.addItem("Custom (Tùy chỉnh thông số)", "custom")
-        self.cmb_vad_preset.setMinimumWidth(210)
-        advanced_layout.addLayout(_kv_row("ASR / VAD Preset:", self.cmb_vad_preset, min_width=210))
+        self.cmb_vad_preset.addItem("Standard", "standard")
+        for _preset in self._FIXED_VAD_PRESETS:
+            if _preset["scope"] == "all":
+                self.cmb_vad_preset.addItem(_preset["label"], _preset["key"])
+        self.cmb_vad_preset.addItem("Custom", "custom")
+        self.cmb_vad_preset.setMinimumWidth(270)
+        asr_vad_layout.addLayout(_kv_row("ASR / VAD Preset:", self.cmb_vad_preset, min_width=270, store_key="vad_preset"))
 
         self.spin_min_silence = QSpinBox()
         self.spin_min_silence.setObjectName("spin_min_silence")
         self.spin_min_silence.setRange(50, 5000)
         self.spin_min_silence.setSingleStep(50)
-        self.spin_min_silence.setValue(500)
+        self.spin_min_silence.setValue(350)
         self.spin_min_silence.setSuffix(" ms")
-        advanced_layout.addLayout(_kv_row("Min Silence:", self.spin_min_silence))
+        asr_vad_layout.addLayout(_kv_row(
+            "Min Silence:",
+            self.spin_min_silence,
+            min_width=148,
+            hint_text="↑ Gộp câu dài · ↓ Tách câu vụn",
+            tooltip=(
+                "Thời gian im lặng tối thiểu để tách câu (CFG-9: 300ms).\n"
+                "• Tăng (400–800ms): Gộp các nhịp nghỉ ngắn thành câu dài.\n"
+                "• Giảm (150–250ms): Tách câu nhanh, dễ chia nhỏ câu thoại."
+            ),
+            store_key="min_silence",
+        ))
 
         self.spin_vad_threshold = QDoubleSpinBox()
         self.spin_vad_threshold.setObjectName("spin_vad_threshold")
         self.spin_vad_threshold.setRange(0.05, 0.95)
         self.spin_vad_threshold.setSingleStep(0.05)
         self.spin_vad_threshold.setDecimals(2)
-        self.spin_vad_threshold.setValue(0.50)
-        advanced_layout.addLayout(_kv_row("VAD Threshold:", self.spin_vad_threshold))
+        self.spin_vad_threshold.setValue(0.25)
+        asr_vad_layout.addLayout(_kv_row(
+            "VAD Threshold:",
+            self.spin_vad_threshold,
+            min_width=148,
+            hint_text="↑ Lọc tạp âm · ↓ Bắt tiếng thì thầm",
+            tooltip=(
+                "Ngưỡng nhạy phát hiện giọng nói (CFG-9: 0.35).\n"
+                "• Tăng (0.45–0.60): Lọc nhạc nền/tạp âm gắt hơn, nhưng dễ bỏ sót tiếng nói nhỏ.\n"
+                "• Giảm (0.20–0.30): Bắt nhạy tiếng thì thầm/lẩm bẩm, nhưng dễ nhận nhầm tạp âm."
+            ),
+            store_key="vad_threshold",
+        ))
 
         self.spin_speech_pad = QSpinBox()
         self.spin_speech_pad.setObjectName("spin_speech_pad")
         self.spin_speech_pad.setRange(0, 2000)
         self.spin_speech_pad.setSingleStep(50)
-        self.spin_speech_pad.setValue(400)
+        self.spin_speech_pad.setValue(350)
         self.spin_speech_pad.setSuffix(" ms")
-        advanced_layout.addLayout(_kv_row("Speech Pad:", self.spin_speech_pad))
+        asr_vad_layout.addLayout(_kv_row(
+            "Speech Pad:",
+            self.spin_speech_pad,
+            min_width=148,
+            hint_text="↑ Chống cụt âm · ↓ Bám sát tiếng",
+            tooltip=(
+                "Khoảng đệm mở rộng đầu và cuối câu (CFG-9: 300ms).\n"
+                "• Tăng (350–500ms): Chống nuốt âm đầu/âm cuối câu.\n"
+                "• Giảm (100–200ms): Timing bám sát khẩu hình nhưng dễ cụt chữ cuối."
+            ),
+            store_key="speech_pad",
+        ))
 
         self.spin_max_speech = QDoubleSpinBox()
         self.spin_max_speech.setObjectName("spin_max_speech")
         self.spin_max_speech.setRange(1.0, 60.0)
         self.spin_max_speech.setSingleStep(0.5)
         self.spin_max_speech.setDecimals(1)
-        self.spin_max_speech.setValue(30.0)
+        self.spin_max_speech.setValue(8.0)
         self.spin_max_speech.setSuffix(" s")
-        advanced_layout.addLayout(_kv_row("Max Speech:", self.spin_max_speech))
+        asr_vad_layout.addLayout(_kv_row(
+            "Max Speech:",
+            self.spin_max_speech,
+            min_width=148,
+            hint_text="↑ Cho phép câu dài · ↓ Ép ngắt câu",
+            tooltip=(
+                "Độ dài tối đa của 1 câu phụ đề (CFG-9: 6.0s).\n"
+                "• Tăng (8–15s): Cho phép câu độc thoại kéo dài.\n"
+                "• Giảm (3–5s): Ép cắt thành các câu ngắn dễ đọc."
+            ),
+            store_key="max_speech",
+        ))
+        self._refresh_vad_guidance_for_model(apply_values=True)
+
+        self.chk_condition_on_previous_text = QCheckBox(
+            "Giữ ngữ cảnh câu trước cho Large-v3 (Tắt khi gặp cảnh rên/lặp từ)"
+        )
+        self.chk_condition_on_previous_text.setObjectName("chk_condition_on_previous_text")
+        self.chk_condition_on_previous_text.setToolTip(
+            "Bật: giữ ngữ cảnh câu trước giúp mạch thoại liền lạc.\n"
+            "Tắt: ngăn dây chuyền rên/lặp từ lan sang câu sau (tự động tắt với Live-Action / Tokusatsu (18+)).\n"
+            "Lưu ý: Backend luôn giữ tắt tùy chọn này đối với kotoba-whisper."
+        )
+        self.chk_condition_on_previous_text.setChecked(True)
+        asr_vad_layout.addWidget(self.chk_condition_on_previous_text)
 
         self.chk_apply_preset_rescan = QCheckBox(
             "Áp dụng Preset cho 'Gen Sub các câu đang chọn' và 'Quét lại'"
@@ -317,21 +538,29 @@ class SubtitleGenerationPanel(QWidget):
             "Khi bật, thao tác '🔍 Quét lại' và 'Gen Sub các câu đã chọn' sẽ dùng bộ thông số VAD/ASR của Preset đang chọn."
         )
         self.chk_apply_preset_rescan.setChecked(False)
-        advanced_layout.addWidget(self.chk_apply_preset_rescan)
+        asr_vad_layout.addWidget(self.chk_apply_preset_rescan)
+        settings_layout.addWidget(self.asr_vad_group)
 
         self.cmb_batch_mode = QComboBox()
         self.cmb_batch_mode.addItem("Time-based (Minutes)", "time")
         self.cmb_batch_mode.addItem("Segment-based (Count)", "segments")
-        self.cmb_batch_mode.setMinimumWidth(210)
-        advanced_layout.addLayout(_kv_row("Batch Mode:", self.cmb_batch_mode, min_width=210))
+        self.cmb_batch_mode.setMinimumWidth(160)
+        self.cmb_batch_mode.setFixedHeight(32)
+        advanced_layout.addLayout(_kv_row("Batch Mode:", self.cmb_batch_mode, expand=True))
 
         self.spin_batch_val = QSpinBox()
         self.spin_batch_val.setRange(1, 30)
         self.spin_batch_val.setValue(5)
         self.spin_batch_val.setSuffix(" min")
+        self.spin_batch_val.setFixedHeight(32)
         # Compatibility alias for existing timing-panel integrations.
         self.spin_batch = self.spin_batch_val
-        advanced_layout.addLayout(_kv_row("Batch Size:", self.spin_batch_val))
+        self.lbl_batch_size_hint = QLabel("")
+        self.lbl_batch_size_hint.setWordWrap(False)
+        self.lbl_batch_size_hint.setStyleSheet("color: #64748B; font-size: 11px; background: transparent;")
+        batch_row = _kv_row("Batch Size:", self.spin_batch_val)
+        batch_row.insertWidget(batch_row.count() - 1, self.lbl_batch_size_hint)
+        advanced_layout.addLayout(batch_row)
         self.cmb_batch_mode.currentIndexChanged.connect(
             lambda _index: self._on_batch_mode_changed()
         )
@@ -340,10 +569,12 @@ class SubtitleGenerationPanel(QWidget):
         self.spin_vad_threshold.valueChanged.connect(self._on_vad_param_edited)
         self.spin_speech_pad.valueChanged.connect(self._on_vad_param_edited)
         self.spin_max_speech.valueChanged.connect(self._on_vad_param_edited)
+        self.chk_condition_on_previous_text.toggled.connect(self._on_timing_setting_changed)
         self.chk_apply_preset_rescan.toggled.connect(self._on_timing_setting_changed)
         self.chk_fix_overlap.toggled.connect(self._on_timing_setting_changed)
         self.spin_overlap_gap.valueChanged.connect(self._on_timing_setting_changed)
         self.cmb_model.currentTextChanged.connect(self._on_timing_setting_changed)
+        self.cmb_specialized_model.currentIndexChanged.connect(self._on_timing_setting_changed)
         self.cmb_compute.currentTextChanged.connect(self._on_timing_setting_changed)
         self.chk_vad.toggled.connect(self._on_timing_setting_changed)
         self.chk_music_mode.toggled.connect(self._on_timing_setting_changed)
@@ -355,30 +586,36 @@ class SubtitleGenerationPanel(QWidget):
         history_layout.setContentsMargins(12, 12, 12, 12)
         
         self.history_list = QListWidget()
+        self.history_list.setMinimumHeight(110)
         self.history_list.setMaximumHeight(150)
+        self.history_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         history_layout.addWidget(self.history_list)
         
         self.btn_rollback = QPushButton("Khôi phục (Rollback)")
         self.btn_rollback.setProperty("variant", "danger")
+        self.btn_rollback.setFixedHeight(34)
+        self.btn_rollback.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.btn_rollback.setEnabled(False)
         history_layout.addWidget(self.btn_rollback)
         
-        self.history_list_layout = QVBoxLayout()
-        history_layout.addLayout(self.history_list_layout)
         
         # Quick Rollback row
         quick_row = QHBoxLayout()
-        quick_row.addWidget(QLabel("Rollback:"))
+        quick_row.setSpacing(6)
+        quick_lbl = QLabel("Rollback:")
+        quick_row.addWidget(quick_lbl)
         self.btn_rb_10 = QPushButton("10")
         self.btn_rb_30 = QPushButton("30")
         self.btn_rb_50 = QPushButton("50")
         self.btn_rb_60 = QPushButton("60")
         self.btn_rb_initial = QPushButton("Initial")
         for btn in (self.btn_rb_10, self.btn_rb_30, self.btn_rb_50, self.btn_rb_60, self.btn_rb_initial):
-            quick_row.addWidget(btn)
+            btn.setFixedHeight(30)
+            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            btn.setStyleSheet("padding: 0px 6px;")
+            quick_row.addWidget(btn, 1)
             btn.clicked.connect(lambda checked=False, b=btn: self._on_quick_rollback_clicked(b.text()))
             
-        quick_row.addStretch()
         history_layout.addLayout(quick_row)
 
         settings_layout.addWidget(self.history_group)
@@ -394,6 +631,7 @@ class SubtitleGenerationPanel(QWidget):
         self.lbl_context_status.setProperty("class", "Caption")
         self.lbl_context_status.setWordWrap(True)
         self.btn_context_edit = QPushButton("Edit context")
+        self.btn_context_edit.setFixedHeight(32)
         self.btn_context_edit.setProperty("variant", "secondary")
         self.context_status_label = self.lbl_context_status
         self.edit_context_btn = self.btn_context_edit
@@ -415,21 +653,44 @@ class SubtitleGenerationPanel(QWidget):
         self._configure_status_label(self.lbl_status)
         self.lbl_status.setAlignment(Qt.AlignCenter)
         self.lbl_status.setProperty("class", "Caption")
+        self.lbl_status.setStyleSheet(f"background: transparent; color: {Theme.TEXT_PRIMARY};")
         footer_layout.addWidget(self.lbl_status)
 
         self.progress_bar = QProgressBar()
+        self.progress_bar.setObjectName("pbar_generation")
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
-        self.progress_bar.setFixedHeight(4)
-        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setFixedHeight(22)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setAlignment(Qt.AlignCenter)
+        self.progress_bar.setFormat("0%")
+        self.progress_bar.setStyleSheet(f"""
+            QProgressBar#pbar_generation {{
+                background-color: {Theme.SURFACE_SOFT};
+                border: 1px solid {Theme.BORDER};
+                border-radius: 6px;
+                min-height: 20px;
+                max-height: 22px;
+                text-align: center;
+                color: #FFFFFF;
+                font-size: 11px;
+                font-weight: 700;
+            }}
+            QProgressBar#pbar_generation::chunk {{
+                background: {Theme.PRIMARY_GRADIENT};
+                border-radius: 5px;
+            }}
+        """)
         footer_layout.addWidget(self.progress_bar)
 
         button_layout = QHBoxLayout()
         button_layout.setSpacing(8)
-        self.btn_generate = QPushButton("✨ Generate Subtitle")
+        self.btn_generate = QPushButton("Generate Subtitle")
         self.btn_generate.setFixedHeight(34)
         self.btn_generate.setObjectName("btn_primary")
         self.btn_generate.setProperty("variant", "primary")
+        self.btn_generate.setIcon(get_icon("play", "#FFFFFF", 14))
+        self.btn_generate.setIconSize(QSize(14, 14))
 
         self.btn_resume = QPushButton("Resume")
         self.btn_resume.setFixedHeight(34)
@@ -470,6 +731,30 @@ class SubtitleGenerationPanel(QWidget):
         footer.setParent(None)
         return footer
 
+    def _detach_section_widget(self, attr_name: str, shortcut_btn_attr: str):
+        section = getattr(self, attr_name, None)
+        if section is None:
+            return None
+        layout = getattr(self, "_settings_layout", None)
+        if layout is not None:
+            layout.removeWidget(section)
+        section.setParent(None)
+        shortcuts_group = getattr(self, "config_shortcuts_group", None)
+        if shortcuts_group is not None:
+            shortcuts_group.show()
+        shortcut_btn = getattr(self, shortcut_btn_attr, None)
+        if shortcut_btn is not None:
+            shortcut_btn.show()
+        return section
+
+    def take_model_config_widget(self):
+        """Detach Model Configuration group for hosting inside ModelConfigDialog."""
+        return self._detach_section_widget("model_group", "btn_open_model_config_dialog")
+
+    def take_asr_vad_config_widget(self):
+        """Detach ASR / VAD Preset group for hosting inside AsrVadConfigDialog."""
+        return self._detach_section_widget("asr_vad_group", "btn_open_asr_vad_dialog")
+
     @staticmethod
     def _configure_status_label(label):
         """Keep long errors inside the drawer's existing width."""
@@ -483,7 +768,14 @@ class SubtitleGenerationPanel(QWidget):
         self.generation_service.on_progress = self._update_progress
         self.generation_service.on_error = self._on_error
         self.generation_service.on_finish = self._on_finish
+        history_changed = getattr(self.generation_service, "history_changed", None)
+        if history_changed is not None:
+            history_changed.connect(self.refresh_history)
         self.cmb_model.currentIndexChanged.connect(self._on_model_selection_changed)
+        if hasattr(self, "cmb_specialized_model"):
+            self.cmb_specialized_model.currentIndexChanged.connect(
+                self._on_specialized_model_selection_changed
+            )
 
     # ── Model list helpers ────────────────────────────────────────────────────
 
@@ -550,7 +842,352 @@ class SubtitleGenerationPanel(QWidget):
                 break
         self._on_model_selection_changed()
 
-    def _on_model_selection_changed(self) -> None:
+    def _populate_specialized_model_combo(self, preferred: str | None = None) -> None:
+        """Fill cmb_specialized_model with language-specialized ASR models (kotoba-whisper)."""
+        if not hasattr(self, "cmb_specialized_model"):
+            return
+        from core.services.model_manager import ModelManager
+        prev = self.cmb_specialized_model.currentData() if preferred is None else preferred
+        self.cmb_specialized_model.blockSignals(True)
+        self.cmb_specialized_model.clear()
+        self.cmb_specialized_model.addItem("— Không dùng —", "")
+        try:
+            items = ModelManager.get_specialized_discovery_list()
+        except Exception:
+            items = []
+        for idx_offset, item in enumerate(items, start=1):
+            icon = "✅" if item.get("installed") else "⬇"
+            label = f"{icon} {item['label']}"
+            self.cmb_specialized_model.addItem(label, item["size"])
+            self.cmb_specialized_model.setItemData(
+                idx_offset,
+                f"{item['size']} ({item['repo_id']}) · {item['weight']}",
+                Qt.ToolTipRole,
+            )
+        self.cmb_specialized_model.blockSignals(False)
+        target = prev or ""
+        idx = self.cmb_specialized_model.findData(target)
+        self.cmb_specialized_model.setCurrentIndex(idx if idx >= 0 else 0)
+        self._on_specialized_model_selection_changed()
+
+    def _get_effective_model_size(self) -> str:
+        spec_combo = getattr(self, "cmb_specialized_model", None)
+        if spec_combo is not None:
+            spec_val = self._combo_value(spec_combo)
+            if spec_val:
+                return spec_val
+        return self._combo_value(self.cmb_model)
+
+    _STANDARD_VAD_PRESET = {
+        "min_silence": 350,
+        "threshold": 0.25,
+        "speech_pad": 350,
+        "max_speech": 8.0,
+    }
+
+    _FIXED_VAD_PRESETS = (
+        {
+            "key": "cfg9",
+            "label": "CFG-9 Anime JA",
+            "short_label": "CFG-9",
+            "scope": "all",
+            "min_silence": 300,
+            "threshold": 0.35,
+            "speech_pad": 300,
+            "max_speech": 6.0,
+            "condition_on_previous_text": True,
+        },
+        {
+            "key": "anime_ja_large_v3",
+            "label": "Anime JA — Riêng large-v3",
+            "short_label": "Anime JA large-v3",
+            "scope": "large-v3",
+            "min_silence": 300,
+            "threshold": 0.30,
+            "speech_pad": 250,
+            "max_speech": 6.0,
+            "condition_on_previous_text": True,
+        },
+        {
+            "key": "anime_ja_kotoba",
+            "label": "Anime JA — Riêng kotoba-whisper",
+            "short_label": "Anime JA Kotoba",
+            "scope": "kotoba",
+            "min_silence": 350,
+            "threshold": 0.25,
+            "speech_pad": 400,
+            "max_speech": 10.0,
+            "condition_on_previous_text": False,
+        },
+        {
+            "key": "live_action",
+            "label": "Live-Action / Tokusatsu (18+)",
+            "short_label": "Live-Action / Tokusatsu",
+            "scope": "all",
+            "min_silence": 300,
+            "threshold": 0.35,
+            "speech_pad": 250,
+            "max_speech": 6.0,
+            "condition_on_previous_text": False,
+        },
+    )
+
+    @classmethod
+    def _is_preset_available_for_model(cls, preset_def: dict, model_id: str | None) -> bool:
+        scope = preset_def.get("scope", "all")
+        if scope == "all":
+            return True
+        lowered = str(model_id or "").strip().lower()
+        if scope == "large-v3":
+            return lowered == "large-v3"
+        if scope == "kotoba":
+            return "kotoba" in lowered
+        return False
+
+    @classmethod
+    def get_fixed_vad_preset(cls, key: str | None) -> dict | None:
+        from core.project.project_state import normalize_vad_preset_key
+
+        normalized = normalize_vad_preset_key(key)
+        for preset in cls._FIXED_VAD_PRESETS:
+            if preset["key"] == normalized:
+                return preset
+        return None
+
+    _MODEL_VAD_PROFILES = {
+        "kotoba": {
+            "preset_label": "Standard",
+            "preset_tooltip": (
+                "Preset dùng chung (350ms / 0.25 / 350ms / 8.0s) tối ưu cho thoại anime tiếng Nhật có BGM và tiếng thở.\n"
+                "• Đủ nhạy để kotoba-whisper không mất từ mở đầu nhẹ (ねぇ, ほら) và giữ Max Speech 8.0s."
+            ),
+            "standard": dict(_STANDARD_VAD_PRESET),
+            "hints": {
+                "min_silence": "↑ Gộp câu dài · Kotoba gợi ý 300–400ms",
+                "vad_threshold": "↑ Lọc BGM · Kotoba gợi ý 0.25–0.35",
+                "speech_pad": "↑ Giữ âm cuối (わ/よ/ね) · Gợi ý 350–400ms",
+                "max_speech": "↑ Cho phép câu dài · Kotoba tối ưu 8–12s",
+            },
+            "tooltips": {
+                "min_silence": (
+                    "[Model: {model}] Thời gian im lặng tối thiểu để tách câu.\n"
+                    "• Đề xuất Kotoba JA: 300–400ms (mặc định 350ms) để tách tự nhiên theo nhịp thoại Nhật.\n"
+                    "• Tăng (>500ms): Gộp câu dài · Giảm (<250ms): Tách câu ngắn."
+                ),
+                "vad_threshold": (
+                    "[Model: {model}] Ngưỡng nhạy phát hiện giọng nói.\n"
+                    "• Đề xuất Kotoba JA: 0.25–0.35 (mặc định 0.25) để bắt trọn âm đầu/cuối nhẹ như ねぇ/わ/よ/ね.\n"
+                    "• Tăng (>0.45): Lọc BGM gắt hơn · Giảm (<0.25): Bắt tiếng thì thầm."
+                ),
+                "speech_pad": (
+                    "[Model: {model}] Khoảng đệm mở rộng đầu và cuối câu.\n"
+                    "• Đề xuất Kotoba JA: 350–400ms để giữ trọn trợ từ cuối câu (わ, よ, ね, かしら).\n"
+                    "• Tăng: Chống rớt âm cuối · Giảm: Bám sát khẩu hình."
+                ),
+                "max_speech": (
+                    "[Model: {model}] Độ dài tối đa của 1 câu phụ đề.\n"
+                    "• Đề xuất Kotoba JA: 8–12s (Standard: 8.0s · Riêng Kotoba: 10.0s).\n"
+                    "• Tăng: Giữ câu độc thoại dài · Giảm: Ép ngắt ngắn."
+                ),
+            },
+        },
+        "large": {
+            "preset_label": "Standard",
+            "preset_tooltip": (
+                "Preset dùng chung (350ms / 0.25 / 350ms / 8.0s) cân bằng cho thoại anime có BGM và tiếng thở.\n"
+                "• Có thể chọn thêm preset Riêng large-v3 (300ms / 0.30 / 250ms / 6.0s) hoặc Live-Action / Tokusatsu (300ms / 0.35 / 250ms / 6.0s)."
+            ),
+            "standard": dict(_STANDARD_VAD_PRESET),
+            "hints": {
+                "min_silence": "↑ Gộp câu dài · Large gợi ý 300–400ms",
+                "vad_threshold": "↑ Lọc BGM · Large gợi ý 0.25–0.35",
+                "speech_pad": "↑ Chống mất đầu/đuôi · Large gợi ý 250–350ms",
+                "max_speech": "↑ Cho phép câu dài · Large gợi ý 6–8s",
+            },
+            "tooltips": {
+                "min_silence": (
+                    "[Model: {model}] Thời gian im lặng tối thiểu để tách câu.\n"
+                    "• Standard: 350ms | Riêng large-v3 & CFG-9: 300ms.\n"
+                    "• Tăng: Gộp các nhịp nghỉ ngắn thành câu dài · Giảm: Tách câu nhanh."
+                ),
+                "vad_threshold": (
+                    "[Model: {model}] Ngưỡng nhạy phát hiện giọng nói.\n"
+                    "• Standard: 0.25 | Riêng large-v3: 0.30 giúp giảm lỗi nuốt âm đầu câu.\n"
+                    "• Tăng: Lọc tạp âm gắt · Giảm (0.25–0.30): Bắt tiếng nhỏ/thì thầm."
+                ),
+                "speech_pad": (
+                    "[Model: {model}] Khoảng đệm mở rộng đầu và cuối câu.\n"
+                    "• Đề xuất cho {model}: 250–350ms (Riêng large-v3: 250ms, Standard: 350ms) để giữ âm bật hơi đầu và gọn tiếng thở nền.\n"
+                    "• Tăng: Chống cụt âm · Giảm: Bám sát tiếng."
+                ),
+                "max_speech": (
+                    "[Model: {model}] Độ dài tối đa của 1 câu phụ đề.\n"
+                    "• Standard: 8.0s | Riêng large-v3 & CFG-9: 6.0s hạn chế ảo giác lặp chữ khi dính tiếng thở/BGM.\n"
+                    "• Tăng: Cho phép câu dài · Giảm: Ép ngắt câu."
+                ),
+            },
+        },
+        "compact": {
+            "preset_label": "Standard",
+            "preset_tooltip": (
+                "Preset dùng chung (350ms / 0.25 / 350ms / 8.0s) cho nhóm model nhẹ/trung (tiny / base / small / medium).\n"
+                "• Giữ Max Speech 8.0s giúp model nhẹ không bị lệch ngữ cảnh hay rớt chữ cuối câu."
+            ),
+            "standard": dict(_STANDARD_VAD_PRESET),
+            "hints": {
+                "min_silence": "↑ Gộp câu dài · Tiny–Med gợi ý 350–450ms",
+                "vad_threshold": "↑ Lọc tạp âm · Tiny–Med gợi ý 0.25–0.40",
+                "speech_pad": "↑ Chống cụt chữ · Tiny–Med gợi ý 350ms",
+                "max_speech": "↑ Độ dài câu · Tiny–Med tối ưu 6–10s",
+            },
+            "tooltips": {
+                "min_silence": (
+                    "[Model: {model}] Thời gian im lặng tối thiểu để tách câu.\n"
+                    "• Đề xuất Tiny–Medium: 350–450ms (mặc định 350ms) để model nhẹ không bị quá tải ngữ cảnh.\n"
+                    "• Tăng: Gộp câu dài · Giảm: Tách câu vụn."
+                ),
+                "vad_threshold": (
+                    "[Model: {model}] Ngưỡng nhạy phát hiện giọng nói.\n"
+                    "• Đề xuất Tiny–Medium: 0.25–0.40 (mặc định 0.25).\n"
+                    "• Tăng: Lọc nhạc nền · Giảm: Bắt âm nhẹ."
+                ),
+                "speech_pad": (
+                    "[Model: {model}] Khoảng đệm mở rộng đầu và cuối câu.\n"
+                    "• Đề xuất Tiny–Medium: 300–400ms (mặc định 350ms) giúp bù biên cắt của model nhẹ.\n"
+                    "• Tăng: Chống cụt âm · Giảm: Bám sát tiếng."
+                ),
+                "max_speech": (
+                    "[Model: {model}] Độ dài tối đa của 1 câu phụ đề.\n"
+                    "• Đề xuất Tiny–Medium: <=8.0–12.0s; câu quá dài ở model nhỏ dễ mất chữ giữa/cuối câu.\n"
+                    "• Tăng: Cho phép câu dài · Giảm: Ép ngắt câu."
+                ),
+            },
+        },
+    }
+
+    def _get_model_vad_profile(self, model_id: str | None = None) -> tuple[str, dict]:
+        active_model = str(
+            model_id
+            if model_id is not None
+            else (self._get_effective_model_size() if hasattr(self, "cmb_model") else "large-v3")
+        ).strip()
+        lowered = active_model.lower()
+        if "kotoba" in lowered:
+            return active_model or "kotoba-whisper-v2.0", self._MODEL_VAD_PROFILES["kotoba"]
+        if any(tag in lowered for tag in ("large-v3", "large-v2", "large-v1")):
+            return active_model, self._MODEL_VAD_PROFILES["large"]
+        return active_model or "small", self._MODEL_VAD_PROFILES["compact"]
+
+    def _rebuild_vad_preset_items(self, model_name: str, profile: dict, *, fallback_to_standard: bool) -> bool:
+        """Đồng bộ danh sách preset hiển thị theo model đang chọn; trả về True nếu preset cũ không còn hợp lệ và fallback về standard."""
+        if not hasattr(self, "cmb_vad_preset"):
+            return False
+        prev_key = self.cmb_vad_preset.currentData() or "standard"
+        desired: list[tuple[str, str]] = [(profile["preset_label"], "standard")]
+        for preset in self._FIXED_VAD_PRESETS:
+            if self._is_preset_available_for_model(preset, model_name):
+                desired.append((preset["label"], preset["key"]))
+        desired.append(("Custom", "custom"))
+
+        current = [
+            (self.cmb_vad_preset.itemText(i), self.cmb_vad_preset.itemData(i))
+            for i in range(self.cmb_vad_preset.count())
+        ]
+        if current == desired:
+            return False
+
+        fell_back_to_standard = False
+        self._updating_vad_preset = True
+        self.cmb_vad_preset.blockSignals(True)
+        try:
+            self.cmb_vad_preset.clear()
+            for label, key in desired:
+                self.cmb_vad_preset.addItem(label, key)
+            idx = self.cmb_vad_preset.findData(prev_key)
+            if idx >= 0:
+                self.cmb_vad_preset.setCurrentIndex(idx)
+            else:
+                target = "standard" if fallback_to_standard else "custom"
+                fell_back_to_standard = target == "standard"
+                t_idx = self.cmb_vad_preset.findData(target)
+                self.cmb_vad_preset.setCurrentIndex(t_idx if t_idx >= 0 else 0)
+        finally:
+            self.cmb_vad_preset.blockSignals(False)
+            self._updating_vad_preset = False
+        return fell_back_to_standard
+
+    def _refresh_vad_guidance_for_model(self, *, apply_values: bool = False) -> None:
+        if not hasattr(self, "spin_min_silence"):
+            return
+        model_name, profile = self._get_model_vad_profile()
+        row_widgets = getattr(self, "_vad_row_widgets", {})
+
+        fell_back = False
+        if hasattr(self, "cmb_vad_preset"):
+            fell_back = self._rebuild_vad_preset_items(
+                model_name,
+                profile,
+                fallback_to_standard=(apply_values and not getattr(self, "_restoring_timing_settings", False)),
+            )
+            preset_row = row_widgets.get("vad_preset")
+            if preset_row:
+                lbl, widget, _ = preset_row
+                lbl.setToolTip(profile["preset_tooltip"])
+                widget.setToolTip(profile["preset_tooltip"])
+
+        self._refresh_vad_preset_hints()
+
+        if apply_values and not getattr(self, "_restoring_timing_settings", False):
+            current_preset = self.cmb_vad_preset.currentData() if hasattr(self, "cmb_vad_preset") else "standard"
+            if current_preset == "standard" or fell_back:
+                std = profile["standard"]
+                self._updating_vad_preset = True
+                try:
+                    if hasattr(self, "cmb_vad_preset"):
+                        std_idx = self.cmb_vad_preset.findData("standard")
+                        if std_idx >= 0:
+                            self.cmb_vad_preset.setCurrentIndex(std_idx)
+                    self.spin_min_silence.setValue(int(std["min_silence"]))
+                    self.spin_vad_threshold.setValue(float(std["threshold"]))
+                    self.spin_speech_pad.setValue(int(std["speech_pad"]))
+                    self.spin_max_speech.setValue(float(std["max_speech"]))
+                    if hasattr(self, "chk_condition_on_previous_text"):
+                        self.chk_condition_on_previous_text.setChecked(
+                            "kotoba" not in model_name.lower()
+                        )
+                finally:
+                    self._updating_vad_preset = False
+                self._refresh_vad_preset_hints()
+
+    def _refresh_vad_preset_hints(self) -> None:
+        """Đồng bộ chú thích cạnh từng ô thông số VAD theo model và preset đang chọn."""
+        row_widgets = getattr(self, "_vad_row_widgets", {})
+        if not row_widgets:
+            return
+        from core.project.project_state import normalize_vad_preset_key
+
+        model_name, profile = self._get_model_vad_profile()
+        preset_key = normalize_vad_preset_key(
+            self.cmb_vad_preset.currentData() if hasattr(self, "cmb_vad_preset") else "standard"
+        )
+        hints = dict(profile["hints"])
+        if preset_key == "live_action":
+            hints["vad_threshold"] = "↑ Lọc BGM/SFX · Tokusatsu gợi ý 0.35"
+            hints["speech_pad"] = "↑ Gọn tiếng thở · Tokusatsu gợi ý 250ms"
+            hints["max_speech"] = "↑ Độc thoại gọn · Tokusatsu gợi ý 5–6s"
+        for key in ("min_silence", "vad_threshold", "speech_pad", "max_speech"):
+            entry = row_widgets.get(key)
+            if not entry:
+                continue
+            lbl, widget, hint_lbl = entry
+            tip = profile["tooltips"][key].format(model=model_name)
+            lbl.setToolTip(tip)
+            widget.setToolTip(tip)
+            if hint_lbl is not None:
+                hint_lbl.setText(hints[key])
+                hint_lbl.setToolTip(tip)
+
+    def _on_model_selection_changed(self, *_args, apply_vad_defaults: bool = True) -> None:
         """Show/hide Download and Delete buttons based on whether selected model is installed."""
         from core.services.model_manager import ModelManager
         size = self.cmb_model.currentData()
@@ -558,17 +1195,57 @@ class SubtitleGenerationPanel(QWidget):
         self.btn_download_model.setVisible(not installed)
         if hasattr(self, "btn_delete_model"):
             self.btn_delete_model.setVisible(installed)
+        if not getattr(self, "cmb_specialized_model", None) or not self.cmb_specialized_model.currentData():
+            self._refresh_vad_guidance_for_model(apply_values=apply_vad_defaults)
 
-    def _on_delete_model_clicked(self) -> None:
-        """Confirm and delete the currently selected installed model."""
+    def _sync_model_box_exclusivity(self) -> None:
+        """Khóa Model Size chung khi đang chọn model Chuyên Ngữ để tránh hiểu nhầm chạy 2 model song song."""
+        if not hasattr(self, "cmb_specialized_model") or not hasattr(self, "cmb_model"):
+            return
+        running = hasattr(self, "_is_any_service_running") and self._is_any_service_running()
+        if running:
+            return
+        has_spec = bool(self._combo_value(self.cmb_specialized_model))
+        self.cmb_model.setEnabled(not has_spec)
+        if hasattr(self, "btn_download_model"):
+            self.btn_download_model.setEnabled(not has_spec)
+        if hasattr(self, "btn_delete_model"):
+            self.btn_delete_model.setEnabled(not has_spec)
+        if has_spec:
+            self.cmb_model.setToolTip(
+                "Đang dùng Model Chuyên Ngữ bên dưới. Chọn '— Không dùng —' ở Chuyên Ngữ để dùng lại Model Size."
+            )
+        else:
+            self.cmb_model.setToolTip("Chọn kích thước Whisper chuẩn để tạo Timing / Phụ đề.")
+
+    def _on_specialized_model_selection_changed(self, *_args, apply_vad_defaults: bool = True) -> None:
+        """Show/hide Download and Delete buttons for specialized ASR model."""
+        if not hasattr(self, "cmb_specialized_model"):
+            return
+        from core.services.model_manager import ModelManager
+        model_id = self.cmb_specialized_model.currentData()
+        if not model_id:
+            self.btn_download_specialized_model.setVisible(False)
+            self.btn_delete_specialized_model.setVisible(False)
+            self._sync_model_box_exclusivity()
+            self._refresh_vad_guidance_for_model(apply_values=apply_vad_defaults)
+            return
+        installed = ModelManager.is_installed(model_id)
+        self.btn_download_specialized_model.setVisible(not installed)
+        self.btn_delete_specialized_model.setVisible(installed)
+        self._sync_model_box_exclusivity()
+        self._refresh_vad_guidance_for_model(apply_values=apply_vad_defaults)
+
+    def _delete_model_for(self, combo, refresh_fn) -> None:
         from core.services.model_manager import ModelManager
         from PySide6.QtWidgets import QMessageBox
 
-        size = self.cmb_model.currentData()
+        size = combo.currentData() if combo is not None else None
         if not size or not ModelManager.is_installed(size):
             return
 
-        weight = ModelManager.SUPPORTED_MODELS.get(size, "")
+        spec_info = ModelManager.get_specialized_info(size)
+        weight = spec_info["weight"] if spec_info else ModelManager.SUPPORTED_MODELS.get(size, "")
         confirm = QMessageBox.question(
             self,
             "Xác nhận xóa Model",
@@ -590,47 +1267,75 @@ class SubtitleGenerationPanel(QWidget):
                 win_whisper.unload_model()
 
             deleted = ModelManager.delete_model(size)
-            self._populate_model_combo(preferred=size)
+            refresh_fn(preferred=size)
             if deleted:
                 from ui.toast import Toast
                 Toast.show_success(self, f"Đã xóa thành công model '{size}'")
         except Exception as exc:
             QMessageBox.critical(self, "Lỗi khi xóa Model", f"Không thể xóa model '{size}': {exc}")
 
-    def _on_download_model_clicked(self) -> None:
-        """Trigger background download for the currently selected uninstalled model."""
+    def _download_model_for(self, combo, btn_dl, refresh_fn) -> None:
+        if self._is_any_service_running():
+            return
         from PySide6.QtCore import QThread
         from core.services.model_manager import ModelManager
 
-        size = self.cmb_model.currentData()
+        size = combo.currentData() if combo is not None else None
         if not size:
             return
         if ModelManager.is_installed(size):
-            self._populate_model_combo(preferred=size)
+            refresh_fn(preferred=size)
             return
 
-        self.btn_download_model.setEnabled(False)
-        self.btn_download_model.setText("Downloading…")
-        self.lbl_effective_compute.setText(f"Downloading {size}…")
+        btn_dl.setEnabled(False)
+        btn_dl.setText("Đang tải…")
+        self.lbl_effective_compute.setText(f"Đang tải {size}…")
 
         class _DlThread(QThread):
             def __init__(self, model_size):
                 super().__init__()
                 self._size = model_size
+                self.error = None
             def run(self):
-                ModelManager.download_model_sync(self._size)
+                try:
+                    ModelManager.download_model_sync(self._size)
+                except Exception as exc:
+                    self.error = exc
 
         thread = _DlThread(size)
         thread.setParent(self)
 
         def _done():
-            self.btn_download_model.setEnabled(True)
-            self.btn_download_model.setText("⬇ Download")
+            btn_dl.setEnabled(True)
+            btn_dl.setText("⬇ Download")
             self.lbl_effective_compute.setText("Effective: not run")
-            self._populate_model_combo(preferred=size)
+            refresh_fn(preferred=size)
+            if thread.error is not None:
+                QMessageBox.warning(self, "Lỗi tải Model", f"Không thể tải '{size}': {thread.error}")
 
         thread.finished.connect(_done)
         thread.start()
+
+    def _on_delete_model_clicked(self) -> None:
+        """Confirm and delete the currently selected installed model."""
+        self._delete_model_for(self.cmb_model, self._populate_model_combo)
+
+    def _on_download_model_clicked(self) -> None:
+        """Trigger background download for the currently selected uninstalled model."""
+        self._download_model_for(self.cmb_model, self.btn_download_model, self._populate_model_combo)
+
+    def _on_delete_specialized_model_clicked(self) -> None:
+        self._delete_model_for(
+            getattr(self, "cmb_specialized_model", None),
+            self._populate_specialized_model_combo,
+        )
+
+    def _on_download_specialized_model_clicked(self) -> None:
+        self._download_model_for(
+            getattr(self, "cmb_specialized_model", None),
+            getattr(self, "btn_download_specialized_model", None),
+            self._populate_specialized_model_combo,
+        )
 
     # ── Compute type recommendation ───────────────────────────────────────────
 
@@ -661,7 +1366,7 @@ class SubtitleGenerationPanel(QWidget):
         options = ["float16", "int8_float16", "int8"]
         self.cmb_compute.clear()
         for opt in options:
-            label = f"★ {opt}  (Recommended)" if opt == recommended else opt
+            label = f"{opt}  (Khuyên dùng)" if opt == recommended else opt
             self.cmb_compute.addItem(label, opt)
         # Select recommended by default
         for i in range(self.cmb_compute.count()):
@@ -719,6 +1424,9 @@ class SubtitleGenerationPanel(QWidget):
         # state of the individual model settings.
         self.model_group.setEnabled(True)
         self.cmb_model.setEnabled(True)
+        if hasattr(self, "cmb_specialized_model"):
+            self.cmb_specialized_model.setEnabled(True)
+            self._sync_model_box_exclusivity()
         self.cmb_compute.setEnabled(True)
         self.cmb_language.setEnabled(True)
         self.chk_word_timestamps.setEnabled(is_asr)
@@ -737,7 +1445,7 @@ class SubtitleGenerationPanel(QWidget):
             self.chk_vad.setText("Enable VAD (Bắt buộc cho chế độ này)")
 
         if hasattr(self, "btn_generate"):
-            self.btn_generate.setText("✨ Generate Subtitle" if is_asr else "✨ Generate Timing")
+            self.btn_generate.setText("Generate Subtitle" if is_asr else "Generate Timing")
 
         fix_overlap = getattr(self, "chk_fix_overlap", None)
         overlap_gap = getattr(self, "spin_overlap_gap", None)
@@ -745,6 +1453,31 @@ class SubtitleGenerationPanel(QWidget):
             fix_overlap.setEnabled(not is_asr)
         if overlap_gap is not None:
             overlap_gap.setEnabled(not is_asr and fix_overlap.isChecked())
+
+        if not (hasattr(self, "_is_any_service_running") and self._is_any_service_running()):
+            for ctrl_name in (
+                "cmb_vad_preset", "spin_min_silence", "spin_vad_threshold",
+                "spin_speech_pad", "spin_max_speech", "chk_condition_on_previous_text",
+                "chk_apply_preset_rescan",
+                "chk_music_mode", "btn_download_model", "btn_delete_model",
+                "cmb_specialized_model", "btn_download_specialized_model", "btn_delete_specialized_model",
+                "cmb_subtitle_source", "btn_add_external_srt", "cmb_range_unit",
+                "txt_start", "txt_end", "btn_range_timeline", "btn_range_preview",
+                "btn_context_edit",
+            ):
+                ctrl = getattr(self, ctrl_name, None)
+                if ctrl is not None and hasattr(ctrl, "setEnabled"):
+                    ctrl.setEnabled(True)
+            if hasattr(self, "_on_model_selection_changed"):
+                try:
+                    self._on_model_selection_changed(apply_vad_defaults=False)
+                except Exception:
+                    pass
+            if hasattr(self, "_sync_model_box_exclusivity"):
+                try:
+                    self._sync_model_box_exclusivity()
+                except Exception:
+                    pass
 
         if hasattr(self, "btn_resume"):
             self.check_resumable_state()
@@ -792,14 +1525,76 @@ class SubtitleGenerationPanel(QWidget):
                     return
             self.cmb_batch_mode.setCurrentIndex(0)
             return
+        self._sync_batch_spin_limits(reset_default=True)
+
+    def _get_timing_segment_counts(self) -> tuple[int, int]:
+        live = []
+        if hasattr(self, "_get_current_segments"):
+            try:
+                live = self._get_current_segments() or []
+            except Exception:
+                live = []
+        if live:
+            from core.subtitle_generation.generation_service import SubtitleGenerationService
+            unfilled = 0
+            for seg in live:
+                txt = str(seg.get("text", "") if isinstance(seg, dict) else "").strip()
+                if SubtitleGenerationService._is_unfilled_timing_text(txt):
+                    unfilled += 1
+            return len(live), unfilled
+        gen_svc = getattr(self, "generation_service", None)
+        if gen_svc is not None and hasattr(gen_svc, "get_timing_segment_counts"):
+            try:
+                return gen_svc.get_timing_segment_counts()
+            except Exception:
+                pass
+        return 0, 0
+
+    def _sync_batch_spin_limits(self, reset_default: bool = False):
+        if not hasattr(self, "cmb_batch_mode") or not hasattr(self, "spin_batch_val"):
+            return
+        hint_lbl = getattr(self, "lbl_batch_size_hint", None)
         if self.cmb_batch_mode.currentData() == "time":
-            self.spin_batch_val.setRange(1, 30)
-            self.spin_batch_val.setValue(5)
-            self.spin_batch_val.setSuffix(" min")
-        else:
-            self.spin_batch_val.setRange(5, 50)
-            self.spin_batch_val.setValue(10)
+            if hasattr(self.spin_batch_val, "setRange"):
+                self.spin_batch_val.setRange(1, 30)
+            if reset_default and hasattr(self.spin_batch_val, "setValue"):
+                self.spin_batch_val.setValue(5)
+            if hasattr(self.spin_batch_val, "setSuffix"):
+                self.spin_batch_val.setSuffix(" min")
+            if hint_lbl is not None:
+                hint_lbl.setText("")
+            return
+
+        if hasattr(self.spin_batch_val, "setSuffix"):
             self.spin_batch_val.setSuffix(" segs")
+        if self._is_timing_mode():
+            if hasattr(self.spin_batch_val, "setRange"):
+                self.spin_batch_val.setRange(5, 50)
+            if reset_default and hasattr(self.spin_batch_val, "setValue"):
+                self.spin_batch_val.setValue(10)
+            if hint_lbl is not None:
+                hint_lbl.setText("")
+            return
+
+        total_count, pending_count = self._get_timing_segment_counts()
+        if total_count > 0:
+            if hasattr(self.spin_batch_val, "setRange"):
+                self.spin_batch_val.setRange(1, total_count)
+            cur_val = self.spin_batch_val.value() if hasattr(self.spin_batch_val, "value") else 5
+            if reset_default and hasattr(self.spin_batch_val, "setValue"):
+                target_val = min(5, pending_count if pending_count > 0 else total_count, total_count)
+                self.spin_batch_val.setValue(max(1, target_val))
+            elif hasattr(self.spin_batch_val, "setValue") and (cur_val > total_count or cur_val < 1):
+                self.spin_batch_val.setValue(max(1, min(cur_val, total_count)))
+            if hint_lbl is not None:
+                hint_lbl.setText(f"Tổng {total_count} câu · {pending_count} câu trống")
+        else:
+            if hasattr(self.spin_batch_val, "setRange"):
+                self.spin_batch_val.setRange(5, 50)
+            if reset_default and hasattr(self.spin_batch_val, "setValue"):
+                self.spin_batch_val.setValue(10)
+            if hint_lbl is not None:
+                hint_lbl.setText("")
 
     def set_video_duration(self, duration_ms: int):
         self.video_duration_ms = max(0, int(duration_ms or 0))
@@ -820,7 +1615,9 @@ class SubtitleGenerationPanel(QWidget):
         timing_status = getattr(
             getattr(project, "state", None), "timing_status", None
         )
-        return timing_status in {"DRAFT", "READY"} and self._has_timing_artifact()
+        if timing_status in {"DRAFT", "READY"} and self._has_timing_artifact():
+            return True
+        return self._get_timing_segment_counts()[0] > 0
 
     def refresh_batch_mode_availability(self):
         """Allow true segment-count batching only when Timing ranges exist; hide otherwise."""
@@ -852,8 +1649,11 @@ class SubtitleGenerationPanel(QWidget):
                 v.setRowHidden(seg_idx, not enabled)
         if not enabled and self.cmb_batch_mode.currentData() == "segments":
             self.cmb_batch_mode.setCurrentIndex(0)
+        self._sync_batch_spin_limits(reset_default=False)
 
     def check_resumable_state(self):
+        if self._is_any_service_running():
+            return
         current_request = getattr(self.generation_service, "current_request", None)
         current_checkpoint = getattr(self.generation_service, "current_checkpoint", None)
         range_run_terminal = bool(
@@ -873,7 +1673,7 @@ class SubtitleGenerationPanel(QWidget):
                 and checkpoint.status in {"RUNNING", "CANCELLED", "FAILED"}
             )
         self.btn_resume.setVisible(resumable)
-        service_running = bool(getattr(self.generation_service, "is_running", False))
+        service_running = self._is_any_service_running()
         self.btn_resume.setEnabled(resumable and not service_running)
 
     def _has_resumable_timing_checkpoint(self) -> bool:
@@ -887,10 +1687,8 @@ class SubtitleGenerationPanel(QWidget):
         timing_state = getattr(getattr(project, "state", None), "timing", None)
         if getattr(timing_state, "status", None) == "COMPLETED":
             return False
-        return bool(
-            getattr(checkpoint, "timing_artifact_id", None)
-            or getattr(checkpoint, "active_batch", None)
-        )
+        active_batch = getattr(checkpoint, "active_batch", None)
+        return bool(active_batch and active_batch.get("status") in {"RUNNING", "FAILED", "CANCELLED"})
 
     @Slot()
     def _on_generate_clicked(self):
@@ -917,6 +1715,7 @@ class SubtitleGenerationPanel(QWidget):
 
         if self._is_timing_mode():
             timing_settings = self._timing_settings()
+            self._timing_start_fresh = False
             if self._has_resumable_timing_checkpoint():
                 reply = QMessageBox.question(
                     self,
@@ -935,14 +1734,21 @@ class SubtitleGenerationPanel(QWidget):
                         self.spin_batch_val.value(), timing_settings
                     )
                 else:
+                    self._timing_start_fresh = True
                     self.timing_start_requested.emit(
                         self.spin_batch_val.value(), timing_settings
                     )
             else:
                 self._set_ui_state_running()
-                self.timing_start_requested.emit(
-                    self.spin_batch_val.value(), timing_settings
+                project_service = getattr(self.generation_service, "project_service", None)
+                load_checkpoint = getattr(project_service, "load_timing_checkpoint", None)
+                checkpoint = load_checkpoint() if callable(load_checkpoint) else None
+                signal = (
+                    self.timing_resume_requested
+                    if checkpoint and checkpoint.timing_artifact_id
+                    else self.timing_start_requested
                 )
+                signal.emit(self.spin_batch_val.value(), timing_settings)
             return
 
         request = self._build_asr_request()
@@ -965,6 +1771,17 @@ class SubtitleGenerationPanel(QWidget):
         if not video_path:
             QMessageBox.warning(self, "Lỗi", "Không tìm thấy đường dẫn Video gốc trong Dự án.")
             return None
+        from core.subtitle_generation.language_utils import (
+            extract_glossary_hotwords,
+            extract_natural_initial_prompt,
+            normalize_to_iso_code,
+        )
+        from core.subtitle_generation.faster_whisper_service import FasterWhisperService
+        from core.services.model_manager import ModelManager
+
+        effective_model = self._get_effective_model_size()
+        spec_info = ModelManager.get_specialized_info(effective_model)
+
         compiled_context = self.generation_service.compile_prompt_context(
             project.transcription_context
         )
@@ -975,18 +1792,35 @@ class SubtitleGenerationPanel(QWidget):
             proj_ctrl = getattr(getattr(win, "page_translation", None), "project_controller", None)
             if proj_ctrl and getattr(proj_ctrl, "_is_ja_origin", False):
                 final_lang = "ja"
-        preset_data = self.cmb_vad_preset.currentData() if hasattr(self, "cmb_vad_preset") else "standard"
-        is_custom_or_cfg9 = preset_data in ("cfg9", "custom")
-        min_sil = self.spin_min_silence.value() if hasattr(self, "spin_min_silence") else 500
-        vad_thresh = self.spin_vad_threshold.value() if (is_custom_or_cfg9 and hasattr(self, "spin_vad_threshold")) else None
-        vad_pad = self.spin_speech_pad.value() if (is_custom_or_cfg9 and hasattr(self, "spin_speech_pad")) else None
-        vad_max_sp = self.spin_max_speech.value() if (is_custom_or_cfg9 and hasattr(self, "spin_max_speech")) else None
+        if final_lang is None and spec_info is not None:
+            final_lang = spec_info.get("language")
+
+        iso_lang = normalize_to_iso_code(final_lang)
+        if FasterWhisperService.is_kotoba_model(effective_model) or not ModelManager.supports_word_timestamps(effective_model):
+            prompt_text = ""
+            hotwords = ""
+        elif FasterWhisperService.is_large_v3_model(effective_model):
+            prompt_text = extract_natural_initial_prompt(compiled_context.text, iso_lang) or ""
+            hotwords = extract_glossary_hotwords(getattr(project, "transcription_context", None))
+        else:
+            prompt_text = str(compiled_context.text or "").strip()
+            hotwords = extract_glossary_hotwords(getattr(project, "transcription_context", None))
+
+        min_sil = self.spin_min_silence.value() if hasattr(self, "spin_min_silence") else self._STANDARD_VAD_PRESET["min_silence"]
+        vad_thresh = self.spin_vad_threshold.value() if hasattr(self, "spin_vad_threshold") else self._STANDARD_VAD_PRESET["threshold"]
+        vad_pad = self.spin_speech_pad.value() if hasattr(self, "spin_speech_pad") else self._STANDARD_VAD_PRESET["speech_pad"]
+        vad_max_sp = self.spin_max_speech.value() if hasattr(self, "spin_max_speech") else self._STANDARD_VAD_PRESET["max_speech"]
+        cond_prev = (
+            self.chk_condition_on_previous_text.isChecked()
+            if hasattr(self, "chk_condition_on_previous_text")
+            else True
+        )
         return SubtitleGenerationRequest(
             request_id=str(uuid.uuid4()),
             project_id=project.project_id,
             source_fingerprint=getattr(source, "fingerprint", ""),
             video_path=video_path,
-            model_size=self._combo_value(self.cmb_model),
+            model_size=effective_model,
             compute_type=self._combo_value(self.cmb_compute),
             language=final_lang,
             use_vad=self.chk_vad.isChecked(),
@@ -995,13 +1829,18 @@ class SubtitleGenerationPanel(QWidget):
             batch_mode=self.cmb_batch_mode.currentData(),
             batch_size_value=self.spin_batch_val.value(),
             overlap_ms=2000,
-            prompt_context=compiled_context.text,
+            prompt_context=prompt_text,
             range_start_ms=range_start_ms,
             range_end_ms=range_end_ms,
-            condition_on_previous_text=True,
+            condition_on_previous_text=cond_prev,
             vad_threshold=vad_thresh,
             vad_speech_pad_ms=vad_pad,
             vad_max_speech_duration_s=vad_max_sp,
+            min_speech_duration_ms=120,
+            speech_filter=True,
+            hotwords=hotwords,
+            patience=1.5,
+            hallucination_silence_threshold=2.5,
         )
 
     def start_range_generation(self, start_ms, end_ms, existing_segments):
@@ -1056,7 +1895,43 @@ class SubtitleGenerationPanel(QWidget):
         else:
             self.generation_service.cancel_generation()
 
+    def _get_window(self):
+        try:
+            if callable(getattr(self, "window", None)):
+                return self.window()
+        except (RuntimeError, Exception):
+            return None
+        return None
+
+    def _is_any_service_running(self) -> bool:
+        def _check_running(obj):
+            if obj is None:
+                return False
+            is_run = getattr(obj, "is_running", None)
+            if is_run is not None:
+                res = is_run() if callable(is_run) else is_run
+                if res is True or (isinstance(res, bool) and res):
+                    return True
+            is_running_method = getattr(obj, "isRunning", None)
+            if callable(is_running_method):
+                res = is_running_method()
+                if res is True or (isinstance(res, bool) and res):
+                    return True
+            return False
+
+        if _check_running(getattr(self, "generation_service", None)):
+            return True
+        win = self._get_window()
+        timing_svc = getattr(win, "timing_service", None) if win is not None else getattr(self, "timing_service", None)
+        if _check_running(timing_svc):
+            return True
+        return False
+
     def _set_ui_state_running(self):
+        self.btn_rollback.setEnabled(False)
+        self.history_list.setEnabled(False)
+        for button in (self.btn_rb_10, self.btn_rb_30, self.btn_rb_50, self.btn_rb_60, self.btn_rb_initial):
+            button.setEnabled(False)
         self.btn_generate.setEnabled(False)
         self.btn_resume.setEnabled(False)
         self.cmb_mode.setEnabled(False)
@@ -1071,27 +1946,73 @@ class SubtitleGenerationPanel(QWidget):
             self.chk_fix_overlap.setEnabled(False)
         if hasattr(self, "spin_overlap_gap"):
             self.spin_overlap_gap.setEnabled(False)
+        for ctrl_name in (
+            "cmb_vad_preset", "spin_min_silence", "spin_vad_threshold",
+            "spin_speech_pad", "spin_max_speech", "chk_condition_on_previous_text",
+            "chk_apply_preset_rescan",
+            "chk_music_mode", "btn_download_model", "btn_delete_model",
+            "cmb_specialized_model", "btn_download_specialized_model", "btn_delete_specialized_model",
+            "cmb_subtitle_source", "btn_add_external_srt", "cmb_range_unit",
+            "txt_start", "txt_end", "btn_range_timeline", "btn_range_preview",
+            "btn_context_edit",
+        ):
+            ctrl = getattr(self, ctrl_name, None)
+            if ctrl is not None and hasattr(ctrl, "setEnabled"):
+                ctrl.setEnabled(False)
+        win = self._get_window()
+        timeline = getattr(win, "timeline_widget", None) if win is not None else None
+        if timeline is not None and hasattr(timeline, "set_generation_busy"):
+            timeline.set_generation_busy(True)
         self.btn_cancel.setEnabled(True)
         self.progress_bar.setValue(0)
         self.lbl_status.setStyleSheet(f"color: {Theme.TEXT_PRIMARY};")
 
     def _reset_ui_state(self):
-        service_running = bool(getattr(self.generation_service, "is_running", False))
+        service_running = self._is_any_service_running()
         if service_running:
             # A cancel/error callback must not re-enable controls while the
             # underlying QThread is still winding down.
             self._set_ui_state_running()
             return
-        self.btn_generate.setEnabled(not service_running)
+        win = self._get_window()
+        timeline = getattr(win, "timeline_widget", None) if win is not None else None
+        if timeline is not None and hasattr(timeline, "set_generation_busy"):
+            timeline.set_generation_busy(False)
+        self.btn_generate.setEnabled(True)
         self.cmb_mode.setEnabled(True)
-        self.btn_cancel.setEnabled(service_running)
+        self.btn_cancel.setEnabled(False)
         self.cmb_batch_mode.setEnabled(True)
         self.spin_batch_val.setEnabled(True)
+        for ctrl_name in (
+            "cmb_vad_preset", "spin_min_silence", "spin_vad_threshold",
+            "spin_speech_pad", "spin_max_speech", "chk_condition_on_previous_text",
+            "chk_apply_preset_rescan",
+            "chk_music_mode", "btn_download_model", "btn_delete_model",
+            "cmb_specialized_model", "btn_download_specialized_model", "btn_delete_specialized_model",
+            "cmb_subtitle_source", "btn_add_external_srt", "cmb_range_unit",
+            "txt_start", "txt_end", "btn_range_timeline", "btn_range_preview",
+            "btn_context_edit",
+        ):
+            ctrl = getattr(self, ctrl_name, None)
+            if ctrl is not None and hasattr(ctrl, "setEnabled"):
+                ctrl.setEnabled(True)
+        if hasattr(self, "_on_model_selection_changed"):
+            try:
+                self._on_model_selection_changed(apply_vad_defaults=False)
+            except Exception:
+                pass
+        if hasattr(self, "_on_specialized_model_selection_changed"):
+            try:
+                self._on_specialized_model_selection_changed(apply_vad_defaults=False)
+            except Exception:
+                pass
         self.check_resumable_state()
         # Re-apply the current mode after every run/error/cancel transition.
         self._on_mode_changed()
+        self.history_list.setEnabled(True)
+        self.refresh_history()
         # Nếu không còn tác vụ nào đang chạy, đảm bảo thanh tiến trình trả về 0
-        if not service_running and self.progress_bar.value() == 100:
+        if self.progress_bar.value() == 100:
             from PySide6.QtCore import QTimer
             QTimer.singleShot(800, lambda: self.progress_bar.setValue(0))
 
@@ -1099,41 +2020,69 @@ class SubtitleGenerationPanel(QWidget):
         if getattr(self, "_restoring_timing_settings", False) or getattr(self, "_updating_vad_preset", False):
             return
         preset = self.cmb_vad_preset.currentData() if hasattr(self, "cmb_vad_preset") else "standard"
+        fixed_preset = self.get_fixed_vad_preset(preset)
         self._updating_vad_preset = True
         try:
-            if preset == "cfg9":
+            model_name, profile = self._get_model_vad_profile()
+            if fixed_preset is not None:
+                from core.services.model_manager import ModelManager
                 self.chk_vad.setChecked(True)
-                self.chk_word_timestamps.setChecked(True)
-                self.spin_min_silence.setValue(300)
-                self.spin_vad_threshold.setValue(0.35)
-                self.spin_speech_pad.setValue(300)
-                self.spin_max_speech.setValue(6.0)
+                self.chk_word_timestamps.setChecked(
+                    True if preset == "cfg9" else ModelManager.supports_word_timestamps(model_name)
+                )
+                self.spin_min_silence.setValue(int(fixed_preset["min_silence"]))
+                self.spin_vad_threshold.setValue(float(fixed_preset["threshold"]))
+                self.spin_speech_pad.setValue(int(fixed_preset["speech_pad"]))
+                self.spin_max_speech.setValue(float(fixed_preset["max_speech"]))
+                if hasattr(self, "chk_condition_on_previous_text") and "condition_on_previous_text" in fixed_preset:
+                    self.chk_condition_on_previous_text.setChecked(
+                        bool(fixed_preset["condition_on_previous_text"])
+                    )
             elif preset == "standard":
-                self.spin_min_silence.setValue(500)
-                self.spin_vad_threshold.setValue(0.50)
-                self.spin_speech_pad.setValue(400)
-                self.spin_max_speech.setValue(30.0)
+                std = profile["standard"]
+                self.spin_min_silence.setValue(int(std["min_silence"]))
+                self.spin_vad_threshold.setValue(float(std["threshold"]))
+                self.spin_speech_pad.setValue(int(std["speech_pad"]))
+                self.spin_max_speech.setValue(float(std["max_speech"]))
+                if hasattr(self, "chk_condition_on_previous_text"):
+                    self.chk_condition_on_previous_text.setChecked(
+                        "kotoba" not in model_name.lower()
+                    )
         finally:
             self._updating_vad_preset = False
+        self._refresh_vad_preset_hints()
         self._on_timing_setting_changed()
 
     def _on_vad_param_edited(self, *_args):
         if getattr(self, "_restoring_timing_settings", False) or getattr(self, "_updating_vad_preset", False):
             return
         if hasattr(self, "cmb_vad_preset"):
-            is_cfg9 = (
-                self.spin_min_silence.value() == 300
-                and abs(self.spin_vad_threshold.value() - 0.35) < 1e-3
-                and self.spin_speech_pad.value() == 300
-                and abs(self.spin_max_speech.value() - 6.0) < 1e-3
-            )
-            is_std = (
-                self.spin_min_silence.value() == 500
-                and abs(self.spin_vad_threshold.value() - 0.50) < 1e-3
-                and self.spin_speech_pad.value() == 400
-                and abs(self.spin_max_speech.value() - 30.0) < 1e-3
-            )
-            target_preset = "cfg9" if is_cfg9 else ("standard" if is_std else "custom")
+            model_name, profile = self._get_model_vad_profile()
+            std = profile["standard"]
+            cur_sil = self.spin_min_silence.value()
+            cur_thr = self.spin_vad_threshold.value()
+            cur_pad = self.spin_speech_pad.value()
+            cur_max = self.spin_max_speech.value()
+            target_preset = None
+            for fixed in self._FIXED_VAD_PRESETS:
+                if not self._is_preset_available_for_model(fixed, model_name):
+                    continue
+                if (
+                    cur_sil == int(fixed["min_silence"])
+                    and abs(cur_thr - float(fixed["threshold"])) < 1e-3
+                    and cur_pad == int(fixed["speech_pad"])
+                    and abs(cur_max - float(fixed["max_speech"])) < 1e-3
+                ):
+                    target_preset = fixed["key"]
+                    break
+            if target_preset is None:
+                is_std = (
+                    cur_sil == int(std["min_silence"])
+                    and abs(cur_thr - float(std["threshold"])) < 1e-3
+                    and cur_pad == int(std["speech_pad"])
+                    and abs(cur_max - float(std["max_speech"])) < 1e-3
+                )
+                target_preset = "standard" if is_std else "custom"
             if self.cmb_vad_preset.currentData() != target_preset:
                 self._updating_vad_preset = True
                 try:
@@ -1142,6 +2091,7 @@ class SubtitleGenerationPanel(QWidget):
                         self.cmb_vad_preset.setCurrentIndex(idx)
                 finally:
                     self._updating_vad_preset = False
+                self._refresh_vad_preset_hints()
         self._on_timing_setting_changed()
 
     def _timing_settings(self) -> dict:
@@ -1157,13 +2107,17 @@ class SubtitleGenerationPanel(QWidget):
         lang_text = self.cmb_language.currentText() if hasattr(self, "cmb_language") else ""
         lang_val = None if (not lang_text or lang_text == "Auto Detect") else lang_text
         preset_val = self.cmb_vad_preset.currentData() if hasattr(self, "cmb_vad_preset") else "standard"
-        min_sil_ui = self.spin_min_silence.value() if hasattr(self, "spin_min_silence") else 500
-        thresh_ui = self.spin_vad_threshold.value() if hasattr(self, "spin_vad_threshold") else 0.50
-        pad_ui = self.spin_speech_pad.value() if hasattr(self, "spin_speech_pad") else 400
-        max_sp_ui = self.spin_max_speech.value() if hasattr(self, "spin_max_speech") else 30.0
+        min_sil_ui = self.spin_min_silence.value() if hasattr(self, "spin_min_silence") else self._STANDARD_VAD_PRESET["min_silence"]
+        thresh_ui = self.spin_vad_threshold.value() if hasattr(self, "spin_vad_threshold") else self._STANDARD_VAD_PRESET["threshold"]
+        pad_ui = self.spin_speech_pad.value() if hasattr(self, "spin_speech_pad") else self._STANDARD_VAD_PRESET["speech_pad"]
+        max_sp_ui = self.spin_max_speech.value() if hasattr(self, "spin_max_speech") else self._STANDARD_VAD_PRESET["max_speech"]
         apply_rescan_ui = self.chk_apply_preset_rescan.isChecked() if hasattr(self, "chk_apply_preset_rescan") else False
+        cond_prev_ui = (
+            self.chk_condition_on_previous_text.isChecked()
+            if hasattr(self, "chk_condition_on_previous_text")
+            else True
+        )
 
-        is_non_default_preset = (preset_val in ("cfg9", "custom")) or apply_rescan_ui
         if timing is not None and hasattr(timing, "model_size"):
             values = {
                 name: getattr(timing, name, getattr(TimingState(), name))
@@ -1172,22 +2126,31 @@ class SubtitleGenerationPanel(QWidget):
                     "fix_overlap", "overlap_gap_ms", "overlap_ms", "max_window_ms",
                 )
             }
+            if hasattr(self, "cmb_model"):
+                values["model_size"] = self._combo_value(self.cmb_model)
+            if hasattr(self, "cmb_specialized_model"):
+                spec_model = self._combo_value(self.cmb_specialized_model)
+                values["specialized_model"] = spec_model
+                if spec_model:
+                    values["model_size"] = spec_model
+            if hasattr(self, "cmb_compute"):
+                values["compute_type"] = self._combo_value(self.cmb_compute)
             if self._is_timing_mode():
                 values["use_vad"] = True
             if music_mode:
                 values["music_mode"] = True
             if lang_val:
                 values["language"] = lang_val
-            elif hasattr(timing, "language") and timing.language:
-                values["language"] = timing.language
-            if is_non_default_preset:
-                values["vad_preset"] = preset_val
-                values["min_silence_ms"] = min_sil_ui if preset_val in ("cfg9", "custom") else values["min_silence_ms"]
-                values["vad_threshold"] = thresh_ui
-                values["vad_speech_pad_ms"] = pad_ui
-                values["vad_max_speech_duration_s"] = max_sp_ui
-                values["apply_preset_to_rescan"] = apply_rescan_ui
-                values["word_timestamps"] = self.chk_word_timestamps.isChecked() if hasattr(self, "chk_word_timestamps") else False
+            else:
+                values["language"] = None
+            values["vad_preset"] = preset_val
+            values["min_silence_ms"] = min_sil_ui
+            values["vad_threshold"] = thresh_ui
+            values["vad_speech_pad_ms"] = pad_ui
+            values["vad_max_speech_duration_s"] = max_sp_ui
+            values["apply_preset_to_rescan"] = apply_rescan_ui
+            values["condition_on_previous_text"] = cond_prev_ui
+            values["word_timestamps"] = self.chk_word_timestamps.isChecked() if hasattr(self, "chk_word_timestamps") else False
             return values
 
         values = {
@@ -1201,16 +2164,19 @@ class SubtitleGenerationPanel(QWidget):
             if hasattr(self, "spin_overlap_gap") else 50,
             "overlap_ms": 800,
             "max_window_ms": 120000,
+            "vad_preset": preset_val,
+            "vad_threshold": thresh_ui,
+            "vad_speech_pad_ms": pad_ui,
+            "vad_max_speech_duration_s": max_sp_ui,
+            "apply_preset_to_rescan": apply_rescan_ui,
+            "condition_on_previous_text": cond_prev_ui,
+            "word_timestamps": self.chk_word_timestamps.isChecked() if hasattr(self, "chk_word_timestamps") else False,
         }
-        if is_non_default_preset:
-            values.update({
-                "vad_preset": preset_val,
-                "vad_threshold": thresh_ui,
-                "vad_speech_pad_ms": pad_ui,
-                "vad_max_speech_duration_s": max_sp_ui,
-                "apply_preset_to_rescan": apply_rescan_ui,
-                "word_timestamps": self.chk_word_timestamps.isChecked() if hasattr(self, "chk_word_timestamps") else False,
-            })
+        if getattr(self, "cmb_specialized_model", None) is not None:
+            spec_model = self._combo_value(self.cmb_specialized_model)
+            if spec_model:
+                values["specialized_model"] = spec_model
+                values["model_size"] = spec_model
         if getattr(self, "chk_music_mode", None) and self.chk_music_mode.isChecked():
             values["music_mode"] = True
         if lang_val:
@@ -1226,7 +2192,9 @@ class SubtitleGenerationPanel(QWidget):
         if timing is None:
             return
         if not self._is_timing_mode():
-            # Vẫn lưu cấu hình preset & rescan vào timing state của project ngay cả ở chế độ Full Subtitle
+            # Vẫn lưu cấu hình preset & rescan & specialized_model vào timing state của project ngay cả ở chế độ Full Subtitle
+            if hasattr(self, "cmb_specialized_model") and hasattr(timing, "specialized_model"):
+                timing.specialized_model = str(self._combo_value(self.cmb_specialized_model) or "")
             if hasattr(self, "cmb_vad_preset"):
                 timing.vad_preset = self.cmb_vad_preset.currentData()
                 timing.min_silence_ms = self.spin_min_silence.value()
@@ -1234,6 +2202,8 @@ class SubtitleGenerationPanel(QWidget):
                 timing.vad_speech_pad_ms = self.spin_speech_pad.value()
                 timing.vad_max_speech_duration_s = self.spin_max_speech.value()
                 timing.apply_preset_to_rescan = self.chk_apply_preset_rescan.isChecked()
+                if hasattr(self, "chk_condition_on_previous_text") and hasattr(timing, "condition_on_previous_text"):
+                    timing.condition_on_previous_text = self.chk_condition_on_previous_text.isChecked()
             return
         values = self._timing_settings()
         lang_text = self.cmb_language.currentText() if hasattr(self, "cmb_language") else ""
@@ -1241,6 +2211,7 @@ class SubtitleGenerationPanel(QWidget):
         values.update(
             {
                 "model_size": self._combo_value(self.cmb_model),
+                "specialized_model": str(self._combo_value(self.cmb_specialized_model) or "") if hasattr(self, "cmb_specialized_model") else "",
                 "compute_type": self._combo_value(self.cmb_compute),
                 "use_vad": True,
                 "min_silence_ms": self.spin_min_silence.value() if hasattr(self, "spin_min_silence") else 500,
@@ -1253,6 +2224,7 @@ class SubtitleGenerationPanel(QWidget):
                 "vad_speech_pad_ms": self.spin_speech_pad.value() if hasattr(self, "spin_speech_pad") else 400,
                 "vad_max_speech_duration_s": self.spin_max_speech.value() if hasattr(self, "spin_max_speech") else 30.0,
                 "apply_preset_to_rescan": self.chk_apply_preset_rescan.isChecked() if hasattr(self, "chk_apply_preset_rescan") else False,
+                "condition_on_previous_text": self.chk_condition_on_previous_text.isChecked() if hasattr(self, "chk_condition_on_previous_text") else True,
             }
         )
         for name, value in values.items():
@@ -1263,6 +2235,8 @@ class SubtitleGenerationPanel(QWidget):
             self.spin_overlap_gap.setEnabled(self.chk_fix_overlap.isChecked())
 
     def sync_timing_settings_from_project(self):
+        if self._is_any_service_running():
+            return
         project_service = getattr(self.generation_service, "project_service", None)
         timing = getattr(
             getattr(getattr(project_service, "current_project", None), "state", None),
@@ -1295,6 +2269,10 @@ class SubtitleGenerationPanel(QWidget):
                 if self.cmb_model.itemData(i) == target_model:
                     self.cmb_model.setCurrentIndex(i)
                     break
+            if hasattr(self, "cmb_specialized_model"):
+                target_spec = str(getattr(timing, "specialized_model", "") or "")
+                spec_idx = self.cmb_specialized_model.findData(target_spec)
+                self.cmb_specialized_model.setCurrentIndex(spec_idx if spec_idx >= 0 else 0)
             for i in range(self.cmb_compute.count()):
                 if self.cmb_compute.itemData(i) == timing.compute_type:
                     self.cmb_compute.setCurrentIndex(i)
@@ -1309,21 +2287,74 @@ class SubtitleGenerationPanel(QWidget):
                 lang_idx = self.cmb_language.findText(lang_target)
                 if lang_idx >= 0:
                     self.cmb_language.setCurrentIndex(lang_idx)
+            self._refresh_vad_guidance_for_model(apply_values=False)
+            from core.project.project_state import normalize_vad_preset_key
+            saved_preset = normalize_vad_preset_key(getattr(timing, "vad_preset", "standard"))
             if hasattr(self, "cmb_vad_preset"):
-                preset_idx = self.cmb_vad_preset.findData(getattr(timing, "vad_preset", "standard"))
+                preset_idx = self.cmb_vad_preset.findData(saved_preset)
                 if preset_idx >= 0:
                     self.cmb_vad_preset.setCurrentIndex(preset_idx)
-            if hasattr(self, "spin_min_silence"):
-                self.spin_min_silence.setValue(int(getattr(timing, "min_silence_ms", 500)))
-            if hasattr(self, "spin_vad_threshold"):
-                self.spin_vad_threshold.setValue(float(getattr(timing, "vad_threshold", 0.50)))
-            if hasattr(self, "spin_speech_pad"):
-                self.spin_speech_pad.setValue(int(getattr(timing, "vad_speech_pad_ms", 400)))
-            if hasattr(self, "spin_max_speech"):
-                self.spin_max_speech.setValue(float(getattr(timing, "vad_max_speech_duration_s", 30.0)))
+            self._refresh_vad_preset_hints()
+            legacy_defaults = TimingState()
+            use_standard_vals = (
+                saved_preset == "standard"
+                and int(getattr(timing, "min_silence_ms", legacy_defaults.min_silence_ms)) == legacy_defaults.min_silence_ms
+                and abs(float(getattr(timing, "vad_threshold", legacy_defaults.vad_threshold)) - legacy_defaults.vad_threshold) < 1e-3
+                and int(getattr(timing, "vad_speech_pad_ms", legacy_defaults.vad_speech_pad_ms)) == legacy_defaults.vad_speech_pad_ms
+                and abs(float(getattr(timing, "vad_max_speech_duration_s", legacy_defaults.vad_max_speech_duration_s)) - legacy_defaults.vad_max_speech_duration_s) < 1e-3
+            )
+            fixed_for_saved = self.get_fixed_vad_preset(saved_preset)
+            if fixed_for_saved is not None:
+                from core.services.model_manager import ModelManager
+                eff_model = self._get_effective_model_size()
+                if hasattr(self, "chk_word_timestamps"):
+                    self.chk_word_timestamps.setChecked(
+                        True if saved_preset == "cfg9" else ModelManager.supports_word_timestamps(eff_model)
+                    )
+                if hasattr(self, "spin_min_silence"):
+                    self.spin_min_silence.setValue(int(fixed_for_saved["min_silence"]))
+                if hasattr(self, "spin_vad_threshold"):
+                    self.spin_vad_threshold.setValue(float(fixed_for_saved["threshold"]))
+                if hasattr(self, "spin_speech_pad"):
+                    self.spin_speech_pad.setValue(int(fixed_for_saved["speech_pad"]))
+                if hasattr(self, "spin_max_speech"):
+                    self.spin_max_speech.setValue(float(fixed_for_saved["max_speech"]))
+                timing.min_silence_ms = int(fixed_for_saved["min_silence"])
+                timing.vad_threshold = float(fixed_for_saved["threshold"])
+                timing.vad_speech_pad_ms = int(fixed_for_saved["speech_pad"])
+                timing.vad_max_speech_duration_s = float(fixed_for_saved["max_speech"])
+            elif use_standard_vals:
+                std = self._STANDARD_VAD_PRESET
+                if hasattr(self, "spin_min_silence"):
+                    self.spin_min_silence.setValue(int(std["min_silence"]))
+                if hasattr(self, "spin_vad_threshold"):
+                    self.spin_vad_threshold.setValue(float(std["threshold"]))
+                if hasattr(self, "spin_speech_pad"):
+                    self.spin_speech_pad.setValue(int(std["speech_pad"]))
+                if hasattr(self, "spin_max_speech"):
+                    self.spin_max_speech.setValue(float(std["max_speech"]))
+            else:
+                if hasattr(self, "spin_min_silence"):
+                    self.spin_min_silence.setValue(int(getattr(timing, "min_silence_ms", self._STANDARD_VAD_PRESET["min_silence"])))
+                if hasattr(self, "spin_vad_threshold"):
+                    self.spin_vad_threshold.setValue(float(getattr(timing, "vad_threshold", self._STANDARD_VAD_PRESET["threshold"])))
+                if hasattr(self, "spin_speech_pad"):
+                    self.spin_speech_pad.setValue(int(getattr(timing, "vad_speech_pad_ms", self._STANDARD_VAD_PRESET["speech_pad"])))
+                if hasattr(self, "spin_max_speech"):
+                    self.spin_max_speech.setValue(float(getattr(timing, "vad_max_speech_duration_s", self._STANDARD_VAD_PRESET["max_speech"])))
             if hasattr(self, "chk_apply_preset_rescan"):
                 self.chk_apply_preset_rescan.setChecked(bool(getattr(timing, "apply_preset_to_rescan", False)))
+            if hasattr(self, "chk_condition_on_previous_text"):
+                default_cond = "kotoba" not in self._get_effective_model_size().lower()
+                if saved_preset == "live_action":
+                    default_cond = False
+                self.chk_condition_on_previous_text.setChecked(
+                    bool(getattr(timing, "condition_on_previous_text", default_cond))
+                )
             self._on_mode_changed()
+            win = self.window()
+            if hasattr(win, "_refresh_workspace_model_banner"):
+                win._refresh_workspace_model_banner()
         finally:
             self._restoring_timing_settings = False
 
@@ -1332,9 +2363,59 @@ class SubtitleGenerationPanel(QWidget):
             f"Configured: {configured} · Effective: {effective}"
         )
 
+    @staticmethod
+    def _extract_progress_bar_format(percent: int, message: str) -> str:
+        """Trích xuất chuỗi hiển thị ngắn gọn, sắc nét trên thanh tiến trình: % + số câu đã gen."""
+        import re
+        clamped = max(0, min(100, int(percent)))
+        msg = str(message or "").strip()
+        if not msg or msg.lower() in {"ready", "sẵn sàng"}:
+            return "0%" if clamped == 0 else f"{clamped}%"
+
+        gen_match = re.search(r"Đã gen\s+([0-9]+/[0-9]+\s+câu|[0-9]+\s+câu)", msg, re.IGNORECASE)
+        total_match = re.search(r"Tổng\s+([0-9]+\s+câu)", msg, re.IGNORECASE)
+
+        count_part = ""
+        if gen_match:
+            count_part = f"Đã gen {gen_match.group(1)}"
+            if total_match:
+                count_part += f" ({total_match.group(0)})"
+        elif "hoàn tất" in msg.lower():
+            if gen_match:
+                count_part = f"Hoàn tất ({gen_match.group(1)})"
+            else:
+                count_part = "Hoàn tất 100%"
+
+        if count_part:
+            return f"{clamped}% · {count_part}"
+        elif clamped > 0:
+            return f"{clamped}%"
+        else:
+            return msg if len(msg) <= 30 else f"{msg[:28]}..."
+
     def _update_progress(self, percent: int, message: str):
-        self.progress_bar.setValue(max(0, min(100, int(percent))))
+        clamped = max(0, min(100, int(percent)))
+        self.progress_bar.setValue(clamped)
+        bar_text = self._extract_progress_bar_format(clamped, message)
+        if hasattr(self.progress_bar, "setFormat"):
+            self.progress_bar.setFormat(bar_text)
         self.lbl_status.setText(message)
+        if hasattr(self.lbl_status, "update"):
+            self.lbl_status.update()
+        win = self._get_window()
+        if win is not None and win is not self and not getattr(win, "_queue_generation_active", False):
+            pbar = getattr(win, "progress_bar", None)
+            if pbar is not None:
+                pbar.setValue(clamped)
+                if hasattr(pbar, "setFormat"):
+                    pbar.setFormat(bar_text)
+            dash = getattr(win, "page_dashboard", None)
+            quick_pbar = getattr(dash, "quick_progress", None) if dash is not None else None
+            if quick_pbar is not None:
+                quick_pbar.setValue(clamped)
+            lbl_eta = getattr(win, "lbl_speed_eta", None)
+            if lbl_eta is not None and message:
+                lbl_eta.setText(message)
 
 
     def _on_quick_rollback_clicked(self, target_str):
@@ -1374,8 +2455,7 @@ class SubtitleGenerationPanel(QWidget):
         dialog = RestorePreviewDialog(current_count, target_count, manual_edits, self)
         if dialog.exec():
             # Perform rollback
-            from PySide6.QtWidgets import QApplication
-            main_window = QApplication.instance().activeWindow()
+            main_window = self.window()
             if main_window and hasattr(main_window, 'undo_manager'):
                 try:
                     self.generation_service.execute_rollback(target_count, self._get_current_segments(), main_window.undo_manager, checkpoint_id=cp.checkpoint_id)
@@ -1389,38 +2469,7 @@ class SubtitleGenerationPanel(QWidget):
                 self._on_error("Khong tim thay Undo Manager.")
 
     def refresh_history_ui(self):
-        # Clear existing
-        if not hasattr(self, 'history_list_layout'):
-            return
-        while self.history_list_layout.count():
-            child = self.history_list_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-                
-        # Build history list
-        from PySide6.QtWidgets import QPushButton
-        
-        if hasattr(self.generation_service, "_ensure_history_loaded"):
-            self.generation_service._ensure_history_loaded()
-            
-        history = list(getattr(self.generation_service, "checkpoint_history", []))
-        initial = getattr(self.generation_service, "initial_state", None)
-        if initial:
-            history.insert(0, initial)
-            
-        # Sort newest first for display
-        history.reverse()
-        
-        for cp in history:
-            label_text = "Initial" if cp.checkpoint_type == "INITIAL" else f"#{cp.generated_count} ({cp.checkpoint_type})"
-            if cp.checkpoint_type == "RANGE" and cp.generation_range:
-                from ui.SubEditor import ms_to_time_str
-                label_text += f" {ms_to_time_str(cp.generation_range.get('start_ms', 0))} -> {ms_to_time_str(cp.generation_range.get('end_ms', 0))}"
-            
-            btn = QPushButton(label_text)
-            btn.setStyleSheet("text-align: left; padding: 4px;")
-            btn.clicked.connect(lambda checked=False, c=cp: self._trigger_rollback(c))
-            self.history_list_layout.addWidget(btn)
+        self.refresh_history()
 
     def _on_error(self, error_message: str):
         self.lbl_status.setText(f"Error: {error_message}")
@@ -1444,12 +2493,16 @@ class SubtitleGenerationPanel(QWidget):
             self.lbl_status.setText("Cancelled. Resume when ready.")
             self.lbl_status.setStyleSheet(f"color: {Theme.TEXT_MUTED};")
             self.progress_bar.setValue(0)
+            self.progress_bar.setFormat("0%")
         else:
             self.lbl_status.setStyleSheet(f"color: {Theme.SUCCESS};")
             self.progress_bar.setValue(100)
             # Tự động trả thanh tiến trình về 0 sau 800ms khi hoàn tất
             from PySide6.QtCore import QTimer
-            QTimer.singleShot(800, lambda: self.progress_bar.setValue(0))
+            def _reset_done():
+                self.progress_bar.setValue(0)
+                self.progress_bar.setFormat("0%")
+            QTimer.singleShot(800, _reset_done)
         self._reset_ui_state()
 
     # --- PHASE 3: RANGE & HISTORY LOGIC ---
@@ -1650,24 +2703,39 @@ class SubtitleGenerationPanel(QWidget):
             )
         except Exception as exc:
             self._on_error(str(exc))
-            self._set_ui_state_idle()
+            self._reset_ui_state()
         self.refresh_history_ui()
             
     def _get_current_segments(self):
         # The panel lives inside MainWindow's overlay drawer; window() reaches it.
-        sub_editor = getattr(self.window(), "sub_editor", None)
-        return sub_editor.all_segments if sub_editor is not None else []
+        win = self._get_window()
+        sub_editor = getattr(win, "sub_editor", None) if win is not None else None
+        if sub_editor is not None:
+            return getattr(sub_editor, "all_segments", None) or []
+        provider = getattr(getattr(self, "generation_service", None), "range_segments_provider", None)
+        if callable(provider):
+            try:
+                return provider() or []
+            except Exception:
+                return []
+        return []
         
     def refresh_history(self):
         from PySide6.QtWidgets import QListWidgetItem
-        from core.subtitle_generation.generation_checkpoint import GenerationCheckpoint
+
+        ensure_loaded = getattr(self.generation_service, "_ensure_history_loaded", None)
+        if ensure_loaded is not None:
+            ensure_loaded()
+        selected = self.history_list.currentItem()
+        selected_id = selected.data(Qt.UserRole) if selected else None
         
         self.history_list.clear()
         
         history = []
-        if self.generation_service.initial_state:
-            history.append(self.generation_service.initial_state)
-        history.extend(self.generation_service.checkpoint_history)
+        initial_state = getattr(self.generation_service, "initial_state", None)
+        if initial_state:
+            history.append(initial_state)
+        history.extend(getattr(self.generation_service, "checkpoint_history", []))
         
         for cp in reversed(history): # Latest first
             label = f"{cp.checkpoint_type} - {cp.generated_count} subs"
@@ -1677,9 +2745,17 @@ class SubtitleGenerationPanel(QWidget):
             item = QListWidgetItem(label)
             item.setData(Qt.UserRole, cp.checkpoint_id)
             self.history_list.addItem(item)
+            if cp.checkpoint_id == selected_id:
+                self.history_list.setCurrentItem(item)
+
+        running = not self.btn_generate.isEnabled()
+        get_rollback = getattr(self.generation_service, "get_rollback_checkpoint", None)
+        for count, button in ((10, self.btn_rb_10), (30, self.btn_rb_30), (50, self.btn_rb_50), (60, self.btn_rb_60), (0, self.btn_rb_initial)):
+            button.setEnabled(not running and get_rollback is not None and get_rollback(target_count=count) is not None)
+        self._on_history_selection_changed()
             
     def _on_history_selection_changed(self):
-        self.btn_rollback.setEnabled(bool(self.history_list.selectedItems()))
+        self.btn_rollback.setEnabled(self.btn_generate.isEnabled() and bool(self.history_list.selectedItems()))
 
     def _on_rollback_clicked(self):
         selected = self.history_list.selectedItems()
@@ -1691,20 +2767,7 @@ class SubtitleGenerationPanel(QWidget):
         if not cp:
             return
             
-        current_segments = self._get_current_segments()
-        has_manual = cp.has_manual_edits_compared_to(current_segments)
-        
-        from ui.dialogs.rollback_preview_dialog import RollbackPreviewDialog
-        dialog = RollbackPreviewDialog(cp, has_manual, self)
-        if dialog.exec():
-            # Rollback goes through the undo manager, whose state_changed already
-            # re-renders the editor and the timeline.
-            undo_manager = getattr(self.window(), "undo_manager", None)
-            if undo_manager is not None:
-                self.generation_service.execute_rollback(
-                    None, current_segments, undo_manager, checkpoint_id=cp_id
-                )
-                self.refresh_history()
+        self._trigger_rollback(cp)
 
     def _replace_editor_segments(self, segments):
         """Load segments into MainWindow's editor, timeline and draft."""
@@ -1714,6 +2777,9 @@ class SubtitleGenerationPanel(QWidget):
             return False
         sub_editor.all_segments.clear()
         sub_editor.all_segments.extend(segments)
+        sub_editor.current_index = 0 if sub_editor.all_segments else -1
+        if hasattr(sub_editor, "current_page"):
+            sub_editor.current_page = 0
 
         auto_saved = False
         apply_auto = getattr(win, "_apply_auto_audio_style_if_enabled", None)
@@ -1726,13 +2792,57 @@ class SubtitleGenerationPanel(QWidget):
             duration_ms = self.video_duration_ms or 3600000
             provider.load_runtime_data(sub_editor.all_segments, duration_ms)
             win.timeline_widget.load_project_data(duration_ms, provider.get_all_segments())
+
+        saved_path = None
         if not auto_saved:
-            sub_editor.save_draft(silent=True)
+            project_service = getattr(self.generation_service, "project_service", None)
+            project_dir = getattr(project_service, "project_dir", None)
+            if not getattr(sub_editor, "srt_path", None) and isinstance(project_dir, str) and project_dir:
+                project = getattr(project_service, "current_project", None)
+                source_id = getattr(getattr(project, "state", None), "active_subtitle_source_id", None) or "external_srt"
+                saved_path = sub_editor.save_draft(
+                    filepath=os.path.join(project_dir, f"{source_id}.ai-subtitle-draft"),
+                    silent=True,
+                )
+            else:
+                saved_path = sub_editor.save_draft(silent=True)
+        else:
+            saved_path = getattr(sub_editor, "srt_path", None)
+
+        if isinstance(saved_path, str) and saved_path and os.path.exists(saved_path):
+            queue_mgr = getattr(win, "queue_mgr", None)
+            target_item = (
+                getattr(queue_mgr, "active_item_key", None)
+                or getattr(queue_mgr, "active_vid", None)
+                or getattr(win, "active_item_key", None)
+                or getattr(win, "active_vid", None)
+            )
+            if queue_mgr is not None and isinstance(target_item, str) and target_item and hasattr(queue_mgr, "set_srt_for_video"):
+                queue_mgr.set_srt_for_video(target_item, saved_path)
+
         self.refresh_history()
         return True
+
+    def _invalidate_stale_timing_checkpoint(self, project_service) -> None:
+        """Clear stale timing checkpoint when replacing or switching the active SRT source."""
+        project_dir = getattr(project_service, "project_dir", None)
+        project = getattr(project_service, "current_project", None)
+        if not isinstance(project_dir, str) or not project_dir:
+            return
+        checkpoint_path = os.path.join(project_dir, "artifacts", "timing", "checkpoint.json")
+        if os.path.exists(checkpoint_path):
+            try:
+                os.remove(checkpoint_path)
+            except OSError:
+                pass
+        timing_state = getattr(getattr(project, "state", None), "timing", None)
+        if timing_state is not None:
+            timing_state.status = "IDLE"
+            timing_state.checkpoint_id = None
     # ----------------------------------------
 
     def sync_subtitle_sources_from_project(self):
+        self.refresh_history()
         project_service = getattr(self.generation_service, "project_service", None)
         project = getattr(project_service, "current_project", None)
         if not project: return
@@ -1755,8 +2865,6 @@ class SubtitleGenerationPanel(QWidget):
         path, _ = QFileDialog.getOpenFileName(self, "Ch?n file SRT...", "", "Subtitle Files (*.srt)")
         if not path: return
         
-        import uuid
-        import os
         from core.srt_parser import SrtParser
         
         try:
@@ -1794,6 +2902,7 @@ class SubtitleGenerationPanel(QWidget):
             if hasattr(project_service, "mark_dirty"):
                 project_service.mark_dirty()
                 
+            self._invalidate_stale_timing_checkpoint(project_service)
             self.sync_subtitle_sources_from_project()
             
             # Store initial checkpoint for new source
@@ -1801,6 +2910,7 @@ class SubtitleGenerationPanel(QWidget):
             
             # Refresh UI
             self._replace_editor_segments(segments)
+            self.check_resumable_state()
                 
         except Exception as e:
             QMessageBox.critical(self, "Lỗi import", f"Không thể đọc file SRT:\n{e}")
@@ -1854,4 +2964,6 @@ class SubtitleGenerationPanel(QWidget):
             cp = history[-1] if history else self.generation_service.initial_state
             target_segments = copy.deepcopy(getattr(cp, "segments_snapshot", None) or [])
             
+        self._invalidate_stale_timing_checkpoint(project_service)
         self._replace_editor_segments(target_segments or [])
+        self.check_resumable_state()

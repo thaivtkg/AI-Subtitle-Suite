@@ -73,11 +73,11 @@ Item {
                 radius: 34
                 gradient: Gradient {
                     orientation: Gradient.Horizontal
-                    GradientStop { position: 0.0; color: "#6366F1" }
-                    GradientStop { position: 1.0; color: "#A855F7" }
+                    GradientStop { position: 0.0; color: "#4F46E5" }
+                    GradientStop { position: 1.0; color: "#4338CA" }
                 }
-                border.color: "#FFFFFF"
-                border.width: 2.5
+                border.color: Theme.glassBorderSpecularUpper
+                border.width: 1.5
 
                 Canvas {
                     anchors.fill: parent
@@ -181,10 +181,28 @@ Item {
                 anchors.centerIn: parent
                 spacing: 10
 
-                Text {
+                Canvas {
                     Layout.alignment: Qt.AlignHCenter
-                    text: "📁"
-                    font.pixelSize: 36
+                    width: 36
+                    height: 36
+                    renderTarget: Canvas.FramebufferObject
+                    onPaint: {
+                        var ctx = getContext("2d");
+                        ctx.reset();
+                        ctx.strokeStyle = Theme.accentSapphire;
+                        ctx.lineWidth = 2;
+                        ctx.lineCap = "round";
+                        ctx.lineJoin = "round";
+                        ctx.beginPath();
+                        ctx.moveTo(4, 10);
+                        ctx.lineTo(14, 10);
+                        ctx.lineTo(18, 14);
+                        ctx.lineTo(32, 14);
+                        ctx.lineTo(32, 30);
+                        ctx.lineTo(4, 30);
+                        ctx.closePath();
+                        ctx.stroke();
+                    }
                 }
 
                 Text {
@@ -240,11 +258,11 @@ Item {
                 spacing: 6
 
                 Text {
-                    text: "🕒 TỆP GẦN ĐÂY"
+                    text: "Tệp gần đây"
                     color: Qt.rgba(1.0, 1.0, 1.0, 0.9)
                     font.pixelSize: 11
                     font.bold: true
-                    font.letterSpacing: 0.5
+                    font.letterSpacing: 0.2
                 }
 
                 Item { Layout.fillWidth: true }
@@ -284,9 +302,22 @@ Item {
                                 anchors.rightMargin: 10
                                 spacing: 8
 
-                                Text {
-                                    text: modelData.is_project ? "📦" : "📄"
-                                    font.pixelSize: 13
+                                Rectangle {
+                                    implicitWidth: 36
+                                    implicitHeight: 18
+                                    radius: 4
+                                    color: Qt.rgba(0.2, 0.25, 0.35, 0.2)
+                                    border.color: Theme.glassBorderSpecularUpper
+                                    border.width: 1
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: modelData.is_project ? "AISRT" : "SRT"
+                                        color: Theme.textOnLightPodMuted
+                                        font.pixelSize: 9
+                                        font.bold: true
+                                        font.family: "JetBrains Mono, Consolas, monospace"
+                                        font.features: { "tnum": 1 }
+                                    }
                                 }
 
                                 Text {

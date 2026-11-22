@@ -586,13 +586,17 @@ class TestPlaybackSyncFixes(unittest.TestCase):
         )
         batch = SubtitleGenerationBatch("b1", 1000, 3000, "RUNNING", 1, "", "")
 
-        with patch("subprocess.run") as mock_run:
+        with patch("subprocess.run") as mock_run, patch("wave.open") as mock_audio:
+            mock_audio.return_value.__enter__.return_value.getnframes.return_value = 32000
+            mock_audio.return_value.__enter__.return_value.getframerate.return_value = 16000
             _, tmp_normal = FasterWhisperService._extract_batch_audio(req_normal, batch)
             shutil.rmtree(tmp_normal, ignore_errors=True)
             cmd_normal = mock_run.call_args[0][0]
             self.assertNotIn("-af", cmd_normal)
 
-        with patch("subprocess.run") as mock_run:
+        with patch("subprocess.run") as mock_run, patch("wave.open") as mock_audio:
+            mock_audio.return_value.__enter__.return_value.getnframes.return_value = 32000
+            mock_audio.return_value.__enter__.return_value.getframerate.return_value = 16000
             _, tmp_boost = FasterWhisperService._extract_batch_audio(req_boost, batch)
             shutil.rmtree(tmp_boost, ignore_errors=True)
             cmd_boost = mock_run.call_args[0][0]

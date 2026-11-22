@@ -106,6 +106,12 @@ class AgentCopilotController(QObject):
         prompt: str,
         online_configs: Optional[List[ProviderConfig]] = None,
     ) -> AgentTaskPlan:
+        if self.active_plan and (
+            self._active_worker is not None
+            or (self.active_plan.current_step() and self.active_plan.current_step().status == StepStatus.RUNNING)
+        ):
+            self.notification_requested.emit("Tác vụ đang chạy. Vui lòng chờ kết quả trước khi gửi yêu cầu mới.")
+            return self.active_plan
         self._online_configs = online_configs
         # 1. Record user message
         user_msg = ChatMessage(role="user", content=prompt, timestamp=time.time())
@@ -421,10 +427,16 @@ class AgentCopilotController(QObject):
 
             # Xử lý Prompt kết hợp: "tạo timing 3 câu tiếp theo và gen sub 3 câu đó"
             # Cụm "3 câu đó" / "đó" / "câu tiếp theo" phải trỏ tới kết quả bước timing, KHÔNG biến thành limit=3 rồi xử lý nhầm 3 câu đầu
-            if created_timing_step_count is not None and ("câu đó" in lower or "đó" in lower or is_continue or ("câu" in lower and not m_rng and not m_multi)):
+            refers_to_new = "vừa tạo" in lower or (
+                created_timing_step_count is not None
+                and ("câu đó" in lower or "đó" in lower or is_continue or ("câu" in lower and not m_rng and not m_multi))
+            )
+            if refers_to_new and not m_rng:
                 args["target_newly_created"] = True
-                args["count"] = created_timing_step_count
-                title = f"ASR Gen Sub {created_timing_step_count} câu vừa tạo (Faster-Whisper)"
+                if created_timing_step_count is not None:
+                    args["count"] = created_timing_step_count
+                count_label = created_timing_step_count or (int(m_lim.group(1)) if m_lim else None)
+                title = f"ASR Gen Sub {count_label} câu vừa tạo (Faster-Whisper)" if count_label else "ASR Gen Sub các câu vừa tạo (Faster-Whisper)"
             elif m_rng:
                 raw_a = int(m_rng.group(1))
                 raw_b = int(m_rng.group(2))
@@ -448,6 +460,9 @@ class AgentCopilotController(QObject):
                 title = f"ASR Gen Sub {limit} câu đầu (Faster-Whisper)"
             else:
                 title = "ASR Gen Sub (Faster-Whisper)"
+
+            if "indices" in args:
+                args["indices_are_positions"] = True
 
             steps.append(
                 AgentStep(
@@ -608,7 +623,7 @@ class AgentCopilotController(QObject):
         self._run_current_step()
 
     def _run_current_step(self) -> None:
-        if not self.active_plan:
+        if not self.active_plan or self._active_worker is not None:
             return
 
         idx = self.active_plan.current_step_index
@@ -633,6 +648,22 @@ class AgentCopilotController(QObject):
             if "existing_segments" not in args:
                 args["existing_segments"] = copy.deepcopy(self._active_segments)
         if step.tool_name == "run_asr":
+            if args.pop("indices_are_positions", False):
+                source_segments = args.get("segments", self._active_segments)
+                missing_positions = [position for position in args["indices"] if not 1 <= position <= len(source_segments)]
+                if missing_positions:
+                    missing = ", ".join(map(str, missing_positions))
+                    self._handle_step_result(idx, step, {"success": False, "error": f"Không tìm thấy câu {missing} trong phụ đề hiện tại"})
+                    return
+                target_ids = []
+                for position in args["indices"]:
+                    if 1 <= position <= len(source_segments):
+                        segment = source_segments[position - 1]
+                        sid = segment.get("id")
+                        if sid is None:
+                            sid = segment.get("segment_id")
+                        target_ids.append(sid if sid is not None else position)
+                args["indices"] = target_ids
             if "video_path" not in args and self.context_ledger.video_path:
                 args["video_path"] = self.context_ledger.video_path
             if "whisper_service" not in args and getattr(self, "whisper_service", None):
@@ -651,6 +682,9 @@ class AgentCopilotController(QObject):
                             args["indices"] = [s.get("id") for s in prev_res["new_segments"] if s.get("id") is not None]
                 if "indices" in args:
                     step.tool_args["indices"] = list(args["indices"])
+                else:
+                    self._handle_step_result(idx, step, {"success": False, "error": "Không tìm thấy câu vừa tạo trong phiên hiện tại"})
+                    return
         if step.tool_name == "translate_subtitles":
             if "auto_load_model" not in args:
                 args["auto_load_model"] = True
@@ -662,7 +696,7 @@ class AgentCopilotController(QObject):
                 args["online_configs"] = self._online_configs
         if step.tool_name in ("adjust_subtitle_bounds", "shift_subtitles", "rescan_subtitles", "run_asr", "apply_subtitle_style", "translate_subtitles", "render_hardsub") and "segments" not in args:
             if not self._active_segments:
-                if step.tool_name != "apply_subtitle_style":
+                if step.tool_name not in ("apply_subtitle_style", "run_asr"):
                     from core.agent.agent_tool_registry import create_timing
                     init_res = create_timing(count=5)
                     self._active_segments = init_res.get("segments", [])
@@ -671,7 +705,9 @@ class AgentCopilotController(QObject):
         # Chạy worker nền khi async_mode=True cho các công cụ tốn thời gian (run_asr) để không làm đơ giao diện
         should_async = False
         if getattr(self, "async_mode", False):
-            if self.async_mode == "all" or step.tool_name == "run_asr":
+            if self.async_mode == "all":
+                should_async = True
+            elif step.tool_name == "run_asr" and not hasattr(self.tool_registry.safe_execute_tool, "_mock_name"):
                 should_async = True
 
         if should_async:
@@ -688,7 +724,10 @@ class AgentCopilotController(QObject):
         self._active_worker = None
         res_dict = exec_res.get("result", {})
         tool_status = res_dict.get("status") if isinstance(res_dict, dict) else None
-        is_success = exec_res.get("success", False) and (tool_status not in ("error", "failed", "partial"))
+        is_success = exec_res.get("success", False) and (
+            tool_status not in ("error", "failed", "partial")
+            or (step.tool_name == "create_timing" and tool_status == "partial")
+        )
 
         if is_success:
             step.status = StepStatus.COMPLETED
@@ -782,7 +821,7 @@ class AgentCopilotController(QObject):
             self.plan_completed.emit(self.active_plan)
 
     def request_task_revision(self, critique_text: str = "") -> None:
-        if not self.active_plan or self._waiting_plan_approval:
+        if not self.active_plan or self._waiting_plan_approval or self._active_worker is not None:
             return
 
         # 1. Rollback to pre-task snapshot

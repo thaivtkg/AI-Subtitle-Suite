@@ -344,6 +344,19 @@ class TestUIVisualIntegrity:
         
         # Đảm bảo các checkbox có sizeHint chiều cao bình thường (>= 16px) và spinbox đủ độ rộng
         assert page.chk_srt.sizeHint().height() >= 16
-        assert page.spin_batch_count.maximumWidth() >= 85 or page.spin_batch_count.width() >= 85
+        assert page.spin_batch_start.width() >= 120 or page.spin_batch_start.minimumWidth() >= 120
+        assert page.spin_batch_count.maximumWidth() >= 120 or page.spin_batch_count.width() >= 120
+
+        # Đảm bảo vùng nhập số (QLineEdit bên trong QSpinBox) không khuất chữ số 2-5 ký tự
+        from ui.theme import Theme
+        page.setStyleSheet(Theme.get_global_stylesheet())
+        page.resize(1000, 600)
+        page.show()
+        QApplication.processEvents()
+        start_edit = page.spin_batch_start.lineEdit()
+        count_edit = page.spin_batch_count.lineEdit()
+        assert start_edit.contentsRect().width() >= start_edit.fontMetrics().horizontalAdvance("99999") + 12
+        assert count_edit.contentsRect().width() >= count_edit.fontMetrics().horizontalAdvance("500") + 12
+        page.close()
 
 

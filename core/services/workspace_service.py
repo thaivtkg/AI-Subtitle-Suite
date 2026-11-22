@@ -1,4 +1,4 @@
-from dataclasses import asdict
+from dataclasses import asdict, is_dataclass
 from core.services.project_service import ProjectService
 from PySide6.QtCore import QTimer
 
@@ -62,7 +62,9 @@ class WorkspaceService:
                 workspace.subtitle_preview_enabled = getattr(self.ui.video_player.sub_controller, 'is_enabled', True)
         except Exception as e:
             print(f"Lỗi capture subtitle toggle: {e}")
-        return asdict(workspace)
+        if is_dataclass(workspace) and not isinstance(workspace, type):
+            return asdict(workspace)
+        return {}
 
     def apply_workspace(self, workspace_data: dict) -> None:
         project = self.project_service.current_project
@@ -73,6 +75,64 @@ class WorkspaceService:
                 setattr(project.state.workspace, key, workspace_data[key])
         self.restore_workspace()
 
+
+    _MEDIA_EXTS = (
+        ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".webm", ".flv", ".m4v", ".ts",
+        ".m2ts", ".mp3", ".wav", ".aac", ".flac", ".ogg", ".m4a",
+    )
+
+    @classmethod
+    def _is_editable_subtitle_artifact(cls, artifact) -> bool:
+        import os
+        if not artifact or not getattr(artifact, "path", None):
+            return False
+        path_lower = str(artifact.path).lower()
+        if path_lower.endswith(cls._MEDIA_EXTS):
+            return False
+        art_type = getattr(artifact, "artifact_type", None)
+        if art_type is None:
+            return True
+        from core.artifacts.artifact_types import ArtifactType
+        return art_type in (ArtifactType.SUBTITLE, ArtifactType.DRAFT, ArtifactType.TIMING)
+
+    def _resolve_subtitle_artifact_path(self, project) -> str | None:
+        import os
+        store = getattr(self.project_service, "artifact_store", None)
+        if store is None:
+            return None
+
+        timing_obj = getattr(project.state, "timing", None)
+        candidate_ids = [
+            getattr(project.state, "active_artifact_id", None),
+            getattr(project.state, "subtitle_artifact_id", None),
+            getattr(timing_obj, "timing_artifact_id", None) if timing_obj else None,
+        ]
+        for art_id in candidate_ids:
+            if not art_id:
+                continue
+            artifact = store.get(art_id)
+            if self._is_editable_subtitle_artifact(artifact) and os.path.exists(artifact.path):
+                return os.path.normpath(artifact.path)
+
+        # Fallback: recover latest editable subtitle/draft/timing artifact if active_artifact_id
+        # was previously overwritten by a non-subtitle artifact (e.g. HARDSUB .mp4)
+        get_all = getattr(store, "get_all", None)
+        if callable(get_all):
+            from core.artifacts.artifact_types import ArtifactType
+            all_arts = list(get_all() or [])
+            for target_type in (ArtifactType.SUBTITLE, ArtifactType.DRAFT, ArtifactType.TIMING):
+                matches = [
+                    a for a in all_arts
+                    if getattr(a, "artifact_type", None) == target_type
+                    and getattr(a, "source_project_id", project.project_id) == project.project_id
+                    and getattr(a, "path", None)
+                    and not str(a.path).lower().endswith(self._MEDIA_EXTS)
+                    and os.path.exists(a.path)
+                ]
+                if matches:
+                    matches.sort(key=lambda a: str(getattr(a, "updated_at", "") or ""), reverse=True)
+                    return os.path.normpath(matches[0].path)
+        return None
 
     def restore_workspace(self) -> None:
         """Phục hồi giao diện (UI) dựa trên dữ liệu từ ProjectState"""
@@ -85,7 +145,8 @@ class WorkspaceService:
         # 1. Phục hồi trang trên Sidebar (Sử dụng đúng hàm switch_page của Gui.py)
         try:
             target_idx = self.PAGE_TO_NAV_MAP.get(workspace.active_page, 1)
-            self.ui.switch_page(target_idx)
+            if getattr(self.ui, "_active_nav_index", None) != target_idx:
+                self.ui.switch_page(target_idx)
         except Exception as e:
             print(f"Lỗi khi khôi phục trang: {e}")
 
@@ -119,18 +180,11 @@ class WorkspaceService:
                 if item_key is None:
                     raise RuntimeError("Không thể bind video vào project đang mở.")
                 
-                # --- [S7-FIX-03] TRUY VẤN ARTIFACT TỪ KHO BẰNG ID, KHÔNG QUÉT ĐĨA ---
-                active_art_id = getattr(project.state, "active_artifact_id", None) or getattr(project.state, "subtitle_artifact_id", None)
-                target_artifact_path = None
-                
-                if active_art_id:
-                    artifact = self.project_service.artifact_store.get(active_art_id)
-                    if artifact and os.path.exists(artifact.path):
-                        target_artifact_path = os.path.normpath(artifact.path)
-                        self.ui.queue_mgr.set_srt_for_video(item_key, target_artifact_path)
-                        print(f"[DEBUG] Đã resolve Artifact ID {active_art_id} -> {target_artifact_path}")
-                    else:
-                        print(f"[WARN] Artifact ID '{active_art_id}' không tìm thấy trên ổ đĩa!")
+                # --- [S7-FIX-03] TRUY VẤN ARTIFACT PHỤ ĐỀ HỢP LỆ (CHẶN HARDSUB .MP4) ---
+                target_artifact_path = self._resolve_subtitle_artifact_path(project)
+                if target_artifact_path:
+                    self.ui.queue_mgr.set_srt_for_video(item_key, target_artifact_path)
+                    print(f"[DEBUG] Đã resolve Artifact -> {target_artifact_path}")
                 # ------------------------------------------------------------------
 
                 # Kích hoạt UI qua Queue Manager
@@ -150,17 +204,14 @@ class WorkspaceService:
                 QTimer.singleShot(500, lambda: self._apply_video_position(workspace.playback_position_ms))
             else:
                 print(f"Không tìm thấy file video gốc: {video_path}")
-                active_art_id = getattr(project.state, "active_artifact_id", None) or getattr(project.state, "subtitle_artifact_id", None)
-                if active_art_id:
-                    artifact = self.project_service.artifact_store.get(active_art_id)
-                    if artifact and os.path.exists(artifact.path):
-                        target_artifact_path = os.path.normpath(artifact.path)
-                        if target_artifact_path.endswith(".sub.json"):
-                            shadow_path = target_artifact_path.replace(".sub.json", "_shadow.srt")
-                            if os.path.exists(shadow_path):
-                                target_artifact_path = shadow_path
-                        self.ui._load_context_subtitles(target_artifact_path)
-                        print(f"[DEBUG] Đã nạp Artifact khi không có video: {target_artifact_path}")
+                target_artifact_path = self._resolve_subtitle_artifact_path(project)
+                if target_artifact_path:
+                    if target_artifact_path.endswith(".sub.json"):
+                        shadow_path = target_artifact_path.replace(".sub.json", "_shadow.srt")
+                        if os.path.exists(shadow_path):
+                            target_artifact_path = shadow_path
+                    self.ui._load_context_subtitles(target_artifact_path)
+                    print(f"[DEBUG] Đã nạp Artifact khi không có video: {target_artifact_path}")
         except Exception as e:
             print(f"Lỗi khi khôi phục Video: {e}")
 

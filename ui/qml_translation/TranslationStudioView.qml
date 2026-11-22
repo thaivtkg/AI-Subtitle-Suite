@@ -122,12 +122,12 @@ Item {
                             var srcLang = (translationController.currentSourceLanguage && translationController.currentSourceLanguage !== "") ? translationController.currentSourceLanguage : sourceLang
                             var tgtLang = "Vietnamese"
                             if (srcLang && tgtLang && srcLang.trim().toLowerCase() === tgtLang.trim().toLowerCase()) {
-                                toast.show("CẢNH BÁO", "Ngôn ngữ nguồn và ngôn ngữ đích không được trùng nhau!")
+                                toast.show("Cảnh báo", "Ngôn ngữ nguồn và ngôn ngữ đích không được trùng nhau!")
                                 return
                             }
                             var mc = typeof modelController !== "undefined" ? modelController : null
                             if (mc && typeof mc.hasValidModel !== "undefined" && !mc.hasValidModel) {
-                                toast.show("CẢNH BÁO", "Mô hình AI chưa được tải về máy. Vui lòng chọn hoặc tải mô hình!")
+                                toast.show("Cảnh báo", "Mô hình AI chưa được tải về máy. Vui lòng chọn hoặc tải mô hình!")
                                 if (typeof modelManagerDialog !== "undefined" && modelManagerDialog !== null) {
                                     modelManagerDialog.open()
                                 }

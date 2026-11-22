@@ -192,8 +192,8 @@ class DynamicReasoningEngine:
             segs = result.get("segments", [])
             new_segs = result.get("new_segments", [])
             is_continue = args.get("is_continue") or bool(new_segs)
-            count = len(new_segs) if new_segs else (len(segs) or args.get("count", 5))
-            target_list = new_segs if new_segs else segs
+            target_list = result.get("new_segments", segs)
+            count = result.get("count", len(target_list))
             t_span = ""
             if target_list:
                 t_span = f" ({target_list[0].get('start', '00:00.000')} ➔ {target_list[-1].get('end', '00:00.000')})"
@@ -201,10 +201,10 @@ class DynamicReasoningEngine:
             status = result.get("status", "ok")
             req_count = result.get("requested_count", count)
             partial_note = ""
-            if status == "partial" or (req_count and count < req_count):
-                partial_note = f" (đã quét đến cuối video, tìm thấy {count}/{req_count} phân đoạn thực tế)"
-            elif status == "no_speech":
+            if status == "no_speech":
                 partial_note = " (không phát hiện thêm đoạn thoại nào sau mốc này)"
+            elif status == "partial" or (req_count and count < req_count):
+                partial_note = f" (đã quét đến cuối video, tìm thấy {count}/{req_count} phân đoạn thực tế)"
 
             if is_continue and new_segs:
                 start_off = result.get("start_offset_s", 0.0)

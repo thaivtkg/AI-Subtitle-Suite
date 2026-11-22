@@ -129,3 +129,73 @@ def test_ac_live_04_tm_and_asr_scan_sync_realtime_to_video_player(main_window, q
     win.sub_editor.select_segment(0)
     win._on_tm_match_applied("Bản dịch gợi ý từ TM")
     assert win.video_player.subtitle_overlay.render_input.text == "Bản dịch gợi ý từ TM"
+
+
+def test_playback_syncs_current_editor_including_empty_segments_without_text_clipping(main_window, qtbot):
+    """
+    Playback position_changed syncs CurrentSubtitleEditor (even on empty timing segments),
+    resets scroll/cursor across segment switches, and prevents 30px vertical text clipping.
+    """
+    win = main_window
+    win.sub_editor.all_segments.append({
+        "id": "seg_sync_3",
+        "stt": "3",
+        "start": "00:00:07,000",
+        "end": "00:00:09,000",
+        "start_ms": 7000,
+        "end_ms": 9000,
+        "text": "[ Chưa có nội dung ]",
+    })
+    win.sub_editor.render_page()
+
+    # Focus text_edit and move cursor to the end of segment 1
+    te = win.sub_editor.current_editor.text_edit
+    te.setFocus()
+    cursor = te.textCursor()
+    cursor.setPosition(len(te.toPlainText()))
+    te.setTextCursor(cursor)
+    qtbot.wait(20)
+
+    assert te.viewport().height() >= te.fontMetrics().height()
+    assert te.verticalScrollBar().value() == 0
+
+    # Playback enters segment 2 -> text_edit syncs & resets cursor/scroll to start
+    win.video_player.position_changed(4500)
+    qtbot.wait(20)
+    assert win.sub_editor.current_index == 1
+    assert te.toPlainText() == "Câu hai ban đầu"
+    assert te.textCursor().position() == 0
+    assert te.verticalScrollBar().value() == 0
+
+    # Playback enters empty/placeholder timing segment 3 -> editor still syncs, overlay stays clear
+    win.video_player.position_changed(7500)
+    qtbot.wait(20)
+    assert win.sub_editor.current_index == 2
+    assert te.toPlainText() == "[ Chưa có nội dung ]"
+    assert win.video_player.subtitle_overlay.render_input is None
+
+
+def test_current_subtitle_editor_background_color_uniformity(qtbot):
+    """Xác thực màu nền ô nhập phụ đề đồng nhất 100%, không bị lệch màu giữa padding và viewport khi focus."""
+    from ui.theme import Theme
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app:
+        app.setStyleSheet(Theme.get_global_stylesheet())
+
+    win = MainWindow()
+    qtbot.addWidget(win)
+    win.show()
+    win.activateWindow()
+    qtbot.wait(50)
+
+    te = win.sub_editor.current_editor.text_edit
+    te.setFocus()
+    qtbot.wait(50)
+
+    img = te.grab().toImage()
+    w, h = img.width(), img.height()
+    pad_color = img.pixelColor(w - 5, h // 2).name()
+    vp_color = img.pixelColor(w - 25, h // 2).name()
+    assert pad_color == vp_color, f"Lệch màu giữa padding ({pad_color}) và viewport ({vp_color})"

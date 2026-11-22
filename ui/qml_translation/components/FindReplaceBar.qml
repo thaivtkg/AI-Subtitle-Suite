@@ -21,6 +21,7 @@ Rectangle {
     property bool isRegex: chkRegex.checked
     property bool addToGlossary: chkGlossary.checked
     property string statusMessage: ""
+    property bool statusIsError: false
     property int previewCount: -1
 
     function focusFind() {
@@ -30,6 +31,7 @@ Rectangle {
 
     function doPreview() {
         if (!findInput.text.trim()) {
+            statusIsError = true
             statusMessage = "Vui lòng nhập từ khóa tìm kiếm"
             previewCount = -1
             return
@@ -43,9 +45,11 @@ Rectangle {
                 root.isRegex
             )
             if (res.error) {
-                statusMessage = "⚠️ " + res.error
+                statusIsError = true
+                statusMessage = res.error
                 previewCount = -1
             } else {
+                statusIsError = false
                 previewCount = res.total_matches
                 statusMessage = "Tìm thấy " + res.total_matches + " kết quả (" + res.affected_rows.length + " câu)"
             }
@@ -54,6 +58,7 @@ Rectangle {
 
     function doReplaceAll() {
         if (!findInput.text.trim()) {
+            statusIsError = true
             statusMessage = "Vui lòng nhập từ khóa tìm kiếm"
             return
         }
@@ -67,6 +72,7 @@ Rectangle {
                 root.isRegex,
                 root.addToGlossary
             )
+            statusIsError = false
             previewCount = -1
             statusMessage = "Đã thay thế " + count + " vị trí"
         }
@@ -83,9 +89,24 @@ Rectangle {
             Layout.fillWidth: true
             spacing: 5
 
-            Text {
-                text: "🔍"
-                font.pixelSize: 11
+            Canvas {
+                implicitWidth: 14
+                implicitHeight: 14
+                renderTarget: Canvas.FramebufferObject
+                onPaint: {
+                    var ctx = getContext("2d");
+                    ctx.reset();
+                    ctx.strokeStyle = Theme.textMuted;
+                    ctx.lineWidth = 1.5;
+                    ctx.lineCap = "round";
+                    ctx.beginPath();
+                    ctx.arc(5.5, 5.5, 4, 0, 2 * Math.PI);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(8.5, 8.5);
+                    ctx.lineTo(12.5, 12.5);
+                    ctx.stroke();
+                }
             }
 
             TextField {
@@ -306,11 +327,11 @@ Rectangle {
 
             CheckBox {
                 id: chkGlossary
-                text: "📌"
+                text: "Thuật ngữ"
                 checked: true
                 font.pixelSize: 10
                 implicitHeight: 22
-                implicitWidth: 20
+                implicitWidth: 70
                 padding: 0
                 spacing: 2
                 indicator: Rectangle {
@@ -332,11 +353,12 @@ Rectangle {
                 contentItem: Text {
                     text: chkGlossary.text
                     font.pixelSize: 9
-                    leftPadding: 12
+                    color: chkGlossary.checked ? Theme.accentSapphire : Theme.textSecondary
+                    leftPadding: 14
                     verticalAlignment: Text.AlignVCenter
                 }
                 ToolTip.visible: hovered
-                ToolTip.text: "Tự ghim vào Glossary"
+                ToolTip.text: "Tự lưu vào Glossary"
                 ToolTip.delay: 400
             }
 
@@ -394,7 +416,7 @@ Rectangle {
             id: statusLbl
             visible: text.length > 0
             text: root.statusMessage
-            color: root.statusMessage.indexOf("⚠️") !== -1 ? Theme.danger : Theme.accentSapphire
+            color: root.statusIsError ? Theme.danger : Theme.accentSapphire
             font.pixelSize: 10
             font.bold: true
             Layout.fillWidth: true

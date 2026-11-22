@@ -234,10 +234,7 @@ ApplicationWindow {
                         }
 
                         onAcceptRequested: (text) => {
-                            let isSuccess = translationController.acceptTranslation(subListView.currentRawIndex, text)
-                            if (isSuccess) {
-                                subListView.selectNextRowAndFocus()
-                            }
+                            translationController.acceptTranslation(subListView.currentRawIndex, text)
                         }
                         onAddGlossaryRequested: (src, tgt) => {
                             contextInspector.openAddTerm(src, tgt)
@@ -430,7 +427,7 @@ ApplicationWindow {
                     anchors.rightMargin: 16
 
                     Text {
-                        text: "🛡️ Cảnh Báo Chất Lượng Phụ Đề (QA)"
+                        text: "Cảnh báo chất lượng phụ đề (QA)"
                         color: Theme.textOnLightPod
                         font.pixelSize: 14
                         font.bold: true
@@ -483,10 +480,33 @@ ApplicationWindow {
                         anchors.margins: 12
                         spacing: 12
 
-                        Text {
-                            text: "⚠️"
-                            font.pixelSize: 22
+                        Canvas {
+                            implicitWidth: 22
+                            implicitHeight: 22
                             Layout.alignment: Qt.AlignVCenter
+                            renderTarget: Canvas.FramebufferObject
+                            onPaint: {
+                                var ctx = getContext("2d");
+                                ctx.reset();
+                                ctx.strokeStyle = "#DC2626";
+                                ctx.lineWidth = 1.5;
+                                ctx.lineCap = "round";
+                                ctx.lineJoin = "round";
+                                ctx.beginPath();
+                                ctx.moveTo(11, 2);
+                                ctx.lineTo(20, 19);
+                                ctx.lineTo(2, 19);
+                                ctx.closePath();
+                                ctx.stroke();
+                                ctx.beginPath();
+                                ctx.moveTo(11, 7);
+                                ctx.lineTo(11, 13);
+                                ctx.stroke();
+                                ctx.fillStyle = "#DC2626";
+                                ctx.beginPath();
+                                ctx.arc(11, 16, 1, 0, 2 * Math.PI);
+                                ctx.fill();
+                            }
                         }
 
                         ColumnLayout {
@@ -618,7 +638,7 @@ ApplicationWindow {
                     anchors.rightMargin: 16
 
                     Text {
-                        text: "💾 Lưu Thay Đổi Trước Khi Đóng?"
+                        text: "Lưu thay đổi trước khi đóng?"
                         color: Theme.textOnLightPod
                         font.pixelSize: 14
                         font.bold: true

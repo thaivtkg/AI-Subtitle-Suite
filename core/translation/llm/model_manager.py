@@ -1,6 +1,7 @@
 import threading
 from typing import Optional, Dict, Any, Generator
 from core.translation.core.backends.base_backend import BaseInferenceBackend
+from core.translation.core.backends.gemini_backend import GeminiBackend
 from core.translation.core.backends.llama_cpp_backend import LlamaCppBackend
 from core.translation.core.backends.ollama_backend import OllamaBackend
 
@@ -13,6 +14,8 @@ class ModelManager:
             self.backend = OllamaBackend()
         elif backend_type == "llama_cpp":
             self.backend = LlamaCppBackend()
+        elif backend_type == "gemini":
+            self.backend = GeminiBackend()
         else:
             raise ValueError(f"Backend không hỗ trợ: {backend_type}")
 
@@ -47,8 +50,8 @@ class ModelManager:
         with self._lock:
             yield from self.backend.stream(prompt, system_prompt=system_prompt, **kwargs)
 
-    def generate_stream(self, prompt: str, max_tokens: int = 256):
-        return self.stream(prompt, max_tokens=max_tokens)
+    def generate_stream(self, prompt: str, max_tokens: int = 256, **kwargs):
+        return self.stream(prompt, max_tokens=max_tokens, **kwargs)
 
     def cancel(self) -> None:
         # Không acquire lock tại đây để lệnh cancel có thể ngắt ngay luồng stream() đang giữ lock
