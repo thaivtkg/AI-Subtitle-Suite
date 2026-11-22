@@ -621,6 +621,9 @@ class ProjectService:
                 if "timing" in s_data:
                     valid_timing_keys = {k for k in s_data["timing"].keys() if k in TimingState.__dataclass_fields__}
                     project_state.timing = TimingState(**{k: s_data["timing"][k] for k in valid_timing_keys})
+                    project_state.timing._has_explicit_apply_preset_to_rescan = (
+                        "apply_preset_to_rescan" in s_data["timing"]
+                    )
                 else:
                     project_state.timing = TimingState()
                 # ---------------------------------------------------------------

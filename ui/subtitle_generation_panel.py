@@ -870,6 +870,18 @@ class SubtitleGenerationPanel(QWidget):
         self.cmb_specialized_model.setCurrentIndex(idx if idx >= 0 else 0)
         self._on_specialized_model_selection_changed()
 
+    @staticmethod
+    def _is_ctrl_checked(ctrl, default: bool = False) -> bool:
+        if ctrl is None:
+            return default
+        fn = getattr(ctrl, "isChecked", None)
+        if callable(fn):
+            return bool(fn())
+        if hasattr(ctrl, "checked"):
+            val = getattr(ctrl, "checked")
+            return default if val is None else bool(val)
+        return default
+
     def _get_effective_model_size(self) -> str:
         spec_combo = getattr(self, "cmb_specialized_model", None)
         if spec_combo is not None:
@@ -1452,7 +1464,7 @@ class SubtitleGenerationPanel(QWidget):
         if fix_overlap is not None:
             fix_overlap.setEnabled(not is_asr)
         if overlap_gap is not None:
-            overlap_gap.setEnabled(not is_asr and fix_overlap.isChecked())
+            overlap_gap.setEnabled(not is_asr and self._is_ctrl_checked(fix_overlap))
 
         if not (hasattr(self, "_is_any_service_running") and self._is_any_service_running()):
             for ctrl_name in (
@@ -1810,11 +1822,7 @@ class SubtitleGenerationPanel(QWidget):
         vad_thresh = self.spin_vad_threshold.value() if hasattr(self, "spin_vad_threshold") else self._STANDARD_VAD_PRESET["threshold"]
         vad_pad = self.spin_speech_pad.value() if hasattr(self, "spin_speech_pad") else self._STANDARD_VAD_PRESET["speech_pad"]
         vad_max_sp = self.spin_max_speech.value() if hasattr(self, "spin_max_speech") else self._STANDARD_VAD_PRESET["max_speech"]
-        cond_prev = (
-            self.chk_condition_on_previous_text.isChecked()
-            if hasattr(self, "chk_condition_on_previous_text")
-            else True
-        )
+        cond_prev = self._is_ctrl_checked(getattr(self, "chk_condition_on_previous_text", None), default=True)
         return SubtitleGenerationRequest(
             request_id=str(uuid.uuid4()),
             project_id=project.project_id,
@@ -1823,9 +1831,9 @@ class SubtitleGenerationPanel(QWidget):
             model_size=effective_model,
             compute_type=self._combo_value(self.cmb_compute),
             language=final_lang,
-            use_vad=self.chk_vad.isChecked(),
+            use_vad=self._is_ctrl_checked(getattr(self, "chk_vad", None), default=True),
             min_silence_ms=min_sil,
-            word_timestamps=self.chk_word_timestamps.isChecked(),
+            word_timestamps=self._is_ctrl_checked(getattr(self, "chk_word_timestamps", None), default=False),
             batch_mode=self.cmb_batch_mode.currentData(),
             batch_size_value=self.spin_batch_val.value(),
             overlap_ms=2000,
@@ -2038,6 +2046,8 @@ class SubtitleGenerationPanel(QWidget):
                     self.chk_condition_on_previous_text.setChecked(
                         bool(fixed_preset["condition_on_previous_text"])
                     )
+                if hasattr(self, "chk_apply_preset_rescan"):
+                    self.chk_apply_preset_rescan.setChecked(True)
             elif preset == "standard":
                 std = profile["standard"]
                 self.spin_min_silence.setValue(int(std["min_silence"]))
@@ -2102,7 +2112,7 @@ class SubtitleGenerationPanel(QWidget):
             None,
         )
         music_mode = getattr(timing, "music_mode", False) if timing is not None else (
-            getattr(self, "chk_music_mode", None).isChecked() if hasattr(self, "chk_music_mode") else False
+            self._is_ctrl_checked(getattr(self, "chk_music_mode", None), default=False)
         )
         lang_text = self.cmb_language.currentText() if hasattr(self, "cmb_language") else ""
         lang_val = None if (not lang_text or lang_text == "Auto Detect") else lang_text
@@ -2111,12 +2121,8 @@ class SubtitleGenerationPanel(QWidget):
         thresh_ui = self.spin_vad_threshold.value() if hasattr(self, "spin_vad_threshold") else self._STANDARD_VAD_PRESET["threshold"]
         pad_ui = self.spin_speech_pad.value() if hasattr(self, "spin_speech_pad") else self._STANDARD_VAD_PRESET["speech_pad"]
         max_sp_ui = self.spin_max_speech.value() if hasattr(self, "spin_max_speech") else self._STANDARD_VAD_PRESET["max_speech"]
-        apply_rescan_ui = self.chk_apply_preset_rescan.isChecked() if hasattr(self, "chk_apply_preset_rescan") else False
-        cond_prev_ui = (
-            self.chk_condition_on_previous_text.isChecked()
-            if hasattr(self, "chk_condition_on_previous_text")
-            else True
-        )
+        apply_rescan_ui = self._is_ctrl_checked(getattr(self, "chk_apply_preset_rescan", None), default=False)
+        cond_prev_ui = self._is_ctrl_checked(getattr(self, "chk_condition_on_previous_text", None), default=True)
 
         if timing is not None and hasattr(timing, "model_size"):
             values = {
@@ -2150,7 +2156,7 @@ class SubtitleGenerationPanel(QWidget):
             values["vad_max_speech_duration_s"] = max_sp_ui
             values["apply_preset_to_rescan"] = apply_rescan_ui
             values["condition_on_previous_text"] = cond_prev_ui
-            values["word_timestamps"] = self.chk_word_timestamps.isChecked() if hasattr(self, "chk_word_timestamps") else False
+            values["word_timestamps"] = self._is_ctrl_checked(getattr(self, "chk_word_timestamps", None), default=False)
             return values
 
         values = {
@@ -2158,8 +2164,7 @@ class SubtitleGenerationPanel(QWidget):
             "compute_type": self._combo_value(self.cmb_compute),
             "use_vad": True,
             "min_silence_ms": min_sil_ui,
-            "fix_overlap": getattr(self, "chk_fix_overlap", None).isChecked()
-            if hasattr(self, "chk_fix_overlap") else True,
+            "fix_overlap": self._is_ctrl_checked(getattr(self, "chk_fix_overlap", None), default=True),
             "overlap_gap_ms": getattr(self, "spin_overlap_gap", None).value()
             if hasattr(self, "spin_overlap_gap") else 50,
             "overlap_ms": 800,
@@ -2170,14 +2175,14 @@ class SubtitleGenerationPanel(QWidget):
             "vad_max_speech_duration_s": max_sp_ui,
             "apply_preset_to_rescan": apply_rescan_ui,
             "condition_on_previous_text": cond_prev_ui,
-            "word_timestamps": self.chk_word_timestamps.isChecked() if hasattr(self, "chk_word_timestamps") else False,
+            "word_timestamps": self._is_ctrl_checked(getattr(self, "chk_word_timestamps", None), default=False),
         }
         if getattr(self, "cmb_specialized_model", None) is not None:
             spec_model = self._combo_value(self.cmb_specialized_model)
             if spec_model:
                 values["specialized_model"] = spec_model
                 values["model_size"] = spec_model
-        if getattr(self, "chk_music_mode", None) and self.chk_music_mode.isChecked():
+        if self._is_ctrl_checked(getattr(self, "chk_music_mode", None), default=False):
             values["music_mode"] = True
         if lang_val:
             values["language"] = lang_val
@@ -2201,9 +2206,10 @@ class SubtitleGenerationPanel(QWidget):
                 timing.vad_threshold = self.spin_vad_threshold.value()
                 timing.vad_speech_pad_ms = self.spin_speech_pad.value()
                 timing.vad_max_speech_duration_s = self.spin_max_speech.value()
-                timing.apply_preset_to_rescan = self.chk_apply_preset_rescan.isChecked()
+                timing.apply_preset_to_rescan = self._is_ctrl_checked(getattr(self, "chk_apply_preset_rescan", None), default=False)
+                timing._has_explicit_apply_preset_to_rescan = True
                 if hasattr(self, "chk_condition_on_previous_text") and hasattr(timing, "condition_on_previous_text"):
-                    timing.condition_on_previous_text = self.chk_condition_on_previous_text.isChecked()
+                    timing.condition_on_previous_text = self._is_ctrl_checked(self.chk_condition_on_previous_text, default=True)
             return
         values = self._timing_settings()
         lang_text = self.cmb_language.currentText() if hasattr(self, "cmb_language") else ""
@@ -2215,24 +2221,25 @@ class SubtitleGenerationPanel(QWidget):
                 "compute_type": self._combo_value(self.cmb_compute),
                 "use_vad": True,
                 "min_silence_ms": self.spin_min_silence.value() if hasattr(self, "spin_min_silence") else 500,
-                "fix_overlap": self.chk_fix_overlap.isChecked(),
+                "fix_overlap": self._is_ctrl_checked(getattr(self, "chk_fix_overlap", None), default=True),
                 "overlap_gap_ms": self.spin_overlap_gap.value(),
-                "music_mode": self.chk_music_mode.isChecked() if hasattr(self, "chk_music_mode") else False,
+                "music_mode": self._is_ctrl_checked(getattr(self, "chk_music_mode", None), default=False),
                 "language": lang_val,
                 "vad_preset": self.cmb_vad_preset.currentData() if hasattr(self, "cmb_vad_preset") else "standard",
                 "vad_threshold": self.spin_vad_threshold.value() if hasattr(self, "spin_vad_threshold") else 0.50,
                 "vad_speech_pad_ms": self.spin_speech_pad.value() if hasattr(self, "spin_speech_pad") else 400,
                 "vad_max_speech_duration_s": self.spin_max_speech.value() if hasattr(self, "spin_max_speech") else 30.0,
-                "apply_preset_to_rescan": self.chk_apply_preset_rescan.isChecked() if hasattr(self, "chk_apply_preset_rescan") else False,
-                "condition_on_previous_text": self.chk_condition_on_previous_text.isChecked() if hasattr(self, "chk_condition_on_previous_text") else True,
+                "apply_preset_to_rescan": self._is_ctrl_checked(getattr(self, "chk_apply_preset_rescan", None), default=False),
+                "condition_on_previous_text": self._is_ctrl_checked(getattr(self, "chk_condition_on_previous_text", None), default=True),
             }
         )
         for name, value in values.items():
             if hasattr(timing, name):
                 setattr(timing, name, value)
+        timing._has_explicit_apply_preset_to_rescan = True
         project_service.mark_dirty()
         if hasattr(self, "spin_overlap_gap"):
-            self.spin_overlap_gap.setEnabled(self.chk_fix_overlap.isChecked())
+            self.spin_overlap_gap.setEnabled(self._is_ctrl_checked(getattr(self, "chk_fix_overlap", None), default=True))
 
     def sync_timing_settings_from_project(self):
         if self._is_any_service_running():
@@ -2343,7 +2350,16 @@ class SubtitleGenerationPanel(QWidget):
                 if hasattr(self, "spin_max_speech"):
                     self.spin_max_speech.setValue(float(getattr(timing, "vad_max_speech_duration_s", self._STANDARD_VAD_PRESET["max_speech"])))
             if hasattr(self, "chk_apply_preset_rescan"):
-                self.chk_apply_preset_rescan.setChecked(bool(getattr(timing, "apply_preset_to_rescan", False)))
+                has_explicit_flag = (
+                    hasattr(timing, "apply_preset_to_rescan")
+                    and getattr(timing, "_has_explicit_apply_preset_to_rescan", True)
+                )
+                if has_explicit_flag:
+                    apply_rescan_val = bool(timing.apply_preset_to_rescan)
+                else:
+                    apply_rescan_val = fixed_for_saved is not None
+                    timing.apply_preset_to_rescan = apply_rescan_val
+                self.chk_apply_preset_rescan.setChecked(apply_rescan_val)
             if hasattr(self, "chk_condition_on_previous_text"):
                 default_cond = "kotoba" not in self._get_effective_model_size().lower()
                 if saved_preset == "live_action":

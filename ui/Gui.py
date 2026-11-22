@@ -2051,8 +2051,7 @@ class MainWindow(QMainWindow):
         force_no_vad: bool = False,
     ):
         iso_lang, prompt_ctx = self._resolve_scan_language(settings)
-        preset_key = str((settings or {}).get("vad_preset", "standard") or "standard")
-        apply_preset = bool(settings.get("apply_preset_to_rescan", False)) or (preset_key not in ("standard", ""))
+        apply_preset = bool((settings or {}).get("apply_preset_to_rescan", False))
         is_custom_or_cfg9 = apply_preset
         if force_no_vad:
             rescan_use_vad = False

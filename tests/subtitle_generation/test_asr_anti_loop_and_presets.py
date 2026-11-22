@@ -978,3 +978,84 @@ def test_v3_glossary_parity_across_full_selected_and_rescan_modes(qapp, tmp_path
         assert opts["hotwords"] is None
         assert opts["condition_on_previous_text"] is False
         assert opts["word_timestamps"] is False
+
+
+def test_v3_apply_preset_rescan_checkbox_full_control_and_legacy_project_restore(qapp, tmp_path):
+    """Toàn quyền quyết định của chk_apply_preset_rescan ở cả Preset chuyển đổi, bỏ tick và mở dự án cũ/mới."""
+    import json
+    import os
+    from core.artifacts.artifact_store import ArtifactStore
+    from core.services.project_service import ProjectService
+
+    panel, project = _make_panel(tmp_path)
+    win = MainWindow.__new__(MainWindow)
+    win.sub_editor = None
+    win.generation_panel = panel
+
+    panel.cmb_specialized_model.setCurrentIndex(0)
+    panel.cmb_model.setCurrentIndex(panel.cmb_model.findData("large-v3"))
+    assert panel.chk_apply_preset_rescan.isChecked() is False
+
+    # 1) Chọn preset chuyên biệt (live_action / anime_ja_large_v3) -> tự động tick chk_apply_preset_rescan = True
+    for preset_key, exp_thresh in (("live_action", 0.35), ("anime_ja_large_v3", 0.30)):
+        panel.chk_apply_preset_rescan.setChecked(False)
+        panel.cmb_vad_preset.setCurrentIndex(panel.cmb_vad_preset.findData(preset_key))
+        assert panel.chk_apply_preset_rescan.isChecked() is True
+        settings = panel._timing_settings()
+        assert settings["apply_preset_to_rescan"] is True
+        for req_id in ("scan_1", "batch_scan_1"):
+            req = win._build_segment_scan_request(req_id, settings, str(tmp_path / "video.mp4"), project)
+            assert abs(req.vad_threshold - exp_thresh) < 1e-3
+            assert abs(req.vad_max_speech_duration_s - 6.0) < 1e-3
+
+        # 2) Chủ động bỏ tick -> Rescan & Gen Sub Selected phải bỏ qua preset (không bị nhánh or ghi đè)
+        panel.chk_apply_preset_rescan.setChecked(False)
+        settings_off = panel._timing_settings()
+        assert settings_off["apply_preset_to_rescan"] is False
+        for req_id in ("scan_off", "batch_scan_off"):
+            req_off = win._build_segment_scan_request(req_id, settings_off, str(tmp_path / "video.mp4"), project)
+            assert req_off.vad_threshold is None
+            assert req_off.vad_max_speech_duration_s is None
+            assert req_off.word_timestamps is False
+
+    # 3) Khôi phục dự án đã lưu sẵn "apply_preset_to_rescan": False -> phải tôn trọng False
+    vid_path = tmp_path / "restore_vid.mp4"
+    vid_path.write_bytes(b"mp4")
+    proj_dir = tmp_path / "proj_saved_false.ai-subtitle"
+    proj_svc = ProjectService(ArtifactStore())
+    proj_svc.create_project(str(proj_dir), "restore_vid.mp4", str(vid_path))
+    proj_svc.current_project.state.timing.model_size = "large-v3"
+    proj_svc.current_project.state.timing.vad_preset = "live_action"
+    proj_svc.current_project.state.timing.apply_preset_to_rescan = False
+    proj_svc.save_project()
+
+    reopened_svc = ProjectService(ArtifactStore())
+    reopened_svc.open_project(str(proj_dir))
+    reopened_gen = MagicMock()
+    reopened_gen.project_service = reopened_svc
+    reopened_gen.compile_prompt_context.return_value = MagicMock(text="")
+    reopened_gen.is_running.return_value = False
+    panel_reopen = SubtitleGenerationPanel(reopened_gen)
+    panel_reopen.sync_timing_settings_from_project()
+    assert panel_reopen.cmb_vad_preset.currentData() == "live_action"
+    assert panel_reopen.chk_apply_preset_rescan.isChecked() is False
+
+    # 4) Mở file dự án cũ CHƯA CÓ khóa apply_preset_to_rescan nhưng đang dùng preset chuyên biệt -> tự bật True
+    state_json_path = os.path.join(str(proj_dir), "state.json")
+    with open(state_json_path, "r", encoding="utf-8") as f:
+        s_data = json.load(f)
+    s_data["timing"]["vad_preset"] = "Live-Action / Phim người đóng (18+)"
+    s_data["timing"].pop("apply_preset_to_rescan", None)
+    with open(state_json_path, "w", encoding="utf-8") as f:
+        json.dump(s_data, f, ensure_ascii=False, indent=2)
+
+    legacy_svc = ProjectService(ArtifactStore())
+    legacy_svc.open_project(str(proj_dir))
+    legacy_gen = MagicMock()
+    legacy_gen.project_service = legacy_svc
+    legacy_gen.compile_prompt_context.return_value = MagicMock(text="")
+    legacy_gen.is_running.return_value = False
+    panel_legacy = SubtitleGenerationPanel(legacy_gen)
+    panel_legacy.sync_timing_settings_from_project()
+    assert panel_legacy.cmb_vad_preset.currentData() == "live_action"
+    assert panel_legacy.chk_apply_preset_rescan.isChecked() is True
