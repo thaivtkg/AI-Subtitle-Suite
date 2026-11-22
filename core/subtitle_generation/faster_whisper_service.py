@@ -604,6 +604,7 @@ class FasterWhisperService:
                     raise
 
             raw_seg_list = None
+            detected_info_lang = None
             max_speech_cap = (
                 transcribe_options.get("vad_parameters", {}).get("max_speech_duration_s")
                 if request.use_vad and not is_kotoba
@@ -645,6 +646,8 @@ class FasterWhisperService:
                                     part_segs, _part_info, part_cancelled = _run_model_with_oom_guard(
                                         slice_wav, slice_opts
                                     )
+                                    if detected_info_lang is None:
+                                        detected_info_lang = getattr(_part_info, "language", None)
                                     if part_cancelled:
                                         return SubtitleGenerationResult(batch.batch_id, [], "Cancelled.")
                                     for p_seg in part_segs:
@@ -655,6 +658,7 @@ class FasterWhisperService:
 
             if raw_seg_list is None:
                 raw_seg_list, _info, cancelled = _run_model_with_oom_guard(input_path, transcribe_options)
+                detected_info_lang = getattr(_info, "language", None)
                 if cancelled:
                     return SubtitleGenerationResult(batch.batch_id, [], "Cancelled.")
                 if (
@@ -668,11 +672,15 @@ class FasterWhisperService:
                     clean_opts["no_speech_threshold"] = None
                     clean_opts["log_prob_threshold"] = None
                     raw_seg_list, _info, cancelled = _run_model_with_oom_guard(input_path, clean_opts)
+                    if detected_info_lang is None:
+                        detected_info_lang = getattr(_info, "language", None)
                     if cancelled:
                         return SubtitleGenerationResult(batch.batch_id, [], "Cancelled.")
 
             used_prompt = str(transcribe_options.get("initial_prompt") or "").strip()
             used_hotwords = str(transcribe_options.get("hotwords") or "").strip()
+            ref_story_summary = str(getattr(request, "reference_context", "") or "").strip()
+            guard_lang = effective_lang or detected_info_lang
             has_glossary_bias = bool(used_prompt or used_hotwords)
             clean_batch_cache: Optional[list] = None
             consumed_clean_indices: set[int] = set()
@@ -702,9 +710,10 @@ class FasterWhisperService:
                 )
                 if not cleaned_text:
                     return [], False
+                seg_dur_s = max(0.0, new_end_sec - orig_start)
                 if SubtitleGenerationValidator.is_low_cps_courtesy_hallucination(
                     cleaned_text,
-                    duration_s=max(0.0, new_end_sec - orig_start),
+                    duration_s=seg_dur_s,
                     no_speech_prob=getattr(segment, "no_speech_prob", None),
                 ):
                     return [], False
@@ -717,8 +726,16 @@ class FasterWhisperService:
                         cleaned_text, initial_prompt=used_prompt, hotwords=used_hotwords
                     )
                 )
-                if is_echo:
-                    if not allow_echo_retry:
+                is_high_cps = SubtitleGenerationValidator.is_high_cps_hallucination(
+                    cleaned_text,
+                    duration_s=seg_dur_s,
+                    language=guard_lang,
+                    hotwords=used_hotwords if allow_echo_retry else None,
+                    initial_prompt=used_prompt if allow_echo_retry else None,
+                    reference_context=ref_story_summary,
+                )
+                if is_echo or is_high_cps:
+                    if not (has_glossary_bias and allow_echo_retry):
                         return [], False
                     retry_opts = dict(transcribe_options)
                     retry_opts["initial_prompt"] = None
@@ -959,6 +976,12 @@ class FasterWhisperService:
             seg_dur_s = max(0.0, new_end_sec - float(getattr(seg, "start", 0.0) or 0.0))
             if SubtitleGenerationValidator.is_low_cps_courtesy_hallucination(
                 cleaned_text, duration_s=seg_dur_s, no_speech_prob=nsp
+            ):
+                continue
+            if SubtitleGenerationValidator.is_high_cps_hallucination(
+                cleaned_text,
+                duration_s=seg_dur_s,
+                language=language or getattr(_info, "language", None),
             ):
                 continue
             if language and language != "auto":

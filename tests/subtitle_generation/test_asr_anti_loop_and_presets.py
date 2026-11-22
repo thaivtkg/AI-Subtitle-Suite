@@ -524,7 +524,7 @@ def test_empty_glossary_and_large_v3_separation_and_ui_hints(qapp, tmp_path):
         assert captured["initial_prompt"] is None
         assert captured["hotwords"] == "魔物 マンコ チンポ"
 
-        # 3) Glossary + natural context => context kept in initial_prompt, glossary in space-separated hotwords
+        # 3) Glossary + Story Summary (Context: ...) => Story Summary is stripped (initial_prompt=None), glossary stays in space-separated hotwords
         req_with_ctx = SubtitleGenerationRequest(
             request_id="r_ctx",
             project_id="p1",
@@ -540,7 +540,7 @@ def test_empty_glossary_and_large_v3_separation_and_ui_hints(qapp, tmp_path):
             hotwords="魔物 マンコ",
         )
         service.transcribe_batch(req_with_ctx, batch, lambda: False)
-        assert captured["initial_prompt"] == "Hai nhân vật đang nói chuyện trong phòng."
+        assert captured["initial_prompt"] is None
         assert captured["hotwords"] == "魔物 マンコ"
 
     # UI: Speech Pad hint = 250–350ms, Live-Action / Tokusatsu preset updated
@@ -1059,3 +1059,197 @@ def test_v3_apply_preset_rescan_checkbox_full_control_and_legacy_project_restore
     panel_legacy.sync_timing_settings_from_project()
     assert panel_legacy.cmb_vad_preset.currentData() == "live_action"
     assert panel_legacy.chk_apply_preset_rescan.isChecked() is True
+
+
+def test_v31_story_summary_isolated_from_asr_across_all_presets_and_modes(qapp, tmp_path):
+    """Tách triệt để Tóm tắt cốt truyện (357 chữ) khỏi initial_prompt ASR ở MỌI Preset và cả 3 chế độ, giữ nguyên cho dịch LLM."""
+    from core.transcription.prompt_context_builder import PromptContextBuilder
+    from core.transcription.token_counter import ApproximateTokenCounter
+
+    story_summary_357 = (
+        "ピュアマーメイドは邪悪な組織サタン・ダイモンと戦うヒロインである。"
+        "ある夜、怪人たちの罠にかかり、秘密基地の奥へと連れ去られてしまう。"
+        "必死に抵抗しながらも、彼女は仲間を救うために最後まで諦めずに立ち向かう。"
+        "敵幹部は冷酷に嘲笑いながら彼女の衣装を狙い、緊迫した攻防が繰り広げられる。"
+        "果たしてピュアマーメイドはサタン・ダイモンの陰謀を打ち砕き、平和を取り戻すことができるのか。"
+        "激闘の末に隠された真実が今明らかになる。"
+    )
+    glossary_30 = [f"ピュアマーメイド -> Pure Mermaid", "サタン・ダイモン -> Satan Daimon"] + [
+        f"用語{i:02d} -> Term{i:02d}" for i in range(3, 31)
+    ]
+
+    panel, project = _make_panel(tmp_path)
+    project.transcription_context = TranscriptionContext(
+        context=story_summary_357,
+        glossary=glossary_30,
+    )
+    # 1) PromptContextBuilder (dùng cho dịch LLM / trích xuất từ điển) vẫn giữ nguyên Tóm tắt cốt truyện
+    compiled = PromptContextBuilder(ApproximateTokenCounter()).build(project.transcription_context, max_tokens=500)
+    assert "ピュアマーメイドは邪悪な組織サタン・ダイモン" in compiled.text
+
+    win = MainWindow.__new__(MainWindow)
+    win.sub_editor = None
+    win.generation_panel = panel
+
+    service = FasterWhisperService(device="cpu")
+    captured = []
+
+    class _SpyModel:
+        def transcribe(self, _wav, **opts):
+            captured.append(dict(opts))
+            return iter([SimpleNamespace(start=0.1, end=1.5, text="大丈夫だよ", words=None)]), SimpleNamespace(language="ja")
+
+    service.model = _SpyModel()
+    batch = SubtitleGenerationBatch("b_iso", 0, 3400, "RUNNING", 1, "", "")
+
+    # 2) Kiểm chứng mọi Preset trên large-v3 ở cả 3 chế độ (Full Video, Gen Sub Selected, Rescan Audio)
+    panel.cmb_specialized_model.setCurrentIndex(0)
+    panel.cmb_model.setCurrentIndex(panel.cmb_model.findData("large-v3"))
+    service.current_model_size = "large-v3"
+
+    for preset_key in ("standard", "cfg9", "anime_ja_large_v3", "live_action"):
+        panel.cmb_vad_preset.setCurrentIndex(panel.cmb_vad_preset.findData(preset_key))
+        req_full = panel._build_asr_request()
+        settings = panel._timing_settings()
+        req_selected = win._build_segment_scan_request("batch_scan_1", settings, str(tmp_path / "video.mp4"), project)
+        req_rescan = win._build_segment_scan_request("scan_1", settings, str(tmp_path / "video.mp4"), project)
+
+        captured.clear()
+        with patch.object(service, "_extract_batch_audio", return_value=("fake.wav", None)):
+            for req in (req_full, req_selected, req_rescan):
+                assert req.prompt_context == ""
+                assert req.reference_context == story_summary_357
+                service.transcribe_batch(req, batch, lambda: False)
+
+        assert len(captured) == 3
+        for opts in captured:
+            assert opts["initial_prompt"] is None
+            assert "ピュアマーメイド" in opts["hotwords"]
+            assert "サタン・ダイモン" in opts["hotwords"]
+
+    # 3) Kotoba-whisper tiếp tục giữ initial_prompt=None và hotwords=None
+    captured.clear()
+    panel.cmb_specialized_model.setCurrentIndex(panel.cmb_specialized_model.findData("kotoba-whisper-v2.0"))
+    service.current_model_size = "kotoba-whisper-v2.0"
+    k_full = panel._build_asr_request()
+    k_rescan = win._build_segment_scan_request("scan_k", panel._timing_settings(), str(tmp_path / "video.mp4"), project)
+    with patch.object(service, "_extract_batch_audio", return_value=("fake.wav", None)):
+        for req in (k_full, k_rescan):
+            service.transcribe_batch(req, batch, lambda: False)
+    assert len(captured) == 2
+    for opts in captured:
+        assert opts["initial_prompt"] is None
+        assert opts["hotwords"] is None
+
+
+def test_v31_high_cps_hallucination_guard_cjk_only_and_clean_retry():
+    """High-CPS Guard chặn câu bịa tốc độ bất khả thi cho CJK (ja/zh/ko), bỏ qua Latin, và retry 1 lượt sạch."""
+    hallucinated_narration = "ピュアマーメイドは、サタン・ダイモンの衣装を倒すことができる。彼女は彼らにとっても魅力的な光景だった。"
+    hotwords = "ピュアマーメイド サタン・ダイモン 魔物"
+    summary = "ピュアマーメイドは邪悪な組織サタン・ダイモンと戦うヒロインである。"
+
+    # 1) MUST BLOCK (True): JA 51 raw / 46 clean chars in 2.64s (cps > 14.0)
+    assert SubtitleGenerationValidator.is_high_cps_hallucination(
+        hallucinated_narration, duration_s=2.64, language="ja"
+    ) is True
+
+    # 2) MUST BLOCK (True): Condition 2 (12.0 < cps <= 14.0 AND >= 2 terms overlapping Glossary/Summary)
+    assert SubtitleGenerationValidator.is_high_cps_hallucination(
+        hallucinated_narration,
+        duration_s=3.4,
+        language="ja",
+        hotwords=hotwords,
+        reference_context=summary,
+    ) is True
+
+    # 3) MUST KEEP (False): Fast anime dialogue (20 chars / 2.2s = 9.1 cps)
+    assert SubtitleGenerationValidator.is_high_cps_hallucination(
+        "早く逃げないと間に合わなくなるぞみんな",
+        duration_s=2.2,
+        language="ja",
+        hotwords=hotwords,
+    ) is False
+
+    # 4) MUST KEEP (False): Short clip (10 chars / 0.6s -> dur < 1.5 and len < 18)
+    assert SubtitleGenerationValidator.is_high_cps_hallucination(
+        "やめて助けてくれよ",
+        duration_s=0.6,
+        language="ja",
+        hotwords=hotwords,
+    ) is False
+
+    # 5) MUST KEEP (False): Fast English (55 chars / 2.8s = 19.6 cps -> non-CJK ignored)
+    en_fast = "Quickly grab the glowing crystal before the portal collapses completely"
+    assert SubtitleGenerationValidator.is_high_cps_hallucination(
+        en_fast, duration_s=2.8, language="en", hotwords=hotwords
+    ) is False
+    assert SubtitleGenerationValidator.is_high_cps_hallucination(
+        "Nhanh lên lấy ngay viên pha lê trước khi cánh cổng đóng lại hoàn toàn",
+        duration_s=2.8,
+        language="vi",
+        hotwords=hotwords,
+    ) is False
+
+    # 6) End-to-end FasterWhisperService retry: call #1 hallucinates High-CPS with hotwords -> call #2 clean rescues real speech
+    service = FasterWhisperService(device="cpu")
+    service.current_model_size = "large-v3"
+    calls = []
+
+    class _RescueHighCpsModel:
+        def transcribe(self, _wav, **opts):
+            calls.append(dict(opts))
+            if len(calls) == 1:
+                return iter([SimpleNamespace(start=0.2, end=2.84, text=hallucinated_narration, words=None)]), SimpleNamespace(language="ja")
+            return iter([SimpleNamespace(start=0.2, end=2.84, text="よく見せてやる", words=None)]), SimpleNamespace(language="ja")
+
+    service.model = _RescueHighCpsModel()
+    req = SubtitleGenerationRequest(
+        request_id="r_hcps",
+        project_id="p1",
+        source_fingerprint="fp1",
+        video_path="v.mp4",
+        model_size="large-v3",
+        compute_type="int8",
+        language="ja",
+        use_vad=False,
+        min_silence_ms=300,
+        word_timestamps=True,
+        prompt_context="",
+        hotwords=hotwords,
+        reference_context=summary,
+    )
+    batch = SubtitleGenerationBatch("b_hcps", 0, 3400, "RUNNING", 1, "", "")
+    with patch.object(service, "_extract_batch_audio", return_value=("fake.wav", None)):
+        res_rescue = service.transcribe_batch(req, batch, lambda: False)
+
+    assert len(calls) == 2
+    assert calls[0]["hotwords"] == hotwords
+    assert calls[1]["initial_prompt"] is None
+    assert calls[1]["hotwords"] is None
+    assert calls[1]["condition_on_previous_text"] is False
+    assert [s.text for s in res_rescue.segments] == ["よく見せてやる"]
+
+    # 7) Drop path: if clean retry STILL violates High-CPS -> dropped cleanly ([]), and never leaks to previous_text
+    calls.clear()
+
+    class _StillHighCpsModel:
+        def transcribe(self, _wav, **opts):
+            calls.append(dict(opts))
+            return iter([SimpleNamespace(start=0.2, end=2.84, text=hallucinated_narration, words=None)]), SimpleNamespace(language="ja")
+
+    service.model = _StillHighCpsModel()
+    with patch.object(service, "_extract_batch_audio", return_value=("fake.wav", None)):
+        res_drop = service.transcribe_batch(req, batch, lambda: False)
+    assert len(calls) == 2
+    assert res_drop.segments == []
+
+    _, ctx_prompt = resolve_tier3_context(
+        [
+            {"id": "1", "start_ms": 1000, "end_ms": 3640, "text": hallucinated_narration},
+            {"id": "2", "start_ms": 3700, "end_ms": 5000, "text": ""},
+        ],
+        "2",
+        3700,
+        5000,
+    )
+    assert "ピュアマーメイド" not in ctx_prompt

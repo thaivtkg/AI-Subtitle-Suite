@@ -1,3 +1,4 @@
+import copy
 import re
 from typing import List, Optional
 
@@ -58,6 +59,10 @@ class SubtitleGenerationValidator:
             "ありがとうございました",
             "また次回",
         }
+    )
+    CJK_HIGH_CPS_LANGUAGES = frozenset({"ja", "zh", "ko"})
+    _CJK_REF_TOKEN_RE = re.compile(
+        r"[\u30a0-\u30ffー]{2,}|[\u4e00-\u9fff]{2,}|[\uac00-\ud7af]{2,}|[\u3040-\u309f]{3,}"
     )
 
     MUSIC_ONLY_PATTERN = re.compile(r"^[\s♪♫🎵♩♬]+$")
@@ -279,6 +284,92 @@ class SubtitleGenerationValidator:
         return False
 
     @classmethod
+    def is_high_cps_hallucination(
+        cls,
+        text: str,
+        duration_s: Optional[float],
+        language: Optional[str],
+        *,
+        hotwords: Optional[str] = None,
+        initial_prompt: Optional[str] = None,
+        reference_context: Optional[str] = None,
+    ) -> bool:
+        """Chặn ảo giác nhồi chữ tốc độ bất khả thi (High-CPS) cho ngôn ngữ CJK (ja/zh/ko)."""
+        from core.subtitle_generation.language_utils import (
+            extract_terminology_terms,
+            normalize_to_iso_code,
+            parse_hotwords_terms,
+        )
+
+        iso = normalize_to_iso_code(language)
+        if iso not in cls.CJK_HIGH_CPS_LANGUAGES:
+            return False
+        if not isinstance(duration_s, (int, float)) or isinstance(duration_s, bool):
+            return False
+        dur = float(duration_s)
+        if dur < 1.5:
+            return False
+
+        clean_text = cls._ECHO_STRIP_RE.sub("", str(text or "").strip())
+        if len(clean_text) < 18:
+            return False
+
+        cps = len(clean_text) / dur
+        if cps > 14.0:
+            return True
+        if cps <= 12.0:
+            return False
+
+        # Điều kiện 2: cps > 12.0 và chứa >= 2 từ/cụm từ trùng Từ điển hoặc Tóm tắt dự án
+        candidates: set[str] = set()
+        if hotwords:
+            for term in parse_hotwords_terms(hotwords, max_terms=128):
+                nt = cls._ECHO_STRIP_RE.sub("", term).casefold()
+                if len(nt) >= 2:
+                    candidates.add(nt)
+        for ref_text in (initial_prompt, reference_context):
+            ref_str = str(ref_text or "").strip()
+            if not ref_str:
+                continue
+            term_block = extract_terminology_terms(ref_str, max_terms=128)
+            if term_block:
+                for term in parse_hotwords_terms(term_block, max_terms=128):
+                    nt = cls._ECHO_STRIP_RE.sub("", term).casefold()
+                    if len(nt) >= 2:
+                        candidates.add(nt)
+            for tok in cls._CJK_REF_TOKEN_RE.findall(ref_str):
+                nt = cls._ECHO_STRIP_RE.sub("", tok).casefold()
+                if len(nt) >= 2:
+                    candidates.add(nt)
+            for raw_part in re.split(r"[\s、。,.!?！？・…「」『』()（）\[\]]+", ref_str):
+                nt = cls._ECHO_STRIP_RE.sub("", raw_part).casefold()
+                if 2 <= len(nt) <= 20:
+                    candidates.add(nt)
+
+        if not candidates:
+            return False
+
+        norm_clean = clean_text.casefold()
+        sorted_cands = sorted(candidates, key=len, reverse=True)
+        matched_count = 0
+        pos = 0
+        n_len = len(norm_clean)
+        while pos < n_len:
+            hit = None
+            for cand in sorted_cands:
+                if norm_clean.startswith(cand, pos):
+                    hit = cand
+                    break
+            if hit:
+                matched_count += 1
+                if matched_count >= 2:
+                    return True
+                pos += len(hit)
+            else:
+                pos += 1
+        return False
+
+    @classmethod
     def is_hallucination(cls, text: str) -> bool:
         if not text or not text.strip():
             return True
@@ -296,6 +387,43 @@ class SubtitleGenerationValidator:
         if had_rep and not cleaned_rep:
             return True
         return False
+
+    @classmethod
+    def filter_hallucinated_segments(
+        cls, segments: List[WhisperSegmentResult]
+    ) -> List[WhisperSegmentResult]:
+        """Lọc text rỗng / ảo giác / lặp đuôi mà không loại segment theo biên batch."""
+        filtered: List[WhisperSegmentResult] = []
+        for segment in segments:
+            text = (getattr(segment, "text", "") or "").strip()
+            if not text:
+                continue
+            start_ms = getattr(segment, "start_ms", 0)
+            end_ms = getattr(segment, "end_ms", 0)
+            cleaned_text, kept_words, new_end_ms, had_rep = cls.clean_repetition_segment(
+                text,
+                words=getattr(segment, "words", None),
+                start_val=start_ms,
+                end_val=end_ms,
+                words_in_ms=True,
+            )
+            if not cleaned_text or cls.is_hallucination(cleaned_text):
+                continue
+            try:
+                seg_dur_s = max(0.0, (float(end_ms) - float(start_ms)) / 1000.0)
+            except (TypeError, ValueError):
+                seg_dur_s = 0.0
+            if cls.is_low_cps_courtesy_hallucination(cleaned_text, duration_s=seg_dur_s):
+                continue
+            if had_rep:
+                seg_copy = copy.copy(segment)
+                seg_copy.text = cleaned_text
+                seg_copy.words = kept_words
+                seg_copy.end_ms = new_end_ms
+                filtered.append(seg_copy)
+            else:
+                filtered.append(segment)
+        return filtered
 
     @staticmethod
     def validate(

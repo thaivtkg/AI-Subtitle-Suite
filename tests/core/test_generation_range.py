@@ -392,3 +392,56 @@ class TestRangeGenerationTransaction(unittest.TestCase):
         )
         self.assertEqual(self.dirty_calls, [])
         self.assertEqual(batch.status, "FAILED")
+
+    def test_range_commit_filters_hallucination_before_reconcile_and_keeps_valid_segments(self):
+        from core.subtitle_generation.generation_timing_reconciler import ReconciliationStatus
+        from core.subtitle_generation.subtitle_generation_result import (
+            SubtitleGenerationResult,
+            WhisperSegmentResult,
+        )
+
+        # Mix 1 hallucination + 2 valid segments (including one slightly over right boundary
+        # so global_shift_ms must still reconcile it cleanly).
+        self.whisper.transcribe_batch = lambda _request, batch, _cancel: SubtitleGenerationResult(
+            batch.batch_id,
+            [
+                WhisperSegmentResult(3100, 4200, "ご視聴ありがとうございました"),
+                WhisperSegmentResult(4500, 6000, "特にこのピュアマーメイド"),
+                WhisperSegmentResult(6500, 8100, "この女さえいなければ"),
+            ],
+        )
+        errors = []
+        self.service.on_error = errors.append
+        self.service.start_generation(self.request, 10000, existing_segments=[])
+
+        self.assertEqual(errors, [])
+        artifact = self.project_service.artifact_store.get("sub_123")
+        self.assertIsNotNone(artifact)
+        rows = self.service.artifact_service.load_data(artifact.path)["segments"]
+        self.assertEqual(
+            [row["text"] for row in rows],
+            ["特にこのピュアマーメイド", "この女さえいなければ"],
+        )
+        self.assertEqual(self.service.last_range_reconciliation.status, ReconciliationStatus.SUCCESS)
+        self.assertEqual(self.service.last_range_reconciliation.global_shift_ms, -100)
+
+    def test_range_commit_all_hallucinations_reports_empty_not_reconciliation_unsafe(self):
+        from core.subtitle_generation.generation_timing_reconciler import ReconciliationStatus
+        from core.subtitle_generation.subtitle_generation_result import (
+            SubtitleGenerationResult,
+            WhisperSegmentResult,
+        )
+
+        self.whisper.transcribe_batch = lambda _request, batch, _cancel: SubtitleGenerationResult(
+            batch.batch_id,
+            [WhisperSegmentResult(3100, 4200, "ご視聴ありがとうございました")],
+        )
+        errors = []
+        self.service.on_error = errors.append
+        self.service.start_generation(self.request, 10000, existing_segments=[])
+
+        self.assertEqual(len(errors), 1)
+        self.assertNotIn("RECONCILIATION_UNSAFE", errors[0])
+        self.assertEqual(
+            self.service.last_range_reconciliation.status, ReconciliationStatus.EMPTY_RESULT
+        )

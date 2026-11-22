@@ -24,6 +24,7 @@ _TERMINOLOGY_BLOCK_RE = re.compile(
     r"^\s*Terminology:\s*(?P<terms>.*?)\.(?:\s*Context:\s*(?P<context>.*))?\s*$",
     re.DOTALL,
 )
+_CONTEXT_PREFIX_RE = re.compile(r"^\s*Context:\s*", re.IGNORECASE)
 _SENTENCE_END_PUNCT_RE = re.compile(r"[。！？!?]")
 
 
@@ -99,14 +100,12 @@ def extract_terminology_terms(prompt_text: Optional[str], max_terms: int = 64) -
 def extract_natural_initial_prompt(
     prompt_text: Optional[str], lang_code: Optional[str] = None
 ) -> Optional[str]:
-    """Chỉ giữ initial_prompt khi thực sự là câu văn / mô tả ngữ cảnh tự nhiên; bỏ qua danh sách từ khóa rời."""
+    """Tách hoàn toàn khối Terminology/Context (Tóm tắt cốt truyện) và danh sách từ khóa rời khỏi initial_prompt ASR."""
     cleaned = str(prompt_text or "").strip()
     if not cleaned:
         return None
-    match = _TERMINOLOGY_BLOCK_RE.match(cleaned)
-    if match:
-        raw_context = (match.group("context") or "").strip()
-        return raw_context or None
+    if _TERMINOLOGY_BLOCK_RE.match(cleaned) or _CONTEXT_PREFIX_RE.match(cleaned):
+        return None
 
     # Nếu chỉ là danh sách từ khóa rời ngắn (ngăn cách bởi dấu phẩy/、, không có dấu kết câu) -> không nhét vào initial_prompt
     if ("," in cleaned or "、" in cleaned) and not _SENTENCE_END_PUNCT_RE.search(cleaned):

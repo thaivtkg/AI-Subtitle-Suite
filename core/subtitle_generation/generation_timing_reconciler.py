@@ -61,14 +61,22 @@ def _copy_with_times(segment, start_ms, end_ms, global_shift_ms):
                 adjusted_words.append(word)
                 continue
             try:
-                word_start = int(word["start_ms"]) + global_shift_ms
-                word_end = int(word["end_ms"]) + global_shift_ms
+                orig_start = int(word["start_ms"])
+                orig_end = int(word["end_ms"])
             except (TypeError, ValueError, OverflowError) as exc:
                 raise ValueError("Generated word timing is invalid.") from exc
-            word_start = max(start_ms, word_start)
-            word_end = min(end_ms, word_end)
-            if word_end <= word_start:
-                raise ValueError("Boundary adjustment would invalidate word timing.")
+            if orig_end < orig_start:
+                raise ValueError("Generated word timing is invalid.")
+            if orig_end == orig_start:
+                # Valid 0-ms Faster-Whisper subword/punctuation token (e.g. Japanese BPE char).
+                clamped = max(start_ms, min(end_ms, orig_start + global_shift_ms))
+                word_start = clamped
+                word_end = clamped
+            else:
+                word_start = max(start_ms, orig_start + global_shift_ms)
+                word_end = min(end_ms, orig_end + global_shift_ms)
+                if word_end <= word_start:
+                    raise ValueError("Boundary adjustment would invalidate word timing.")
             adjusted_word = dict(word)
             adjusted_word.update(start_ms=word_start, end_ms=word_end)
             adjusted_words.append(adjusted_word)

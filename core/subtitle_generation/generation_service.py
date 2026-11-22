@@ -30,6 +30,7 @@ from core.subtitle_generation.generation_range import (
     validate_generation_range,
 )
 from core.subtitle_generation.generation_timing_reconciler import (
+    ReconciliationResult,
     ReconciliationStatus,
     reconcile_generated_timing,
 )
@@ -913,6 +914,16 @@ class SubtitleGenerationService(QObject):
                     if not _overlaps_range(seg, batch.start_ms, batch.end_ms)
                 ]
 
+            generated_input = SubtitleGenerationValidator.filter_hallucinated_segments(
+                generated_input
+            )
+            if not generated_input:
+                self.last_range_reconciliation = ReconciliationResult(
+                    status=ReconciliationStatus.EMPTY_RESULT,
+                    reason="No subtitle segments were generated for this range.",
+                )
+                raise RuntimeError("No subtitle segments were generated for this range.")
+
             reconciled = reconcile_generated_timing(
                 GenerationRange(batch.start_ms, batch.end_ms),
                 generated_input,
@@ -922,6 +933,8 @@ class SubtitleGenerationService(QObject):
             self.last_range_reconciliation = reconciled
             if reconciled.status == ReconciliationStatus.STALE_RANGE_CONFLICT:
                 raise GenerationError(GenerationErrorCode.STALE_RANGE_CONFLICT, f"{reconciled.reason}")
+            if reconciled.status == ReconciliationStatus.EMPTY_RESULT:
+                raise RuntimeError(reconciled.reason or "No subtitle segments were generated for this range.")
             if reconciled.status != ReconciliationStatus.SUCCESS:
                 raise GenerationError(GenerationErrorCode.RECONCILIATION_UNSAFE, f"{reconciled.reason}")
 

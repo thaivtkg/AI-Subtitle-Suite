@@ -438,3 +438,107 @@ def test_segment_scan_ungrounded_short_clip_phantom_reports_hallucination_filter
     assert "ảo giác AI đã bị lọc" in msg
 
 
+def test_extract_text_for_target_span_preserves_whole_japanese_words_and_excludes_next_word():
+    """Regression for line #62 (GHKO63_01): never slice 'やめてー' + 'こっちも' into 'めてーこ'."""
+    from workers.SegmentScanWorker import _extract_text_for_target_span
+
+    # Variant A: spaced 'あー やめてー' followed by next-sentence 'こっちも' (exact RTX 3050 tokens)
+    segs_spaced = [
+        WhisperSegmentResult(
+            start_ms=749700,
+            end_ms=751500,
+            text="あー やめてー",
+            words=[
+                {"word": "あー", "start_ms": 749700, "end_ms": 750340},
+                {"word": " や", "start_ms": 750340, "end_ms": 750840},
+                {"word": "め", "start_ms": 750840, "end_ms": 751160},
+                {"word": "て", "start_ms": 751160, "end_ms": 751340},
+                {"word": "ー", "start_ms": 751340, "end_ms": 751500},
+            ],
+        ),
+        WhisperSegmentResult(
+            start_ms=752060,
+            end_ms=753100,
+            text="こっちも",
+            words=[
+                {"word": "こ", "start_ms": 752060, "end_ms": 752400},
+                {"word": "っち", "start_ms": 752400, "end_ms": 752940},
+                {"word": "も", "start_ms": 752940, "end_ms": 753100},
+            ],
+        ),
+    ]
+    extracted_a, has_outside_a = _extract_text_for_target_span(segs_spaced, 750750, 752430)
+    assert extracted_a == "やめてー"
+    assert has_outside_a is True
+
+    # Variant B: unspaced 'あーやめてー' with Whisper DTW stretching 'や' over prior silence
+    segs_unspaced = [
+        WhisperSegmentResult(
+            start_ms=748920,
+            end_ms=751500,
+            text="あーやめてー",
+            words=[
+                {"word": "あー", "start_ms": 748920, "end_ms": 749640},
+                {"word": "や", "start_ms": 749640, "end_ms": 750900},
+                {"word": "め", "start_ms": 750900, "end_ms": 751180},
+                {"word": "て", "start_ms": 751180, "end_ms": 751340},
+                {"word": "ー", "start_ms": 751340, "end_ms": 751500},
+            ],
+        ),
+        WhisperSegmentResult(
+            start_ms=752060,
+            end_ms=753080,
+            text="こっちも",
+            words=[
+                {"word": "こ", "start_ms": 752060, "end_ms": 752400},
+                {"word": "っち", "start_ms": 752400, "end_ms": 752920},
+                {"word": "も", "start_ms": 752920, "end_ms": 753080},
+            ],
+        ),
+    ]
+    extracted_b, has_outside_b = _extract_text_for_target_span(segs_unspaced, 750750, 752430)
+    assert extracted_b == "やめてー"
+    assert has_outside_b is True
+
+
+def test_extract_text_for_target_span_edge_punctuation_and_katakana_english_units():
+    from workers.SegmentScanWorker import _extract_text_for_target_span
+
+    # Katakana loanword with medial 'ー' stays atomic even when leading 'スー' starts before target;
+    # stray edge commas/ideographic commas inside span are stripped cleanly.
+    segs_ja = [
+        WhisperSegmentResult(
+            start_ms=1000,
+            end_ms=2600,
+            text="、スーパー,",
+            words=[
+                {"word": "、", "start_ms": 1205, "end_ms": 1215},
+                {"word": "スー", "start_ms": 1030, "end_ms": 1240},
+                {"word": "パー", "start_ms": 1240, "end_ms": 1800},
+                {"word": ",", "start_ms": 1800, "end_ms": 1850},
+            ],
+        )
+    ]
+    txt_ja, has_out_ja = _extract_text_for_target_span(segs_ja, 1200, 2000)
+    assert txt_ja == "スーパー"
+    assert has_out_ja is False
+
+    # English whole-word boundaries exclude right-edge spilling word without partial cut.
+    segs_en = [
+        WhisperSegmentResult(
+            start_ms=1000,
+            end_ms=3000,
+            text="Hello world next",
+            words=[
+                {"word": "Hello", "start_ms": 1000, "end_ms": 1400},
+                {"word": " world", "start_ms": 1500, "end_ms": 1950},
+                {"word": " next", "start_ms": 1980, "end_ms": 2700},
+            ],
+        )
+    ]
+    txt_en, has_out_en = _extract_text_for_target_span(segs_en, 1450, 2100)
+    assert txt_en == "world"
+    assert has_out_en is True
+
+
+

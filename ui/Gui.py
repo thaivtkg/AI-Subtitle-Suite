@@ -2073,18 +2073,15 @@ class MainWindow(QMainWindow):
         )
         model_size, compute_type = self._resolve_rescan_model_and_compute(settings)
         from core.services.model_manager import ModelManager
-        from core.subtitle_generation.language_utils import (
-            extract_glossary_hotwords,
-            extract_natural_initial_prompt,
-        )
+        from core.subtitle_generation.language_utils import extract_glossary_hotwords
+        tx_ctx = getattr(project, "transcription_context", None)
+        ref_story_summary = str(getattr(tx_ctx, "context", "") or "").strip()
+        # Tách triệt để Tóm tắt cốt truyện khỏi initial_prompt ASR ở mọi Preset/Model
+        prompt_ctx = ""
         if ModelManager.supports_word_timestamps(model_size) and "kotoba" not in str(model_size or "").lower():
-            tx_ctx = getattr(project, "transcription_context", None)
             hotwords = extract_glossary_hotwords(tx_ctx)
-            raw_ctx = getattr(tx_ctx, "context", "") if tx_ctx is not None else ""
-            prompt_ctx = extract_natural_initial_prompt(raw_ctx, iso_lang) or ""
         else:
             # Distilled models (kotoba/distil) hallucinate non-speech or empty text when fed prompt/hotwords.
-            prompt_ctx = ""
             hotwords = ""
         from core.subtitle_generation.subtitle_generation_request import SubtitleGenerationRequest
         return SubtitleGenerationRequest(
@@ -2109,6 +2106,7 @@ class MainWindow(QMainWindow):
             log_prob_threshold=-1.5 if force_no_vad else None,
             speech_filter=True,
             hotwords=hotwords,
+            reference_context=ref_story_summary,
             patience=1.5,
             hallucination_silence_threshold=2.5,
         )
@@ -4636,13 +4634,7 @@ class MainWindow(QMainWindow):
 
             project = self.project_service.current_project
             settings = self.page_settings
-            compiled_context = self.subtitle_generation_service.compile_prompt_context(
-                project.transcription_context
-            )
-            from core.subtitle_generation.language_utils import (
-                extract_glossary_hotwords,
-                extract_natural_initial_prompt,
-            )
+            from core.subtitle_generation.language_utils import extract_glossary_hotwords
             from core.subtitle_generation.faster_whisper_service import FasterWhisperService
             from core.services.model_manager import ModelManager
 
@@ -4655,15 +4647,13 @@ class MainWindow(QMainWindow):
             queue_lang, _default_ja_prompt = self._resolve_scan_language(
                 gen_panel._timing_settings() if gen_panel is not None and hasattr(gen_panel, "_timing_settings") else {}
             )
+            tx_ctx = getattr(project, "transcription_context", None)
+            ref_story_summary = str(getattr(tx_ctx, "context", "") or "").strip()
+            prompt_text = ""
             if FasterWhisperService.is_kotoba_model(queue_model) or not ModelManager.supports_word_timestamps(queue_model):
-                prompt_text = ""
                 hotwords = ""
-            elif FasterWhisperService.is_large_v3_model(queue_model):
-                prompt_text = extract_natural_initial_prompt(compiled_context.text, queue_lang) or ""
-                hotwords = extract_glossary_hotwords(getattr(project, "transcription_context", None))
             else:
-                prompt_text = compiled_context.text
-                hotwords = extract_glossary_hotwords(getattr(project, "transcription_context", None))
+                hotwords = extract_glossary_hotwords(tx_ctx)
             queue_cond_prev = (
                 bool(gen_panel.chk_condition_on_previous_text.isChecked())
                 if gen_panel is not None and hasattr(gen_panel, "chk_condition_on_previous_text")
@@ -4688,6 +4678,7 @@ class MainWindow(QMainWindow):
                 vad_speech_pad_ms=300,
                 min_speech_duration_ms=120,
                 speech_filter=True,
+                reference_context=ref_story_summary,
                 hotwords=hotwords,
                 patience=1.5,
                 hallucination_silence_threshold=2.5,

@@ -541,7 +541,8 @@ class TimingBatchService(QObject):
             tx_ctx = getattr(project, "transcription_context", None)
             hotwords = extract_glossary_hotwords(tx_ctx)
             req_hotwords = merge_hotwords(settings.get("hotwords"), hotwords, sep=" ")
-            raw_prompt = str(settings.get("initial_prompt") or getattr(tx_ctx, "context", "") or "").strip()
+            # Không truyền Tóm tắt cốt truyện (tx_ctx.context) vào initial_prompt ASR
+            raw_prompt = str(settings.get("initial_prompt") or "").strip()
             if FasterWhisperService.is_large_v3_model(effective_model):
                 req_initial_prompt = extract_natural_initial_prompt(raw_prompt, iso_lang) or ""
             else:

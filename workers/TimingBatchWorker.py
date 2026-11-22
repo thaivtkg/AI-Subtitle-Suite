@@ -160,6 +160,14 @@ class TimingBatchWorker(QThread):
             ):
                 return []
             req_lang = getattr(self.request, "language", None)
+            if SubtitleGenerationValidator.is_high_cps_hallucination(
+                cleaned_text,
+                duration_s=seg_dur_s,
+                language=req_lang,
+                hotwords=req_hotwords,
+                initial_prompt=req_prompt,
+            ):
+                return []
             if req_lang and req_lang != "Auto Detect":
                 if not SubtitleGenerationValidator.filter_inconsistent_language(cleaned_text, req_lang):
                     return []

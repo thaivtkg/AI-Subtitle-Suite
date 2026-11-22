@@ -38,6 +38,7 @@ class SubtitleGenerationRequest:
     log_prob_threshold: Optional[float] = None
     speech_filter: bool = False
     hotwords: str = ""
+    reference_context: str = ""
     patience: Optional[float] = None
     hallucination_silence_threshold: Optional[float] = None
 

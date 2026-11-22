@@ -1785,7 +1785,6 @@ class SubtitleGenerationPanel(QWidget):
             return None
         from core.subtitle_generation.language_utils import (
             extract_glossary_hotwords,
-            extract_natural_initial_prompt,
             normalize_to_iso_code,
         )
         from core.subtitle_generation.faster_whisper_service import FasterWhisperService
@@ -1794,9 +1793,8 @@ class SubtitleGenerationPanel(QWidget):
         effective_model = self._get_effective_model_size()
         spec_info = ModelManager.get_specialized_info(effective_model)
 
-        compiled_context = self.generation_service.compile_prompt_context(
-            project.transcription_context
-        )
+        tx_ctx = getattr(project, "transcription_context", None)
+        ref_story_summary = str(getattr(tx_ctx, "context", "") or "").strip()
         language = self.cmb_language.currentText()
         final_lang = None if (not language or language == "Auto Detect") else language
         if final_lang is None:
@@ -1807,16 +1805,12 @@ class SubtitleGenerationPanel(QWidget):
         if final_lang is None and spec_info is not None:
             final_lang = spec_info.get("language")
 
-        iso_lang = normalize_to_iso_code(final_lang)
+        # Tách triệt để Tóm tắt cốt truyện khỏi ASR ở mọi Preset/Model; chỉ dùng Từ điển (hotwords) cho non-Kotoba
+        prompt_text = ""
         if FasterWhisperService.is_kotoba_model(effective_model) or not ModelManager.supports_word_timestamps(effective_model):
-            prompt_text = ""
             hotwords = ""
-        elif FasterWhisperService.is_large_v3_model(effective_model):
-            prompt_text = extract_natural_initial_prompt(compiled_context.text, iso_lang) or ""
-            hotwords = extract_glossary_hotwords(getattr(project, "transcription_context", None))
         else:
-            prompt_text = str(compiled_context.text or "").strip()
-            hotwords = extract_glossary_hotwords(getattr(project, "transcription_context", None))
+            hotwords = extract_glossary_hotwords(tx_ctx)
 
         min_sil = self.spin_min_silence.value() if hasattr(self, "spin_min_silence") else self._STANDARD_VAD_PRESET["min_silence"]
         vad_thresh = self.spin_vad_threshold.value() if hasattr(self, "spin_vad_threshold") else self._STANDARD_VAD_PRESET["threshold"]
@@ -1847,6 +1841,7 @@ class SubtitleGenerationPanel(QWidget):
             min_speech_duration_ms=120,
             speech_filter=True,
             hotwords=hotwords,
+            reference_context=ref_story_summary,
             patience=1.5,
             hallucination_silence_threshold=2.5,
         )

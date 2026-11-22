@@ -102,12 +102,20 @@ def resolve_tier3_context(
             p_st = _seg_ms(p_seg, "start_ms", "start")
             p_en = _seg_ms(p_seg, "end_ms", "end")
             p_dur_s = ((p_en - p_st) / 1000.0) if (p_st is not None and p_en is not None and p_en > p_st) else None
+            is_cjk_high_cps = bool(
+                p_dur_s
+                and re.search(r"[\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7af]", clean_p_text or "")
+                and SubtitleGenerationValidator.is_high_cps_hallucination(
+                    clean_p_text, duration_s=p_dur_s, language="ja"
+                )
+            )
             if (
                 clean_p_text
                 and not SubtitleGenerationValidator.is_hallucination(clean_p_text)
                 and not SubtitleGenerationValidator.is_low_cps_courtesy_hallucination(
                     clean_p_text, duration_s=p_dur_s
                 )
+                and not is_cjk_high_cps
             ):
                 prompt_parts.append(clean_p_text)
 
@@ -128,11 +136,89 @@ def resolve_tier3_context(
     return (ctx_start, ctx_end), " ".join(prompt_parts).strip()
 
 
+_WORD_BOUNDARY_PUNCT = set("、。,.，！？!?・…「」『』()（）[]【】;；:：")
+_LEADING_EDGE_PUNCT = "、,，.。・;；:："
+_TRAILING_EDGE_PUNCT = "、,，・;；:："
+
+
+def _group_segment_word_units(words: list) -> list[tuple[int, int, str, list[tuple[int, int]]]]:
+    """Group Whisper BPE sub-word tokens into atomic whole-word units without slicing CJK words."""
+    units: list[list] = []
+    for w in words:
+        w_raw = str(w.get("word", "") or "")
+        w_s = w_raw.strip()
+        if not w_s:
+            continue
+        ws = int(w.get("start_ms", 0))
+        we = int(w.get("end_ms", 0))
+        is_punct = all(ch in _WORD_BOUNDARY_PUNCT for ch in w_s)
+
+        if not units:
+            units.append([ws, we, [w_raw], [] if is_punct else [(ws, we)]])
+            continue
+
+        prev = units[-1]
+        prev_raw = prev[2][-1]
+        prev_unit_s = "".join(prev[2]).strip()
+        gap_ms = ws - prev[1]
+
+        start_new = False
+        if w_raw[0].isspace() or prev_raw[-1].isspace() or gap_ms >= 150:
+            start_new = True
+        elif is_punct:
+            start_new = False
+        elif prev_unit_s and prev_unit_s[-1] in _WORD_BOUNDARY_PUNCT:
+            start_new = True
+        elif (
+            len(prev_unit_s) >= 2
+            and prev_unit_s[-1] == "ー"
+            and ("\u3041" <= prev_unit_s[-2] <= "\u3096")
+            and w_s[0] != "ー"
+        ):
+            # Split after hiragana elongation (e.g. あー + やめてー) while preserving katakana words (スーパー).
+            start_new = True
+
+        if start_new:
+            units.append([ws, we, [w_raw], [] if is_punct else [(ws, we)]])
+        else:
+            prev[0] = min(prev[0], ws)
+            prev[1] = max(prev[1], we)
+            prev[2].append(w_raw)
+            if not is_punct:
+                prev[3].append((ws, we))
+
+    return [(u[0], u[1], "".join(u[2]), u[3] or [(u[0], u[1])]) for u in units]
+
+
+def _word_unit_in_span(
+    u_start: int,
+    u_end: int,
+    sub_tokens: list[tuple[int, int]],
+    start_ms: int,
+    end_ms: int,
+) -> bool:
+    if u_end <= u_start:
+        return start_ms <= u_start < end_ms
+    overlap_ms = max(0, min(u_end, end_ms) - max(u_start, start_ms))
+    if overlap_ms <= 0:
+        return False
+    u_mid = (u_start + u_end) / 2.0
+    overlap_ratio = overlap_ms / float(u_end - u_start)
+    if ((start_ms - 60) <= u_mid <= end_ms) or (overlap_ratio >= 0.50):
+        return True
+    # Rescue intact word when Whisper DTW stretches its leading sub-token over prior silence.
+    if u_end <= end_ms and len(sub_tokens) >= 2:
+        inside = sum(1 for tws, twe in sub_tokens if start_ms <= ((tws + twe) / 2.0) <= end_ms)
+        if (inside / float(len(sub_tokens))) >= 0.50:
+            return True
+    return False
+
+
 def _extract_text_for_target_span(valid_segs: list, start_ms: int, end_ms: int) -> tuple[str, bool]:
-    """Extract only text/words belonging to [start_ms, end_ms]; report if outside words exist."""
+    """Extract only whole words belonging to [start_ms, end_ms]; report if outside words exist."""
     any_words = any(getattr(s, "words", None) for s in valid_segs)
     if any_words:
-        target_tokens: list[str] = []
+        kept_chunks: list[str] = []
         has_outside_words = False
         for seg in valid_segs:
             words = getattr(seg, "words", None) or []
@@ -142,25 +228,22 @@ def _extract_text_for_target_span(valid_segs: list, start_ms: int, end_ms: int) 
                 ):
                     txt = (getattr(seg, "text", "") or "").strip()
                     if txt:
-                        target_tokens.append(txt)
+                        kept_chunks.append(txt)
                 else:
                     has_outside_words = True
                 continue
-            for w in words:
-                ws = int(w.get("start_ms", 0))
-                we = int(w.get("end_ms", 0))
-                w_text = str(w.get("word", "") or "")
-                if not w_text.strip():
-                    continue
-                mid = (ws + we) / 2.0
-                overlaps = we > start_ms and ws < end_ms
-                mid_inside = (start_ms - 60) <= mid <= (end_ms + 60)
-                if overlaps and mid_inside:
-                    target_tokens.append(w_text)
+            seg_kept: list[str] = []
+            for u_start, u_end, u_text, sub_tokens in _group_segment_word_units(words):
+                if _word_unit_in_span(u_start, u_end, sub_tokens, start_ms, end_ms):
+                    seg_kept.append(u_text)
                 else:
                     has_outside_words = True
-        extracted = "".join(target_tokens).strip().lstrip("、,.")
-        return extracted.strip(), has_outside_words
+            seg_text = "".join(seg_kept).strip()
+            if seg_text:
+                kept_chunks.append(seg_text)
+        extracted = " ".join(kept_chunks).strip()
+        extracted = extracted.lstrip(_LEADING_EDGE_PUNCT).rstrip(_TRAILING_EDGE_PUNCT).strip()
+        return extracted, has_outside_words
 
     overlapping = [
         seg.text.strip()
@@ -399,6 +482,17 @@ def _transcribe_segment_with_fallback(
         )
         if SubtitleGenerationValidator.is_low_cps_courtesy_hallucination(
             raw_text, duration_s=span_dur_s
+        ):
+            saw_hallucination = True
+            continue
+
+        if SubtitleGenerationValidator.is_high_cps_hallucination(
+            raw_text,
+            duration_s=span_dur_s,
+            language=expected_lang,
+            hotwords=req_hotwords,
+            initial_prompt=req_prompt,
+            reference_context=getattr(tier_req, "reference_context", None),
         ):
             saw_hallucination = True
             continue

@@ -219,3 +219,81 @@ class TestGenerationTimingReconciler(unittest.TestCase):
             api.GenerationRange(1000, 3000), [segment(1000, 2000)], 2500
         )
         self.assertEqual(result.status, api.ReconciliationStatus.CONFLICT)
+
+    def test_zero_duration_word_token_is_preserved_without_conflict(self):
+        api = self._api()
+        seg_with_zero_word = {
+            "start_ms": 331500,
+            "end_ms": 335000,
+            "text": "特にこのピュアマーメイド",
+            "words": [
+                {"word": "特に", "start_ms": 331500, "end_ms": 332200},
+                {"word": "ピュ", "start_ms": 332600, "end_ms": 332980},
+                {"word": "ア", "start_ms": 332980, "end_ms": 332980},
+                {"word": "マーメイド", "start_ms": 332980, "end_ms": 335000},
+            ],
+        }
+        result = api.reconcile_generated_timing(
+            api.GenerationRange(331000, 345000), [seg_with_zero_word], 600000
+        )
+        self.assertEqual(result.status, api.ReconciliationStatus.SUCCESS)
+        self.assertEqual(result.global_shift_ms, 0)
+        self.assertEqual(len(result.segments[0]["words"]), 4)
+        self.assertEqual(
+            result.segments[0]["words"][2],
+            {"word": "ア", "start_ms": 332980, "end_ms": 332980},
+        )
+
+        # Edge clamp on a 0-ms token keeps start_ms == end_ms clamped inside [start_ms, end_ms]
+        clamped_segs = [
+            {
+                "start_ms": 9800,
+                "end_ms": 10800,
+                "text": "a",
+                "words": [
+                    {"word": "、", "start_ms": 9850, "end_ms": 9850},
+                    {"word": "a", "start_ms": 10050, "end_ms": 10800},
+                ],
+            },
+            segment(14200, 15300, text="b"),
+        ]
+        clamped_res = api.reconcile_generated_timing(
+            api.GenerationRange(10000, 15000), clamped_segs, 20000
+        )
+        self.assertEqual(clamped_res.status, api.ReconciliationStatus.SUCCESS)
+        self.assertEqual(clamped_res.segments[0]["words"][0]["start_ms"], 10000)
+        self.assertEqual(clamped_res.segments[0]["words"][0]["end_ms"], 10000)
+
+    def test_positive_duration_word_collapsed_by_boundary_clamp_still_conflicts(self):
+        api = self._api()
+        # Positive-duration word [9800..9950] lies wholly outside clamped [10000..10800] -> CONFLICT
+        rows = [
+            {
+                "start_ms": 9800,
+                "end_ms": 10800,
+                "text": "ab",
+                "words": [
+                    {"word": "a", "start_ms": 9800, "end_ms": 9950},
+                    {"word": "b", "start_ms": 10100, "end_ms": 10800},
+                ],
+            },
+            segment(14200, 15300, text="c"),
+        ]
+        result = api.reconcile_generated_timing(
+            api.GenerationRange(10000, 15000), rows, 20000
+        )
+        self.assertEqual(result.status, api.ReconciliationStatus.CONFLICT)
+        self.assertEqual(result.reason, "Boundary adjustment would invalidate word timing.")
+
+        # Negative-duration word (orig_end < orig_start) -> invalid word timing CONFLICT
+        neg_row = {
+            "start_ms": 1000,
+            "end_ms": 2000,
+            "text": "bad",
+            "words": [{"word": "bad", "start_ms": 1500, "end_ms": 1400}],
+        }
+        neg_result = api.reconcile_generated_timing(
+            api.GenerationRange(1000, 3000), [neg_row], 5000
+        )
+        self.assertEqual(neg_result.status, api.ReconciliationStatus.CONFLICT)
+        self.assertEqual(neg_result.reason, "Generated word timing is invalid.")
