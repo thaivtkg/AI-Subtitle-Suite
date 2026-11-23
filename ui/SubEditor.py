@@ -4,7 +4,7 @@ import os
 import re
 import uuid
 
-from PySide6.QtCore import Qt, Signal, QTimer, QEvent, QSize
+from PySide6.QtCore import Qt, Signal, QTimer, QEvent, QSize, QMetaMethod
 from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from ui.core.icons import get_icon
 from PySide6.QtWidgets import (
@@ -440,12 +440,11 @@ class SubtitleEditorWidget(QWidget):
     COL_TRANSLATION = 4
     COL_ORIGINAL = None
 
-    request_tm_suggestion = Signal(str)  # original_text
     commit_segment = Signal(str, str, str, str, list)  # original, translated, prev, next, qc_flags
     segment_scan_requested = Signal(str, int, int) # selected indices
     force_asr_scan_requested = Signal(str, int, int)  # seg_id, start_ms, end_ms
     batch_scan_requested = Signal(list)  # list of source indices
-    send_to_translation_requested = Signal(list)  # list of source indices
+    delete_requested = Signal(list)  # list of source indices
 
     seek_requested = Signal(int)
     segment_focused = Signal(int, int)
@@ -479,12 +478,6 @@ class SubtitleEditorWidget(QWidget):
         self.is_rendering = False
         self._is_syncing_ui = False
         self._is_applying_current_editor = False
-        
-        self._tm_debounce = QTimer(self)
-        self._tm_debounce.setSingleShot(True)
-        self._tm_debounce.setInterval(300)
-        self._tm_debounce.timeout.connect(self._emit_tm_suggestion)
-
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -755,14 +748,6 @@ class SubtitleEditorWidget(QWidget):
         self.save_btn.clicked.connect(lambda: self.save_requested.emit("srt"))
         self.approve_btn.clicked.connect(self.timing_committed.emit)
 
-        self.reanalyze_audio_style_btn = QPushButton("Quét Audio")
-        self.reanalyze_audio_style_btn.setObjectName("btn_secondary")
-        self.reanalyze_audio_style_btn.setProperty("variant", "secondary")
-        self.reanalyze_audio_style_btn.setIcon(get_icon("refresh", "#94A3B8", 14))
-        self.reanalyze_audio_style_btn.setIconSize(QSize(14, 14))
-        self.reanalyze_audio_style_btn.setToolTip("Quét lại Style phụ đề theo năng lượng âm thanh")
-        self.reanalyze_audio_style_btn.clicked.connect(self._on_reanalyze_audio_style_clicked)
-        
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         main_layout.addWidget(left_panel, stretch=1)
 
@@ -773,10 +758,14 @@ class SubtitleEditorWidget(QWidget):
         if not has_selection:
             self.editor_group.setTitle("Current Subtitle: None")
             self._is_syncing_ui = True
-            self.inp_start.clear()
-            self.inp_end.clear()
+            if hasattr(self, "current_editor") and hasattr(self.current_editor, "_debounce"):
+                if self.current_editor._debounce.isActive():
+                    self.current_editor._debounce.stop()
+            for widget in (self.inp_start, self.inp_end, self.txt_content):
+                widget.blockSignals(True)
+                widget.clear()
+                widget.blockSignals(False)
             self.lbl_duration.setText("0.000 s")
-            self.txt_content.clear()
             self._is_syncing_ui = False
         self.current_editor.btn_prev.setEnabled(self.current_index > 0)
         self.current_editor.btn_next.setEnabled(
@@ -1002,6 +991,7 @@ class SubtitleEditorWidget(QWidget):
         if not self.all_segments:
             self._visible_source_indices = []
             self._current_page_source_indices = []
+            self.current_page = 0
             self.current_index = -1
             self.lbl_page.setText("1 / 1")
             self.lbl_range_count.setText("0 / 0 phụ đề")
@@ -1079,17 +1069,6 @@ class SubtitleEditorWidget(QWidget):
                 has_error = any(issue.severity is Severity.ERROR for issue in issues)
                 item_id.setText(f"{'❌' if has_error else '⚠'} {item_id.text()}")
                 item_id.setToolTip("\n".join(f"- {issue.message}" for issue in issues))
-
-            preset = seg.get("style_preset", "normal")
-            if preset == "loud":
-                item_id.setText(f"⚡ {item_id.text()}")
-                item_id.setBackground(QColor(255, 230, 0, 18))
-                tip = (item_id.toolTip() + "\n" if item_id.toolTip() else "") + "Style: Nhấn mạnh (Loud)"
-                item_id.setToolTip(tip.strip())
-            elif preset == "whisper":
-                item_id.setText(f"🤫 {item_id.text()}")
-                tip = (item_id.toolTip() + "\n" if item_id.toolTip() else "") + "Style: Thì thầm (Whisper)"
-                item_id.setToolTip(tip.strip())
 
             self.table.setItem(row, self.COL_STT, item_id)
             self._set_table_item(row, self.COL_START, start_text)
@@ -1315,34 +1294,26 @@ class SubtitleEditorWidget(QWidget):
         act_add_playhead.setIcon(get_icon("plus", "#94A3B8", 14))
         menu.addSeparator()
 
-        # 1. Chỉ giữ lại nhận diện âm thanh Whisper cho câu lẻ / nhiều câu
+        # 1. Nhận diện âm thanh Whisper, Gộp câu và Xóa câu
         act_merge = None
         if count > 1:
             act_asr = menu.addAction(f"Nhận diện âm thanh Whisper ({count} câu đã chọn)")
             act_asr.setIcon(get_icon("mic", "#94A3B8", 14))
-            act_translate = menu.addAction(f"Chuyển {count} câu đã chọn sang Dịch thuật AI")
-            act_translate.setIcon(get_icon("globe", "#94A3B8", 14))
             act_merge = menu.addAction(f"Gộp {count} câu đã chọn (Ctrl+M)")
             act_merge.setIcon(get_icon("layers", "#94A3B8", 14))
         else:
             act_asr = menu.addAction("Nhận diện âm thanh câu này")
             act_asr.setIcon(get_icon("mic", "#94A3B8", 14))
-            act_translate = menu.addAction("Chuyển câu này sang Dịch thuật AI")
-            act_translate.setIcon(get_icon("globe", "#94A3B8", 14))
             if selected_indices[0] < len(self.all_segments) - 1:
                 act_merge = menu.addAction("Gộp với câu tiếp theo (Ctrl+M)")
                 act_merge.setIcon(get_icon("layers", "#94A3B8", 14))
 
         menu.addSeparator()
-        style_menu = menu.addMenu("Đặt Style")
-        style_menu.setIcon(get_icon("sliders", "#94A3B8", 14))
-        act_normal = style_menu.addAction("Normal (Mặc định)")
-        act_loud = style_menu.addAction("Loud (Nhấn mạnh)")
-        act_whisper = style_menu.addAction("Whisper (Thì thầm)")
-
-        menu.addSeparator()
-        act_reanalyze = menu.addAction("Quét lại âm lượng")
-        act_reanalyze.setIcon(get_icon("refresh", "#94A3B8", 14))
+        delete_label = (
+            f"Xóa {count} câu đã chọn (Delete)" if count > 1 else "Xóa câu này (Delete)"
+        )
+        act_delete = menu.addAction(delete_label)
+        act_delete.setIcon(get_icon("trash", "#F87171", 14))
 
         action = menu.exec(self.table.viewport().mapToGlobal(pos))
         if action == act_insert_after:
@@ -1354,82 +1325,13 @@ class SubtitleEditorWidget(QWidget):
             self.manual_add_requested.emit(-1)
         elif action == act_asr:
             self.batch_scan_requested.emit(selected_indices)
-        elif action == act_translate:
-            self.send_to_translation_requested.emit(selected_indices)
         elif act_merge is not None and action == act_merge:
             self.trigger_merge(explicit_indices=selected_indices)
-        elif action == act_normal:
-            self._set_style_preset_for_indices(selected_indices, "normal")
-        elif action == act_loud:
-            self._set_style_preset_for_indices(selected_indices, "loud")
-        elif action == act_whisper:
-            self._set_style_preset_for_indices(selected_indices, "whisper")
-        elif action == act_reanalyze:
-            self._on_reanalyze_audio_style_clicked(selected_indices)
-
-    def _set_style_preset_for_indices(self, indices: list[int], new_preset: str):
-        """Thay đổi style preset có hỗ trợ hoàn tác Undo/Redo."""
-        from core.subtitle_editing.commands.edit_style_command import EditStyleCommand
-        changes = []
-        for idx in indices:
-            old_p = self.all_segments[idx].get("style_preset", "normal")
-            if old_p != new_preset:
-                changes.append({"index": idx, "old_preset": old_p, "new_preset": new_preset})
-        if not changes:
-            return
-        cmd = EditStyleCommand(changes, self.all_segments)
-        if self.undo_manager:
-            self.undo_manager.push(cmd)
-        else:
-            cmd.redo()
-        self.render_page()
-        self.live_edit_applied.emit(self.all_segments)
-
-        # Bổ sung: Ép Video Player vẽ lại ngay lập tức tại vị trí hiện tại
-        main_win = self.window()
-        if hasattr(main_win, "video_player") and hasattr(main_win.video_player, "refresh_current_subtitle"):
-            main_win.video_player.refresh_current_subtitle()
-        if hasattr(main_win, "inspector_panel"):
-            main_win.inspector_panel.set_current_preset(new_preset)
-        if hasattr(main_win, "project_service") and main_win.project_service:
-            main_win.project_service.mark_dirty()
-
-    def _on_reanalyze_audio_style_clicked(self, target_indices=None):
-        """Quét lại Style theo năng lượng âm thanh cho nhóm dòng mục tiêu hoặc toàn bộ."""
-        if not target_indices or not isinstance(target_indices, (list, set)):
-            target_indices = self._get_selected_source_indices()
-            if not target_indices:
-                target_indices = list(range(len(self.all_segments)))
-        if not target_indices or not self.all_segments:
-            return
-
-        win = self.window()
-        video_path = win.get_current_video_path() if hasattr(win, "get_current_video_path") else getattr(win, "current_vid", None)
-        if not video_path or not os.path.exists(video_path):
-            Toast.show_warning(win, "Chưa có video nguồn để phân tích âm thanh.")
-            return
-
-        try:
-            from core.subtitle_quality.audio_energy_analyzer import AudioEnergyAnalyzer
-            from core.subtitle_editing.commands.edit_style_command import EditStyleCommand
-            peaks = AudioEnergyAnalyzer.get_peaks_data(video_path)
-            old_presets = {i: self.all_segments[i].get("style_preset", "normal") for i in target_indices}
-            AudioEnergyAnalyzer.analyze_segments(peaks, self.all_segments, target_indices=target_indices)
-
-            changes = [
-                {"index": i, "old_preset": old_presets[i], "new_preset": self.all_segments[i].get("style_preset", "normal")}
-                for i in target_indices
-                if old_presets[i] != self.all_segments[i].get("style_preset", "normal")
-            ]
-            if changes and self.undo_manager:
-                cmd = EditStyleCommand(changes, self.all_segments)
-                self.undo_manager.push(cmd)
-
-            self.render_page()
-            self.live_edit_applied.emit(self.all_segments)
-            Toast.show_success(win, f"⚡ Đã cập nhật Style cho {len(target_indices)} dòng phụ đề.", duration_ms=3000)
-        except Exception as e:
-            Toast.show_error(win, f"Lỗi phân tích âm thanh: {e}")
+        elif action == act_delete:
+            if self.isSignalConnected(QMetaMethod.fromSignal(self.delete_requested)):
+                self.delete_requested.emit(list(selected_indices))
+            else:
+                self.trigger_delete(explicit_indices=selected_indices)
 
     def _on_table_selection_changed(self):
         if getattr(self, "_is_syncing_ui", False) or getattr(self, "is_rendering", False):
@@ -1667,13 +1569,6 @@ class SubtitleEditorWidget(QWidget):
         self.update_empty_state()
         self._is_syncing_ui = False
 
-    def _emit_tm_suggestion(self):
-        if 0 <= self.current_index < len(self.all_segments):
-            seg = self.all_segments[self.current_index]
-            orig = seg.get("original_text", "").strip()
-            if orig and orig != "[Unknown Source]":
-                self.request_tm_suggestion.emit(orig)
-
     def _load_current_editor(self):
         if self._is_applying_current_editor:
             return
@@ -1694,7 +1589,6 @@ class SubtitleEditorWidget(QWidget):
             seg_sid = str(seg.get("id") or seg.get("stt") or (self.current_index + 1))
             if getattr(self, "_recovery_segment_id", None) not in (None, seg_sid):
                 self.hide_scan_recovery_banner()
-            self._tm_debounce.start()
             txt = str(seg.get("text", "")).strip()
             has_sub = bool(txt and txt != "[ Chưa có nội dung ]")
             if hasattr(self.current_editor, "btn_scan"):
@@ -1907,10 +1801,61 @@ class SubtitleEditorWidget(QWidget):
     def _display_time_value(value):
         return ms_to_time_str(value) if isinstance(value, (int, float)) else str(value)
 
-    def trigger_delete(self):
-        if not (0 <= self.current_index < len(self.all_segments)) or self.undo_manager is None:
-            return
-        self.undo_manager.push(DeleteCommand(self.current_index, self.all_segments))
+    def trigger_delete(self, explicit_indices=None) -> int:
+        if not self.all_segments or self.undo_manager is None:
+            return 0
+
+        if explicit_indices is not None:
+            raw_indices = list(explicit_indices)
+        else:
+            raw_indices = self._get_selected_source_indices()
+            if not raw_indices and self.selection_controller is not None:
+                raw_indices = list(getattr(self.selection_controller, "selected_indices", []) or [])
+            if not raw_indices and 0 <= self.current_index < len(self.all_segments):
+                raw_indices = [self.current_index]
+
+        indices = sorted(
+            {
+                int(idx)
+                for idx in raw_indices
+                if isinstance(idx, int) and not isinstance(idx, bool) and 0 <= idx < len(self.all_segments)
+            }
+        )
+        if not indices:
+            return 0
+
+        if self.current_index in indices:
+            if hasattr(self, "current_editor") and hasattr(self.current_editor, "_debounce"):
+                if self.current_editor._debounce.isActive():
+                    self.current_editor._debounce.stop()
+            if hasattr(self, "_tm_debounce") and self._tm_debounce.isActive():
+                self._tm_debounce.stop()
+            self._loaded_editor_key = None
+
+        self.hide_scan_recovery_banner()
+        self.undo_manager.push(DeleteCommand(indices, self.all_segments))
+        self.render_page()
+
+        if not self.all_segments:
+            self.current_index = -1
+            self.current_page = 0
+            if self.selection_controller is not None:
+                self.selection_controller.clear_selection(SelectionSource.EDITOR)
+            self.update_empty_state()
+        else:
+            next_idx = min(indices[0], len(self.all_segments) - 1)
+            next_seg = self.all_segments[next_idx]
+            if self.selection_controller is not None:
+                self.selection_controller.select(
+                    next_idx, next_seg.get("id"), SelectionSource.EDITOR
+                )
+            self._select_segment_ui(next_idx, source=SelectionSource.EDITOR)
+
+        self.live_edit_applied.emit(self.all_segments)
+        project_service = getattr(self, "project_service", None)
+        if project_service is not None and callable(getattr(project_service, "mark_dirty", None)):
+            project_service.mark_dirty()
+        return len(indices)
 
     def _on_split_applied(self, original_id: str, seg1: dict, seg2: dict):
         self.segment_split_applied.emit(original_id, seg1, seg2)

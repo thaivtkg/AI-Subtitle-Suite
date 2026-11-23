@@ -38,12 +38,10 @@ class LiquidNavWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        # API Contract: Phục hồi đủ 7 Tab khớp NAV_TO_STACK của Gui.py
+        # API Contract: 7 Tab chính (Dashboard, Workspace, Queue, Drafts, Export, Settings, Help)
         self.tabs = [
             {"icon": "📊", "id": 0, "tooltip": "Dashboard"},
             {"icon": "🎬", "id": 1, "tooltip": "Studio Workspace"},
-            {"icon": "🤖", "id": 9, "tooltip": "Phòng Điều Hành AI Agent"},
-            {"icon": "🌐", "id": 8, "tooltip": "Dịch thuật AI"},
             {"icon": "📋", "id": 3, "tooltip": "Queue & Output"},
             {"icon": "📦", "id": 4, "tooltip": "Draft Center"},
             {"icon": "🚀", "id": 5, "tooltip": "Export Center"},

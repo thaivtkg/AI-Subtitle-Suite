@@ -194,3 +194,54 @@ def test_flow_add_manual_timing_toolbar_at_playhead(timeline_driver):
     assert new_seg["end"] == "00:00:06,000"
     assert new_seg["start_ms"] == 4000
     assert new_seg["end_ms"] == 6000
+
+
+def test_flow_timeline_bulk_delete_button_and_atomic_undo(timeline_driver):
+    """
+    User Flow (Bulk Delete via Timeline Toolbar btn_timeline_batch_delete):
+    1. Load 4 segments.
+    2. Multi-select non-contiguous segments #1 and #3 via SelectionController (Timeline).
+    3. Verify btn_timeline_batch_delete shows 'Xóa (2 câu)' and is enabled.
+    4. Click btn_timeline_batch_delete via POM Page Object (confirm Yes).
+    5. Verify 2 segments remain with renumbered STT and synced Timeline.
+    6. Trigger Undo -> all 4 segments restored atomically.
+    """
+    from unittest.mock import patch
+    from PySide6.QtWidgets import QMessageBox
+    from core.subtitle_editing.selection_controller import SelectionSource
+
+    win, driver, timeline_page, sub_page = timeline_driver
+    segs = [
+        {
+            "id": f"bd-{i}",
+            "stt": str(i),
+            "start": f"00:00:{i * 3:02d},000",
+            "end": f"00:00:{i * 3 + 2:02d},000",
+            "start_ms": i * 3000,
+            "end_ms": i * 3000 + 2000,
+            "text": f"Câu {i}",
+            "style_preset": "normal",
+        }
+        for i in range(1, 5)
+    ]
+    timeline_page.load_segments(segs, duration_ms=20000)
+
+    win.selection_controller.select_multiple([0, 2], {"bd-1", "bd-3"}, SelectionSource.TIMELINE)
+    timeline_page.wait_ms(30)
+
+    btn_del = timeline_page.btn_timeline_batch_delete
+    assert btn_del is not None
+    assert btn_del.isEnabled() is True
+    assert btn_del.text() == "Xóa (2 câu)"
+
+    with patch.object(QMessageBox, "question", return_value=QMessageBox.Yes):
+        timeline_page.click_batch_delete()
+
+    assert [s["id"] for s in win.sub_editor.all_segments] == ["bd-2", "bd-4"]
+    assert [s["stt"] for s in win.sub_editor.all_segments] == ["1", "2"]
+    assert timeline_page.get_segment_count() == 2
+
+    win.undo_manager.undo()
+    timeline_page.wait_ms(30)
+    assert [s["id"] for s in win.sub_editor.all_segments] == ["bd-1", "bd-2", "bd-3", "bd-4"]
+    assert timeline_page.get_segment_count() == 4

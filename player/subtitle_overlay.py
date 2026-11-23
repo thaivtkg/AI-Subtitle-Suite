@@ -99,17 +99,13 @@ class SubtitleOverlay(QLabel):
         self.update()
 
     def get_active_resolved_style(self, custom_presets: dict | None = None) -> dict:
-        preset = getattr(self.render_input, "style_preset", None) if self.render_input else None
-        global_s = {
+        return {
             "font_name": self.font_family,
             "font_size": self.font_size,
             "font_color": self.text_color.name(),
             "outline_color": self.outline_color.name(),
             "outline_width": self.outline_width,
         }
-        from core.subtitle_quality.style_preset_resolver import StylePresetResolver
-        presets = custom_presets if custom_presets is not None else getattr(self, "custom_presets", None)
-        return StylePresetResolver.resolve_style(preset, global_s, custom_presets=presets)
 
     def get_active_font(self) -> tuple[QFont, QColor, float, QColor]:
         resolved = self.get_active_resolved_style()

@@ -523,33 +523,13 @@ class TimingBatchService(QObject):
             raw_next_idx = getattr(project.state.timing, "next_segment_index", 1)
             start_segment_index = raw_next_idx if isinstance(raw_next_idx, int) else 1
         start_segment_index = max(1, int(start_segment_index))
-        from core.subtitle_generation.language_utils import (
-            extract_glossary_hotwords,
-            extract_natural_initial_prompt,
-            merge_hotwords,
-            normalize_to_iso_code,
-        )
-        from core.subtitle_generation.faster_whisper_service import FasterWhisperService
         from core.services.model_manager import ModelManager
 
         effective_model = str(settings.get("specialized_model") or "").strip() or settings["model_size"]
         spec_info = ModelManager.get_specialized_info(effective_model)
         eff_lang = settings.get("language", None) or (spec_info["language"] if spec_info else None)
-        iso_lang = normalize_to_iso_code(eff_lang)
-        # Distilled models (kotoba/distil) degrade sharply and skip speech when fed Whisper prompts/hotwords.
-        if ModelManager.supports_word_timestamps(effective_model) and not FasterWhisperService.is_kotoba_model(effective_model):
-            tx_ctx = getattr(project, "transcription_context", None)
-            hotwords = extract_glossary_hotwords(tx_ctx)
-            req_hotwords = merge_hotwords(settings.get("hotwords"), hotwords, sep=" ")
-            # Không truyền Tóm tắt cốt truyện (tx_ctx.context) vào initial_prompt ASR
-            raw_prompt = str(settings.get("initial_prompt") or "").strip()
-            if FasterWhisperService.is_large_v3_model(effective_model):
-                req_initial_prompt = extract_natural_initial_prompt(raw_prompt, iso_lang) or ""
-            else:
-                req_initial_prompt = raw_prompt
-        else:
-            req_initial_prompt = ""
-            req_hotwords = ""
+        req_initial_prompt = ""
+        req_hotwords = ""
 
         request = TimingRunRequest(
             video_path=project.source.path,

@@ -154,6 +154,7 @@ class HotkeysCheatsheetDialog(QDialog):
         content_layout.addWidget(self._create_hotkey_row(["Ctrl", "M"], "Gộp các phân đoạn đã chọn (Merge)"))
         content_layout.addWidget(self._create_hotkey_row(["Ctrl", "Shift", "S"], "Tách phân đoạn tại vị trí hiện tại (Split)"))
         content_layout.addWidget(self._create_hotkey_row(["Ctrl", "K"], "Cắt phân đoạn tại con trỏ phát (Split at Playhead)"))
+        content_layout.addWidget(self._create_hotkey_row(["Delete"], "Xóa câu / xóa hàng loạt câu đang chọn (Editor & Timeline)"))
         content_layout.addWidget(self._create_hotkey_row(["Ctrl", "Z"], "Hoàn tác thao tác trước đó (Undo)"))
         content_layout.addWidget(self._create_hotkey_row(["Ctrl", "Y"], "Làm lại thao tác vừa hoàn tác (Redo)"))
 
@@ -175,16 +176,6 @@ class HotkeysCheatsheetDialog(QDialog):
         content_layout.addWidget(self._create_hotkey_row(["Ctrl", "S"], "Lưu dự án hiện tại (Save Project)"))
         content_layout.addWidget(self._create_hotkey_row(["Ctrl", "Shift", "E"], "Xuất file phụ đề SRT (Export)"))
         content_layout.addWidget(self._create_hotkey_row(["F1"], "Bật / Tắt Bảng tra cứu phím tắt này"))
-
-        content_layout.addWidget(self._create_divider())
-
-        # --- NHÓM 4: DỊCH THUẬT AI (CAT TRANSLATION STUDIO) ---
-        content_layout.addWidget(self._create_group_header("✦ DỊCH THUẬT AI (CAT TRANSLATION STUDIO)"))
-        content_layout.addWidget(self._create_hotkey_row(["Ctrl", "Enter"], "Duyệt câu dịch & Tự động sang câu sau (Accept)"))
-        content_layout.addWidget(self._create_hotkey_row(["Ctrl", "T"], "Kích hoạt dịch AI câu hiện tại (AI Translate)"))
-        content_layout.addWidget(self._create_hotkey_row(["Alt", "▲ / ▼"], "Di chuyển nhanh lên câu trước / xuống câu sau"))
-        content_layout.addWidget(self._create_hotkey_row(["Ctrl", "G"], "Thêm từ bôi đen vào Thuật ngữ (Add to Glossary)"))
-        content_layout.addWidget(self._create_hotkey_row(["Ctrl", "F"], "Tìm kiếm trong danh sách phụ đề"))
 
         content_layout.addStretch()
         scroll.setWidget(content_widget)

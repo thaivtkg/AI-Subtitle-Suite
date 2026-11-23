@@ -28,7 +28,7 @@ def test_short_fast_seek_retries_accurate_seek(monkeypatch, fast_frames):
         with wave.open(path) as audio:
             assert audio.getnframes() == 32000
         assert len(commands) == (1 if fast_frames == 32000 else 2)
-        assert all("volume=2.0" in command for command in commands)
+        assert all(any("volume=2.0" in arg and "alimiter=" in arg for arg in command) for command in commands)
     finally:
         shutil.rmtree(directory)
 

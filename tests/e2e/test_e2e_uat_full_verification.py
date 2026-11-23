@@ -154,26 +154,12 @@ def test_e2e_uat_full_acceptance_suite(live_studio_app, tmp_path, monkeypatch, q
         win.grab().save(os.path.join(screenshot_dir, "uat_step4_audio_boost_checked.png"))
 
     # =========================================================================
-    # Step 5: UAT-05: Tab Style Presets & Instant Refresh
+    # Step 5: UAT-05: Tab Style Base Style & Instant Refresh
     # =========================================================================
-    with runner.step("UAT-05: Kiem tra tab Style tach khoi va lam moi preview tuc thi", timeout_ms=5000):
+    with runner.step("UAT-05: Kiem tra tab Style va lam moi preview tuc thi", timeout_ms=5000):
         inspector = win.inspector_panel
-        assert hasattr(inspector, "cmb_preset")
-        assert hasattr(inspector, "lbl_preset_hint")
-
-        # Select 'loud' preset
-        loud_idx = inspector.cmb_preset.findData("loud")
-        assert loud_idx >= 0
-        inspector.cmb_preset.setCurrentIndex(loud_idx)
-        qapp.processEvents()
-
-        # Verify segment 0 is updated with 'loud'
-        assert win.sub_editor.all_segments[0].get("style_preset") == "loud"
-
-        # Verify VideoPlayer has been notified / refreshed
+        assert hasattr(inspector, "spin_size")
         assert hasattr(win.video_player, "refresh_current_subtitle")
-
-        # Capture visual proof
         win.grab().save(os.path.join(screenshot_dir, "uat_step5_style_preset_instant_refresh.png"))
 
     # =========================================================================

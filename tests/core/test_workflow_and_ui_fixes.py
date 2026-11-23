@@ -122,11 +122,6 @@ def test_bug_drawer_001_switching_page_hides_overlay_host(qapp, tmp_path):
     assert not win.overlay_host.isVisible()
     assert not win.btn_drawer_toggle.isVisible()
     
-    # Chuyển sang Dịch thuật AI (tab 8)
-    win.switch_page(8)
-    assert not win.overlay_host.isVisible()
-    assert not win.btn_drawer_toggle.isVisible()
-    
     # Quay lại Studio Workspace (tab 1) -> Tự động khôi phục trạng thái mở của drawer
     win.switch_page(1)
     assert win.overlay_host.isVisible()
@@ -171,32 +166,4 @@ def test_bug_nav_001_page_title_updates_to_draft_center(qapp, tmp_path):
     
     win.switch_page(5)
     assert win.lbl_page_title.text() == "Export Center"
-    
-    win.switch_page(8)
-    assert win.lbl_page_title.text() == "Dịch thuật AI"
     win.close()
-
-
-def test_bug_qml_teardown_001_cancel_translation_safe_when_model_deleted():
-    from core.translation.controllers.translation_controller import TranslationController
-    
-    mock_model = MagicMock()
-    controller = TranslationController(subtitle_model=mock_model)
-    
-    # Giả lập khi SubtitleModel đã bị QML/C++ xóa (shiboken6.isValid trả về False hoặc ném RuntimeError)
-    controller._is_model_valid = lambda: False
-    controller._active_translation_index = 0
-    controller._status = "TRANSLATING"
-    
-    # Hủy dịch trong trạng thái C++ model đã chết
-    controller.cancelTranslation()
-    
-    # Đảm bảo không ném ngoại lệ và trạng thái được reset về PENDING
-    assert controller._status == "PENDING"
-    mock_model.update_translation.assert_not_called()
-    
-    # Kiểm tra các callback worker cũng an toàn tuyệt đối
-    controller.on_progress(0, "text")
-    controller.on_finished(0, "text")
-    controller.on_error(0, "err")
-    mock_model.update_translation.assert_not_called()

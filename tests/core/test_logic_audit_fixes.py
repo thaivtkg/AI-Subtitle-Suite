@@ -5,8 +5,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from core.Backend import _build_multistyle_ass
-from core.database.glossary_manager import GlossaryManager
-from core.database.tm_manager import TranslationMemoryManager
 from core.project.source_fingerprint import SourceInfo
 from core.recovery.recovery_models import RecoveryManifest, RecoveryWorkingState
 from core.recovery.recovery_validator import RecoveryValidator
@@ -21,105 +19,6 @@ from core.subtitle_generation.subtitle_generation_request import SubtitleGenerat
 from core.subtitle_placement import SubtitlePlacementState
 from core.timeline.timeline_controller import TimelineController
 from core.timeline.timeline_data_provider import TimelineDataProvider
-from core.translation.batch_translator import TranslationBatchWorker
-from core.translation.controllers.project_controller import ProjectController
-from core.translation.controllers.translation_controller import TranslationController
-from core.translation.models.subtitle import SubtitleModel
-from ui.pages.translation_studio_page import TranslationStudioPage
-
-
-def test_cat_update_current_translation_and_tm_hit_reset(qapp):
-    model = SubtitleModel()
-    model.load_data([
-        {"index": 1, "original": "Hello", "translation": "", "status": "PENDING", "studio_index": 0},
-        {"index": 2, "original": "World", "translation": "", "status": "PENDING", "studio_index": 1},
-    ])
-    tc = TranslationController(subtitle_model=model)
-    tc.loadSubtitle(0)
-
-    # Idle manual edit must persist into current row (0)
-    tc.updateCurrentTranslation("Xin chao")
-    assert model.get_item(0)["translation"] == "Xin chao"
-    assert model.get_item(0)["status"] == "EDITED"
-
-    # Simulate row 1 translating while user edits row 0: must not clobber row 1
-    tc._active_translation_index = 1
-    tc.updateCurrentTranslation("Chao ban")
-    assert model.get_item(1)["translation"] == ""
-
-    # TM exact match must clear _active_translation_index so revisiting row 0 does not lock as TRANSLATING
-    tc._active_translation_index = -1
-    tc.bind_intelligence(translation_memory=SimpleNamespace(lookup=lambda text: SimpleNamespace(target_text="The gioi")))
-    tc.loadSubtitle(1)
-    tc.requestTranslation(1, "English", "Vietnamese", "")
-    assert tc._active_translation_index == -1
-    tc.loadSubtitle(0)
-    tc.loadSubtitle(1)
-    assert tc.status == "TRANSLATED"
-
-
-def test_request_translation_gate_emits_failed_and_preserves_explicit_source_lang(qapp):
-    model = SubtitleModel()
-    model.load_data([
-        {"index": 1, "original": "", "translation": "", "status": "PENDING"},
-        {"index": 2, "original": "Go to the café", "translation": "", "status": "PENDING"},
-    ])
-    tc = TranslationController(subtitle_model=model)
-    failed = []
-    tc.translationFailed.connect(lambda idx, msg: failed.append((idx, msg)))
-
-    # Gate 1 empty segment must emit translationFailed
-    tc.requestTranslation(0, "English", "Vietnamese", "")
-    assert failed and failed[-1][0] == 0
-
-    # Gate 2 explicit source_lang="English" must not be overwritten by Vietnamese diacritic detection on "café"
-    tc.loadSubtitle(1)
-    assert tc._current_source_language == "Vietnamese"
-    tc._model_controller = SimpleNamespace(hasValidModel=False)
-    tc.requestTranslation(1, "English", "Vietnamese", "")
-    assert failed[-1][0] == 1
-    assert "Ngôn ngữ nguồn" not in failed[-1][1]
-
-
-def test_translation_studio_sync_no_tier4_collision_and_preserves_studio_index(qapp, tmp_path):
-    page = TranslationStudioPage()
-    studio = [
-        {"id": "1", "stt": 1, "start": 0, "end": 1000, "text": "Done", "original_text": "Done", "translation": "Xong", "translation_status": "ACCEPTED"},
-        {"id": "2", "stt": 2, "start": 1000, "end": 2000, "text": "Second", "original_text": "Second", "translation": "Hai", "translation_status": "TRANSLATED"},
-    ]
-    page.load_subtitles_from_studio(studio)
-    # Segment #1 was skipped (ACCEPTED), so CAT row 0 is segment #2 with studio_index=1
-    assert page._find_cat_index("1") == -1
-
-    # Splitting segment #2 keeps base studio_index=1 (and second child gets 2)
-    page.handle_segment_split(
-        "2",
-        {"id": "2a", "stt": 2, "start": 1000, "end": 1500, "text": "Sec"},
-        {"id": "2b", "stt": 3, "start": 1500, "end": 2000, "text": "ond"},
-    )
-    assert page.subtitle_model.get_item(0)["studio_index"] == 1
-    assert page.subtitle_model.get_item(1)["studio_index"] == 2
-
-    # Deleting segment 2a in Studio -> export must NOT re-append stale CAT items
-    small_studio = [studio[0]]
-    page.export_subtitles_to_studio(small_studio)
-    assert len(small_studio) == 1
-
-    # Guard 2 protects rescanned Studio segment whose original_text changed
-    page2 = TranslationStudioPage()
-    s2 = [{"id": "s1", "stt": 1, "start": 0, "end": 1000, "text": "Old speech", "original_text": "Old speech"}]
-    page2.load_subtitles_from_studio(s2)
-    page2.subtitle_model.update_translation(0, "Ban dich cu", "TRANSLATED")
-    live_studio = [{"id": "s1", "stt": 1, "start": 0, "end": 1000, "text": "Rescanned speech", "original_text": "Rescanned speech"}]
-    page2.export_subtitles_to_studio(live_studio)
-    assert live_studio[0].get("translation", "") == ""
-
-    # save_translation_project uses detected source_language instead of hardcoded English
-    page2.project_controller._source_language = "Japanese"
-    aisrt = tmp_path / "proj.aisrt"
-    page2.save_translation_project(str(aisrt))
-    saved = json.loads(aisrt.read_text(encoding="utf-8"))
-    assert saved["metadata"]["source_language"] == "Japanese"
 
 
 def test_recovery_validator_accepts_srt_timestamps():
@@ -167,26 +66,6 @@ def test_model_manager_exact_match_does_not_delete_large_v3_turbo(tmp_path, monk
     assert ModelManager.is_installed("large-v3") is False
     assert ModelManager.delete_model("large-v3") is False
     assert turbo_dir.exists()
-
-
-def test_tm_fts5_boolean_keywords_and_glossary_upsert_id(tmp_path):
-    tm = TranslationMemoryManager(":memory:")
-    try:
-        tm.add_segment("NOW OR NEVER", "Ngay bây giờ hoặc không bao giờ", lang_pair="en-vi", domain="general")
-        tm.add_segment("A AND B NOT C", "A và B", lang_pair="fr-vi", domain="other")
-        matches = tm.find_matches("NOW OR NEVER!", lang_pair="en-vi", domain="general", threshold=0.5)
-        assert len(matches) == 1
-        assert matches[0].lang_pair == "en-vi"
-        assert tm.find_matches("A AND B NOT C!", lang_pair="en-vi", domain="general", threshold=0.5) == []
-    finally:
-        tm.close()
-
-    gm = GlossaryManager(str(tmp_path / "glossary.db"))
-    id1 = gm.add_entry("Hero", "Anh hung")
-    gm.add_entry("Villain", "Phan dien")
-    id_upsert = gm.add_entry("Hero", "Nguoi hung")
-    assert id1 > 0
-    assert id_upsert == id1
 
 
 def test_selection_controller_clear_after_multi_select():
@@ -273,40 +152,6 @@ def test_range_generation_preserves_history_and_conflict_strategies(tmp_path):
         assert svc._range_committed is True
         saved_segs = json.loads(art_path.read_text(encoding="utf-8"))["segments"]
         assert [s["text"] for s in saved_segs] == ["New"]
-
-
-def test_batch_translator_contract_and_project_controller_fixes(qapp, tmp_path):
-    worker = TranslationBatchWorker(
-        service=MagicMock(),
-        tm_manager=MagicMock(),
-        glossary_manager=MagicMock(),
-        segments=[{"stt": "1", "start": 1000, "end": 2500, "text": "Hello"}],
-        source_lang="English",
-        target_lang="Vietnamese",
-    )
-    formatted = worker._format_srt_chunk(worker.segments)
-    assert "00:00:01,000 --> 00:00:02,500" in formatted
-    parsed = worker._parse_and_validate("1\n00:00:01,000 --> 00:00:02,500\nXin chao\n", worker.segments)
-    assert parsed[0]["original_text"] == "Hello"
-    assert parsed[0]["text"] == "Xin chao"
-
-    sub_model = SubtitleModel()
-    pc = ProjectController(sub_model)
-    sub_model.load_data([{"index": 1, "original": "Foo bar", "translation": "", "status": "PENDING"}])
-    pc.executeFindReplace("Foo", "Baz", scope="ORIGINAL")
-    assert sub_model.get_item(0)["status"] == "PENDING"
-    pc.entity_dictionary._entries["Hero"] = SimpleNamespace(canonical_translation="Anh hung")
-    pc.closeProject()
-    assert pc.entity_dictionary._entries == {}
-
-    aisrt = tmp_path / "p.aisrt"
-    aisrt.write_text(json.dumps({
-        "metadata": {"source_language": "Japanese", "target_language": "Vietnamese"},
-        "intelligence": {"archetype": "Pure", "pronoun_pair": "Em - Tiền bối"},
-        "subtitles": [{"index": 1, "original": "こんにちは", "translation": "", "status": "PENDING"}],
-    }), encoding="utf-8")
-    pc.loadProject(str(aisrt))
-    assert pc._active_pronoun_pair == "Em - Tiền bối"
 
 
 def test_timeline_delete_syncs_before_undo_state_changed(qapp):

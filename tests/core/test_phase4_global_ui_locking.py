@@ -149,9 +149,8 @@ class TestSubtitleGenerationPanelUILocking:
             "chk_music_mode", "btn_download_model", "btn_delete_model",
             "cmb_subtitle_source", "btn_add_external_srt", "cmb_range_unit",
             "txt_start", "txt_end", "btn_range_timeline", "btn_range_preview",
-            "btn_context_edit",
         ]
-        assert len(controls) == 17
+        assert len(controls) == 16
         for ctrl_name in controls:
             ctrl = getattr(panel, ctrl_name, None)
             assert ctrl is not None, f"Control {ctrl_name} not found on panel"
@@ -186,9 +185,8 @@ class TestSubtitleGenerationPanelUILocking:
             "chk_music_mode", "btn_download_model", "btn_delete_model",
             "cmb_subtitle_source", "btn_add_external_srt", "cmb_range_unit",
             "txt_start", "txt_end", "btn_range_timeline", "btn_range_preview",
-            "btn_context_edit",
         ]
-        assert len(controls) == 17
+        assert len(controls) == 16
         for ctrl_name in controls:
             ctrl = getattr(panel, ctrl_name, None)
             assert ctrl is not None, f"Control {ctrl_name} not found on panel"

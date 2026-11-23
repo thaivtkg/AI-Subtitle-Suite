@@ -92,9 +92,22 @@ def _probe_video_resolution(video_path):
     return int(streams[0]["width"]), int(streams[0]["height"])
 
 
+def _parse_ass_time_to_ms(val) -> int:
+    if isinstance(val, bool):
+        return 0
+    if isinstance(val, int):
+        return max(0, val)
+    if isinstance(val, float):
+        return max(0, int(round(val * 1000)))
+    raw = str(val or "").strip()
+    if not raw:
+        return 0
+    from core.srt_parser import time_str_to_ms
+    return max(0, int(time_str_to_ms(raw)))
+
+
 def _format_ass_timestamp(val) -> str:
-    from core.subtitle_quality.audio_energy_analyzer import AudioEnergyAnalyzer
-    ms = AudioEnergyAnalyzer.parse_time_to_ms(val)
+    ms = _parse_ass_time_to_ms(val)
     total_cs = max(0, ms) // 10
     hours, remainder = divmod(total_cs, 360000)
     minutes, centiseconds = divmod(remainder, 6000)
@@ -117,15 +130,11 @@ def _resolve_placement_xy(placement_state) -> tuple[float, float]:
 
 def _build_multistyle_ass(segments, width, height, placement_state, global_style, custom_presets=None):
     from core import subtitle_ass
-    from core.subtitle_quality.style_preset_resolver import StylePresetResolver
 
     global_s = dict(global_style or {})
     font_name = str(global_s.get("font_name", "Segoe UI")).replace(",", " ")
     base_size = int(global_s.get("font_size", 20) or 20)
     outline_normal = float(global_s.get("outline_width", 2.0) or 2.0)
-
-    loud_s = StylePresetResolver.resolve_style("loud", global_s, custom_presets=custom_presets)
-    whisper_s = StylePresetResolver.resolve_style("whisper", global_s, custom_presets=custom_presets)
 
     def hex_to_ass_color(hex_str: str) -> str:
         hex_clean = str(hex_str).lstrip("#")
@@ -135,19 +144,7 @@ def _build_multistyle_ass(segments, width, height, placement_state, global_style
         return "&H00FFFFFF"
 
     color_normal = hex_to_ass_color(global_s.get("font_color", "#FFFFFF"))
-    color_loud = hex_to_ass_color(loud_s.get("font_color", "#FFE600"))
-    color_whisper = hex_to_ass_color(whisper_s.get("font_color", "#D0D0D0"))
-    color_loud_outline = hex_to_ass_color(loud_s.get("outline_color", "#000000"))
-    color_whisper_outline = hex_to_ass_color(whisper_s.get("outline_color", "#000000"))
-
-    loud_size = loud_s.get("font_size", int(round(base_size * 1.20)))
-    whisper_size = whisper_s.get("font_size", int(round(base_size * 0.85)))
-    loud_bold = -1 if loud_s.get("bold", True) else 0
-    loud_italic = -1 if loud_s.get("italic", False) else 0
-    loud_outline = float(loud_s.get("outline_width", 3.5))
-    whisper_bold = -1 if whisper_s.get("bold", False) else 0
-    whisper_italic = -1 if whisper_s.get("italic", True) else 0
-    whisper_outline = float(whisper_s.get("outline_width", 1.5))
+    color_outline = hex_to_ass_color(global_s.get("outline_color", "#000000"))
 
     header = f"""[Script Info]
 ScriptType: v4.00+
@@ -157,9 +154,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Style_Normal,{font_name},{base_size},{color_normal},{color_normal},&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,{outline_normal},0,5,10,10,10,1
-Style: Style_Loud,{font_name},{loud_size},{color_loud},{color_loud},{color_loud_outline},&H00000000,{loud_bold},{loud_italic},0,0,100,100,0,0,1,{loud_outline},0,5,10,10,10,1
-Style: Style_Whisper,{font_name},{whisper_size},{color_whisper},{color_whisper},{color_whisper_outline},&H00000000,{whisper_bold},{whisper_italic},0,0,100,100,0,0,1,{whisper_outline},0,5,10,10,10,1
+Style: Style_Normal,{font_name},{base_size},{color_normal},{color_normal},{color_outline},&H00000000,0,0,0,0,100,100,0,0,1,{outline_normal},0,5,10,10,10,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -168,14 +163,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     x, y = _resolve_placement_xy(placement_state)
 
     for seg in segments:
-        preset = (seg.get("style_preset") or "normal").lower().strip()
-        if preset == "loud":
-            style_name = "Style_Loud"
-        elif preset == "whisper":
-            style_name = "Style_Whisper"
-        else:
-            style_name = "Style_Normal"
-
         start_val = seg.get("start_ms") if seg.get("start_ms") is not None else seg.get("start", 0)
         end_val = seg.get("end_ms") if seg.get("end_ms") is not None else seg.get("end", 0)
 
@@ -187,7 +174,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             y,
         )
         dialogues.append(
-            f"Dialogue: 0,{_format_ass_timestamp(start_val)},{_format_ass_timestamp(end_val)},{style_name},,0,0,0,,{text}"
+            f"Dialogue: 0,{_format_ass_timestamp(start_val)},{_format_ass_timestamp(end_val)},Style_Normal,,0,0,0,,{text}"
         )
 
     return header + "\n".join(dialogues) + "\n"

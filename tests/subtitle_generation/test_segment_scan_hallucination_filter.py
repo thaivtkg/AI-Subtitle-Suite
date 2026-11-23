@@ -124,7 +124,7 @@ def test_segment_scan_worker_3tier_fallback_recovers_speech():
     assert captured_requests[1][1] is True
     assert captured_requests[1][2] == 0.2
     assert captured_requests[1][3] == 100
-    assert (captured_requests[1][6], captured_requests[1][7]) == (850, 2150)
+    assert (captured_requests[1][6], captured_requests[1][7]) == (940, 2150)
     # Tier 3: bypass VAD + audio_boost + relaxed no_speech/log_prob
     assert captured_requests[2][0] is False
     assert captured_requests[2][1] is True
@@ -374,7 +374,8 @@ def test_segment_scan_short_clip_phantom_defers_to_tier3_combined_context():
     tier3_batch = captured_batches[2]
     assert tier3_req.use_vad is False
     assert tier3_req.word_timestamps is True
-    assert "さっきの話" in (tier3_req.prompt_context or "")
+    assert (tier3_req.prompt_context or "") == ""
+    assert (tier3_req.hotwords or "") == ""
     assert tier3_batch.start_ms == 1000
     assert tier3_batch.end_ms == 7000
     assert completed == [("seg-3", "待ってくれ")]
@@ -539,6 +540,268 @@ def test_extract_text_for_target_span_edge_punctuation_and_katakana_english_unit
     txt_en, has_out_en = _extract_text_for_target_span(segs_en, 1450, 2100)
     assert txt_en == "world"
     assert has_out_en is True
+
+
+def test_courtesy_hallucination_guard_hard_and_contextual_rules():
+    from core.subtitle_generation.generation_validator import SubtitleGenerationValidator
+    from workers.SegmentScanWorker import _is_short_clip_suspect_hallucination
+
+    # 1) Pure YouTube/presentation endings blocked unconditionally regardless of no_speech_prob
+    for phrase in ("ご清聴ありがとうございました", "ご清聴ありがとうございました。", "次の動画でお会いしましょう", "次の動画でお会いしましょう。"):
+        for nsp in (0.01, 0.05, 0.53, 0.80):
+            assert SubtitleGenerationValidator.is_low_cps_courtesy_hallucination(
+                phrase, duration_s=1.5, no_speech_prob=nsp
+            ) is True
+        assert SubtitleGenerationValidator.filter_hallucinated_segments(
+            [WhisperSegmentResult(start_ms=0, end_ms=1500, text=phrase)]
+        ) == []
+        assert _is_short_clip_suspect_hallucination(phrase) is True
+
+    # 2) Contextual courtesy phrases (including comma/punctuation forms) blocked at no_speech_prob=0.53
+    for phrase in (
+        "はい、ごちそうさまでした",
+        "ごちそうさまでした。",
+        "はい、どうもありがとうございました",
+        "どうもありがとうございました",
+        "はい、ありがとうございました",
+    ):
+        assert SubtitleGenerationValidator.is_low_cps_courtesy_hallucination(
+            phrase, duration_s=1.6, no_speech_prob=0.53
+        ) is True
+
+    assert _is_short_clip_suspect_hallucination("はい、ごちそうさまでした") is True
+    assert _is_short_clip_suspect_hallucination("ごちそうさまでした") is True
+
+    # 3) Clear real speech ("ごちそうさまでした" at low no_speech_prob=0.10, normal 1.6s) MUST be preserved
+    assert SubtitleGenerationValidator.is_low_cps_courtesy_hallucination(
+        "ごちそうさまでした", duration_s=1.6, no_speech_prob=0.10
+    ) is False
+    assert SubtitleGenerationValidator.is_low_cps_courtesy_hallucination(
+        "はい、ごちそうさまでした", duration_s=1.6, no_speech_prob=0.10
+    ) is False
+
+
+def test_ffmpeg_audio_filter_all_four_combinations_no_clipping_chain():
+    from core.subtitle_generation.faster_whisper_service import FasterWhisperService
+
+    f_none = FasterWhisperService.build_ffmpeg_audio_filter(speech_filter=False, audio_boost=False)
+    f_speech = FasterWhisperService.build_ffmpeg_audio_filter(speech_filter=True, audio_boost=False)
+    f_boost = FasterWhisperService.build_ffmpeg_audio_filter(speech_filter=False, audio_boost=True)
+    f_both = FasterWhisperService.build_ffmpeg_audio_filter(speech_filter=True, audio_boost=True)
+
+    assert f_none is None
+    assert f_speech == "highpass=f=80,lowpass=f=7800,dynaudnorm=f=150:g=15"
+    assert f_boost == "volume=2.0,alimiter=limit=0.95:attack=5:release=50"
+    assert f_both == (
+        "highpass=f=80,lowpass=f=7800,dynaudnorm=f=150:g=15:m=20:p=0.92,"
+        "alimiter=limit=0.95:attack=5:release=50"
+    )
+    assert "volume=2.0" not in f_both
+    assert "dynaudnorm" in f_both and "alimiter=limit=0.95" in f_both
+
+
+def test_segment_scan_tier1_exact_and_tier2_tight_left_pad():
+    from workers.SegmentScanWorker import SegmentScanWorker
+
+    captured_windows = []
+
+    class FakeService:
+        def load_model(self, _model_size, _compute_type):
+            pass
+
+        def transcribe_batch(self, _request, batch, _check_cancel):
+            captured_windows.append((batch.start_ms, batch.end_ms))
+            if len(captured_windows) == 1:
+                return SubtitleGenerationResult(batch_id=batch.batch_id, segments=[], error=None)
+            return SubtitleGenerationResult(
+                batch_id=batch.batch_id,
+                segments=[WhisperSegmentResult(start_ms=819900, end_ms=821100, text="気持ちいいもん")],
+                error=None,
+            )
+
+    req = SubtitleGenerationRequest(
+        request_id="req_pad",
+        project_id="p1",
+        source_fingerprint="fp",
+        video_path="dummy.mp4",
+        model_size="large-v3",
+        compute_type="int8_float16",
+        language="ja",
+        use_vad=True,
+        min_silence_ms=300,
+        word_timestamps=True,
+    )
+    completed = []
+    worker = SegmentScanWorker("69", 819890, 821600, req, FakeService())
+    worker.finished_signal.connect(lambda sid, txt: completed.append((sid, txt)))
+    worker.run()
+
+    # Tier 1 must stay exact (no pre-speech pull); Tier 2 uses tight 60ms left pad (not 150ms) and keeps 150ms right pad
+    assert captured_windows[0] == (819890, 821600)
+    assert captured_windows[1] == (819830, 821750)
+    assert captured_windows[1][0] > 819740
+    assert completed == [("69", "気持ちいいもん")]
+
+
+def _make_lv3_request() -> SubtitleGenerationRequest:
+    return SubtitleGenerationRequest(
+        request_id="req_lp_guard",
+        project_id="p1",
+        source_fingerprint="fp",
+        video_path="dummy.mp4",
+        model_size="large-v3",
+        compute_type="int8_float16",
+        language="ja",
+        use_vad=True,
+        min_silence_ms=300,
+        word_timestamps=True,
+        vad_threshold=0.35,
+        vad_speech_pad_ms=250,
+        vad_max_speech_duration_s=6.0,
+        condition_on_previous_text=False,
+    )
+
+
+def _run_scan_with_tier_outputs(tier_outputs, *, start_ms=893220, end_ms=894840, force_no_vad=False, context_window=None):
+    call_idx = {"n": 0}
+
+    class FakeService:
+        def load_model(self, _model_size, _compute_type):
+            pass
+
+        def transcribe_batch(self, _request, batch, _check_cancel):
+            i = call_idx["n"]
+            call_idx["n"] += 1
+            segs = tier_outputs[i] if i < len(tier_outputs) else []
+            return SubtitleGenerationResult(batch_id=batch.batch_id, segments=segs, error=None)
+
+    completed = []
+    errors = []
+    worker = SegmentScanWorker(
+        "74",
+        start_ms,
+        end_ms,
+        _make_lv3_request(),
+        FakeService(),
+        force_no_vad=force_no_vad,
+        context_window=context_window,
+    )
+    worker.finished_signal.connect(lambda sid, txt: completed.append((sid, txt)))
+    worker.error_signal.connect(lambda sid, err: errors.append((sid, err)))
+    worker.run()
+    return completed, errors, call_idx["n"]
+
+
+def test_tier2_and_tier3_auto_fallback_blocks_low_logprob_hallucination():
+    # Tier 1 returns repetition noise ("ああああああ"); Tier 2 & 3 emit "なんでなんで" with -1.285 -> blocked
+    completed, errors, calls = _run_scan_with_tier_outputs([
+        [WhisperSegmentResult(893220, 894800, "ああああああ", avg_logprob=-1.157)],
+        [WhisperSegmentResult(893220, 894800, "なんでなんで", avg_logprob=-1.285)],
+        [WhisperSegmentResult(893220, 894800, "なんでなんで", avg_logprob=-1.285)],
+    ])
+    assert completed == []
+    assert len(errors) == 1
+    assert calls == 3
+
+
+def test_tier2_auto_fallback_blocks_two_beat_repetition_under_minus_095():
+    # "なんでなんで" with avg_logprob = -1.02 (< -0.95 & ABAB) -> blocked in Tier 2 & 3
+    completed, errors, _calls = _run_scan_with_tier_outputs([
+        [],
+        [WhisperSegmentResult(893220, 894800, "なんでなんで", avg_logprob=-1.02)],
+        [WhisperSegmentResult(893220, 894800, "ラムラム", avg_logprob=-0.98)],
+    ])
+    assert completed == []
+    assert len(errors) == 1
+
+
+@pytest.mark.parametrize("phrase", ["やだやだ", "だめだめ", "まだまだ", "待って待って"])
+def test_tier2_auto_fallback_preserves_valid_confident_two_beat_japanese(phrase):
+    completed, errors, calls = _run_scan_with_tier_outputs([
+        [],
+        [WhisperSegmentResult(893220, 894800, phrase, avg_logprob=-0.45)],
+    ])
+    assert errors == []
+    assert completed == [("74", phrase)]
+    assert calls == 2
+
+
+@pytest.mark.parametrize("lp", [-0.98, -1.20])
+def test_tier1_standard_never_blocked_by_fallback_logprob_floor(lp):
+    completed, errors, calls = _run_scan_with_tier_outputs([
+        [WhisperSegmentResult(893220, 894800, "やめて", avg_logprob=lp)],
+    ])
+    assert errors == []
+    assert completed == [("74", "やめて")]
+    assert calls == 1
+
+
+def test_manual_force_no_vad_rescue_never_blocked_by_auto_fallback_guard():
+    completed, errors, calls = _run_scan_with_tier_outputs(
+        [[WhisperSegmentResult(893220, 894800, "なんでなんで", avg_logprob=-1.25)]],
+        force_no_vad=True,
+    )
+    assert errors == []
+    assert completed == [("74", "なんでなんで")]
+    assert calls == 1
+
+
+def test_tier2_legacy_mock_without_avg_logprob_passes_through():
+    completed, errors, calls = _run_scan_with_tier_outputs([
+        [],
+        [WhisperSegmentResult(893220, 894800, "なんでなんで")],  # avg_logprob=None
+    ])
+    assert errors == []
+    assert completed == [("74", "なんでなんで")]
+    assert calls == 2
+
+
+def test_tier2_weighted_avg_logprob_preserves_clear_long_sentence_with_short_low_fragment():
+    # Long clear clause (-0.35, 11 chars) + short low fragment (-1.25, 2 chars) -> weighted ≈ -0.49 -> kept
+    completed, errors, _calls = _run_scan_with_tier_outputs([
+        [],
+        [
+            WhisperSegmentResult(893220, 894400, "それが好きなんでしょ", avg_logprob=-0.35),
+            WhisperSegmentResult(894400, 894800, "うん", avg_logprob=-1.25),
+        ],
+    ])
+    assert errors == []
+    assert completed == [("74", "それが好きなんでしょ うん")]
+
+
+def test_tier3_context_tier_weights_only_target_overlapping_segments():
+    # Outside-span segment has terrible avg_logprob (-2.50), target-span segment is clear (-0.50) -> kept!
+    completed, errors, calls = _run_scan_with_tier_outputs(
+        [
+            [],
+            [],
+            [
+                WhisperSegmentResult(890000, 892500, "ノイズノイズノイズノイズ", avg_logprob=-2.50),
+                WhisperSegmentResult(893300, 894700, "やめてー", avg_logprob=-0.50),
+            ],
+        ],
+        start_ms=893220,
+        end_ms=894840,
+        context_window=(890000, 896000),
+    )
+    assert errors == []
+    assert completed == [("74", "やめてー")]
+    assert calls == 3
+
+
+def test_shift_raw_segment_preserves_none_avg_logprob():
+    from types import SimpleNamespace
+    from core.subtitle_generation.faster_whisper_service import FasterWhisperService
+
+    seg_without_lp = SimpleNamespace(start=0.5, end=1.5, text="テスト")
+    shifted = FasterWhisperService._shift_raw_segment(seg_without_lp, 1.0)
+    assert shifted.avg_logprob is None
+
+    seg_with_lp = SimpleNamespace(start=0.5, end=1.5, text="テスト", avg_logprob=-0.42)
+    shifted2 = FasterWhisperService._shift_raw_segment(seg_with_lp, 1.0)
+    assert shifted2.avg_logprob == pytest.approx(-0.42)
+
+
 
 
 

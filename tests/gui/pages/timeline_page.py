@@ -26,6 +26,7 @@ class TimelineWidgetPage(BasePage):
     LOC_TIMELINE_GAP_ROW = "timeline_gap_row"
     LOC_BTN_CREATE_MANUAL_GAP = "btn_create_manual_gap"
     LOC_BTN_ADD_MANUAL_TIMING = "btn_add_manual_timing"
+    LOC_BTN_TIMELINE_BATCH_DELETE = "btn_timeline_batch_delete"
 
     def __init__(self, driver: QtDriver, timeline_widget=None):
         super().__init__(driver)
@@ -67,6 +68,22 @@ class TimelineWidgetPage(BasePage):
             return self.driver.find_widget(self.LOC_BTN_ADD_MANUAL_TIMING, widget_type=QPushButton)
         except LookupError:
             return None
+
+    @property
+    def btn_timeline_batch_delete(self) -> Optional[QPushButton]:
+        try:
+            return self.driver.find_widget(self.LOC_BTN_TIMELINE_BATCH_DELETE, widget_type=QPushButton)
+        except LookupError:
+            return None
+
+    def click_batch_delete(self) -> TimelineWidgetPage:
+        """Clicks the 'Xóa đã chọn' button on the Timeline toolbar."""
+        btn = self.btn_timeline_batch_delete
+        assert btn is not None, "btn_timeline_batch_delete not found"
+        assert btn.isEnabled() is True, "btn_timeline_batch_delete must be enabled to click"
+        self.driver.click(btn)
+        self.wait_ms(50)
+        return self
 
     # -------------------------------------------------------------------------
     # Timeline Actions & State Inspection

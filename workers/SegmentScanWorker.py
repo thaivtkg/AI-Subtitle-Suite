@@ -1,6 +1,7 @@
 import copy
 import dataclasses
 import datetime
+import math
 import re
 
 from PySide6.QtCore import QThread, Signal
@@ -17,6 +18,11 @@ _SUSPECT_SHORT_CLIP_HALLUCINATIONS = {
     "ありがとうございました",
     "どうもありがとうございます",
     "どうもありがとうございました",
+    "はいどうもありがとうございました",
+    "ごちそうさまでした",
+    "はいごちそうさまでした",
+    "ご清聴ありがとうございました",
+    "次の動画でお会いしましょう",
     "よろしくお願いします",
     "よろしくお願いいたします",
     "お疲れ様でした",
@@ -29,9 +35,51 @@ def _normalize_ja_phrase(text: str) -> str:
     return re.sub(r"[\s。、.,!?！？・…「」『』()\[\]]+", "", str(text or "")).strip().casefold()
 
 
+_TWO_BEAT_REPETITION_RE = re.compile(r"^(.{2,5})\1$")
+_AUTO_FALLBACK_MIN_LOGPROB = -1.15
+_AUTO_FALLBACK_TWO_BEAT_MIN_LOGPROB = -0.95
+
+
 def _is_short_clip_suspect_hallucination(text: str) -> bool:
     norm = _normalize_ja_phrase(text)
     return bool(norm and norm in _SUSPECT_SHORT_CLIP_HALLUCINATIONS)
+
+
+def _is_two_beat_repetition(text: str) -> bool:
+    norm = _normalize_ja_phrase(text)
+    return bool(norm and _TWO_BEAT_REPETITION_RE.match(norm))
+
+
+def _compute_weighted_avg_logprob(
+    segments,
+    *,
+    target_start_ms: int | None = None,
+    target_end_ms: int | None = None,
+) -> float | None:
+    """Compute text-length-weighted avg_logprob over segments (overlapping target span when specified)."""
+    weighted_sum = 0.0
+    total_weight = 0
+    for seg in segments or ():
+        if target_start_ms is not None and target_end_ms is not None:
+            seg_start = getattr(seg, "start_ms", None)
+            seg_end = getattr(seg, "end_ms", None)
+            if (seg_end is not None and seg_end <= target_start_ms) or (
+                seg_start is not None and seg_start >= target_end_ms
+            ):
+                continue
+        raw_lp = getattr(seg, "avg_logprob", None)
+        if not isinstance(raw_lp, (int, float)) or isinstance(raw_lp, bool):
+            continue
+        lp = float(raw_lp)
+        if not math.isfinite(lp):
+            continue
+        clean_text = str(getattr(seg, "text", "") or "").strip()
+        weight = max(1, len(clean_text))
+        weighted_sum += lp * weight
+        total_weight += weight
+    if total_weight <= 0:
+        return None
+    return weighted_sum / float(total_weight)
 
 
 def _seg_ms(seg: dict, key_ms: str, key_str: str) -> int | None:
@@ -308,7 +356,8 @@ def _transcribe_segment_with_fallback(
     context_prompt: str = "",
 ) -> tuple[str, str]:
     """Run per-segment ASR with short-clip tuning and 3-tier context-expanded fallback."""
-    padded_start = max(0, int(start_ms) - 150)
+    # Giữ đệm trái gọn (60ms) để tránh hút tiếng hít thở trước câu vào Tier 2; giữ đệm phải 150ms cho đuôi câu
+    padded_start = max(0, int(start_ms) - 60)
     padded_end = max(int(start_ms) + 1, int(end_ms) + 150)
     supports_word_ts = FasterWhisperService.resolve_word_timestamps(
         getattr(request, "model_size", ""), True
@@ -348,11 +397,11 @@ def _transcribe_segment_with_fallback(
             "audio_boost": True,
             "no_speech_threshold": 0.85,
             "log_prob_threshold": -1.5,
+            "prompt_context": "",
+            "hotwords": "",
         }
         if has_expanded_context:
             tier3_overrides["word_timestamps"] = True
-            if combined_prompt:
-                tier3_overrides["prompt_context"] = combined_prompt
         tiers = [
             {
                 "tier_name": "Tầng 1/1: Quét sâu kết hợp ngữ cảnh (No VAD)" if has_expanded_context else "Tầng 1/1: Quét sâu không VAD (Deep Scan)",
@@ -367,17 +416,21 @@ def _transcribe_segment_with_fallback(
             "audio_boost": True,
             "no_speech_threshold": 0.85,
             "log_prob_threshold": -1.5,
+            "prompt_context": "",
+            "hotwords": "",
         }
         if has_expanded_context:
             tier3_overrides["word_timestamps"] = True
-            if combined_prompt:
-                tier3_overrides["prompt_context"] = combined_prompt
         tiers = [
             {
                 "tier_name": "Tầng 1/3: Nhận diện tiêu chuẩn (VAD)",
                 "window": (int(start_ms), max(int(start_ms) + 1, int(end_ms))),
                 "is_context_tier": False,
-                "overrides": {"min_speech_duration_ms": base_min_speech},
+                "overrides": {
+                    "min_speech_duration_ms": base_min_speech,
+                    "prompt_context": "",
+                    "hotwords": "",
+                },
             },
             {
                 "tier_name": "Tầng 2/3: Tăng âm & Hạ ngưỡng VAD",
@@ -387,6 +440,8 @@ def _transcribe_segment_with_fallback(
                     "min_speech_duration_ms": min(base_min_speech, 100),
                     "vad_threshold": min(float(base_threshold), 0.2) if base_threshold is not None else 0.2,
                     "audio_boost": True,
+                    "prompt_context": "",
+                    "hotwords": "",
                 },
             },
             {
@@ -500,6 +555,21 @@ def _transcribe_segment_with_fallback(
         # Short-clip Whisper phantom guard: defer/reject zero-context phrases like "はい、ありがとうございます。"
         if target_duration_ms <= 3500 and _is_short_clip_suspect_hallucination(raw_text):
             if not (tier["is_context_tier"] and has_outside):
+                saw_hallucination = True
+                continue
+
+        # Auto fallback Tier 2/3 (audio_boost / No-VAD) low-confidence & 2-beat hallucination guard.
+        # Never applied to Tier 1 or explicit user-triggered force_no_vad rescue scans.
+        if (not force_no_vad) and (tier_idx >= 2):
+            weighted_lp = _compute_weighted_avg_logprob(
+                valid_segs,
+                target_start_ms=int(start_ms) if tier["is_context_tier"] else None,
+                target_end_ms=int(end_ms) if tier["is_context_tier"] else None,
+            )
+            if weighted_lp is not None and (
+                weighted_lp < _AUTO_FALLBACK_MIN_LOGPROB
+                or (_is_two_beat_repetition(raw_text) and weighted_lp < _AUTO_FALLBACK_TWO_BEAT_MIN_LOGPROB)
+            ):
                 saw_hallucination = True
                 continue
 

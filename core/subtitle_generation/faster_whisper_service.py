@@ -21,9 +21,9 @@ from core.services.model_manager import ModelManager, ModelStorageError
 def should_downgrade_to_int8_float16(threshold: float = 0.65) -> Tuple[bool, float]:
     """Kiểm tra mức sử dụng VRAM qua nvcuda.dll (<0.05ms); trả về (True, ratio) khi vượt threshold hoặc GPU <= 4.5GB VRAM."""
     try:
-        from core.translation.core.hardware_detector import HardwareDetector
+        from core.services.hardware_checker import HardwareChecker
 
-        used_gb, total_gb = HardwareDetector.get_vram_usage()
+        used_gb, total_gb = HardwareChecker.get_vram_usage()
         if total_gb and total_gb > 0:
             ratio = float(used_gb) / float(total_gb)
             if float(total_gb) <= 4.5 or ratio > threshold:
@@ -114,12 +114,18 @@ class FasterWhisperService:
 
     @staticmethod
     def build_ffmpeg_audio_filter(speech_filter: bool = False, audio_boost: bool = False) -> Optional[str]:
-        parts = []
+        if speech_filter and audio_boost:
+            # Tăng trần dynaudnorm mượt kèm alimiter thay vì chồng volume=2.0 gây vỡ/cắt đỉnh sóng
+            return (
+                "highpass=f=80,lowpass=f=7800,"
+                "dynaudnorm=f=150:g=15:m=20:p=0.92,"
+                "alimiter=limit=0.95:attack=5:release=50"
+            )
         if speech_filter:
-            parts.append("highpass=f=80,lowpass=f=7800,dynaudnorm=f=150:g=15")
+            return "highpass=f=80,lowpass=f=7800,dynaudnorm=f=150:g=15"
         if audio_boost:
-            parts.append("volume=2.0")
-        return ",".join(parts) if parts else None
+            return "volume=2.0,alimiter=limit=0.95:attack=5:release=50"
+        return None
 
     @staticmethod
     def resolve_decode_defaults(
@@ -349,7 +355,7 @@ class FasterWhisperService:
             end=float(getattr(seg, "end", 0.0) or 0.0) + offset_sec,
             text=getattr(seg, "text", ""),
             no_speech_prob=getattr(seg, "no_speech_prob", 0.0),
-            avg_logprob=getattr(seg, "avg_logprob", 0.0),
+            avg_logprob=getattr(seg, "avg_logprob", None),
             compression_ratio=getattr(seg, "compression_ratio", None),
             temperature=getattr(seg, "temperature", None),
             words=shifted_words,
@@ -489,41 +495,14 @@ class FasterWhisperService:
                 "condition_on_previous_text": effective_cond_prev,
                 "word_timestamps": effective_word_ts,
             }
-            from core.subtitle_generation.language_utils import (
-                extract_natural_initial_prompt,
-                extract_terminology_terms,
-                format_whisper_initial_prompt,
-                merge_hotwords,
-            )
-
             is_large_v3 = self.is_large_v3_model(effective_model_size)
             is_kotoba = self.is_kotoba_model(effective_model_size)
             if is_large_v3:
                 transcribe_options["repetition_penalty"] = 1.1
                 transcribe_options["no_repeat_ngram_size"] = 3
-                transcribe_options["initial_prompt"] = extract_natural_initial_prompt(
-                    request.prompt_context, effective_lang
-                )
-                merged_hotwords = merge_hotwords(
-                    getattr(request, "hotwords", ""),
-                    extract_terminology_terms(request.prompt_context),
-                    sep=" ",
-                )
-                transcribe_options["hotwords"] = merged_hotwords or None
-            elif not is_kotoba:
-                supports_word_ts = ModelManager.supports_word_timestamps(effective_model_size)
-                if request.prompt_context.strip():
-                    formatted_prompt = (
-                        format_whisper_initial_prompt(request.prompt_context, effective_lang)
-                        if supports_word_ts
-                        else request.prompt_context
-                    )
-                    if formatted_prompt:
-                        transcribe_options["initial_prompt"] = formatted_prompt
-                raw_hw = getattr(request, "hotwords", "")
-                merged_hotwords = merge_hotwords(raw_hw, sep=" ") if supports_word_ts else str(raw_hw or "").strip()
-                if merged_hotwords:
-                    transcribe_options["hotwords"] = merged_hotwords
+            # Chuẩn hóa ASR sạch: luôn ép initial_prompt=None và hotwords=None ở mọi model/chế độ
+            transcribe_options["initial_prompt"] = None
+            transcribe_options["hotwords"] = None
             # Every batch is an independent, zero-based audio input.  This
             # keeps VAD compatible with batch processing and makes the offset
             # contract unambiguous for both VAD and non-VAD transcription.
@@ -813,12 +792,19 @@ class FasterWhisperService:
                     ]
                     words = words or None
 
+                raw_lp = getattr(segment, "avg_logprob", None)
+                seg_avg_logprob = (
+                    float(raw_lp)
+                    if isinstance(raw_lp, (int, float)) and not isinstance(raw_lp, bool)
+                    else None
+                )
                 return [
                     WhisperSegmentResult(
                         start_ms=self._shift_ms(orig_start, seg_offset_ms),
                         end_ms=self._shift_ms(new_end_sec, seg_offset_ms),
                         text=cleaned_text,
                         words=words,
+                        avg_logprob=seg_avg_logprob,
                     )
                 ], False
 

@@ -36,27 +36,12 @@ def test_spec_ast_syntax_and_configuration():
         "Không được còn tàn dư chuỗi 'AI Subtitle Studio' trong file spec"
     )
 
-    # Kiểm tra cấu hình QML datas
-    assert "qml_translation" in content, "datas phải bao gồm thư mục 'ui/qml_translation'"
+    # Đảm bảo đã loại bỏ hoàn toàn CAT Studio / QML / llama_cpp
+    assert "qml_translation" not in content, "datas không được còn 'ui/qml_translation'"
+    assert "llama_cpp" not in content, "spec không được còn phụ thuộc 'llama_cpp'"
+    assert "core.translation" not in content, "hiddenimports không được còn 'core.translation'"
 
-    # Kiểm tra cấu hình llama_cpp datas & dynamic libs
-    assert "collect_data_files('llama_cpp')" in content or 'collect_data_files("llama_cpp")' in content, (
-        "datas phải thu thập data files của llama_cpp"
+    # Kiểm tra hiddenimports cốt lõi vẫn còn
+    assert "'core.subtitle_generation'" in content or '"core.subtitle_generation"' in content, (
+        "hiddenimports phải chứa module 'core.subtitle_generation'"
     )
-    assert "collect_dynamic_libs('llama_cpp')" in content or 'collect_dynamic_libs("llama_cpp")' in content, (
-        "binaries phải thu thập dynamic libraries của llama_cpp"
-    )
-
-    # Kiểm tra hiddenimports
-    for mod in [
-        "PySide6.QtQuick",
-        "PySide6.QtQuickWidgets",
-        "PySide6.QtQml",
-        "PySide6.QtQuickControls2",
-        "llama_cpp",
-        "core.translation",
-        "core.subtitle_generation",
-    ]:
-        assert f"'{mod}'" in content or f'"{mod}"' in content, (
-            f"hiddenimports phải chứa module '{mod}'"
-        )

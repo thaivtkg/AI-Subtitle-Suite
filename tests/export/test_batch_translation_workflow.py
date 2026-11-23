@@ -248,3 +248,56 @@ class TestBatchTranslationWorkflow(unittest.TestCase):
             self.assertIn("Câu #16 đến #18", page.lbl_batch_progress.text())
         finally:
             page.deleteLater()
+
+    def test_tc_batch_10_starts_at_newest_generated_and_updates_when_deleted(self):
+        """Ô Bắt đầu luôn trỏ vào câu gen/timing mới nhất, đếm đúng tên riêng, và tự cập nhật khi xóa câu."""
+        win = MainWindow.__new__(MainWindow)
+        segs = [
+            {"stt": "1", "id": "s1", "start": "00:00:01,000", "end": "00:00:02,000", "text": "Đã dịch câu 1"},
+            {"stt": "2", "id": "s2", "start": "00:00:03,000", "end": "00:00:04,000", "text": "Dark Lilith."},
+            {"stt": "3", "id": "s3", "start": "00:00:05,000", "end": "00:00:06,000", "text": "Pure Mermaid"},
+            {"stt": "4", "id": "s4", "start": "00:00:07,000", "end": "00:00:08,000", "text": "本当顔見ててください"},
+            {"stt": "5", "id": "s5", "start": "00:00:09,000", "end": "00:00:10,000", "text": "かわいい"},
+            {"stt": "6", "id": "s6", "start": "00:00:11,000", "end": "00:00:12,000", "text": "まだダメよ"},
+        ]
+        win.sub_editor = SimpleNamespace(all_segments=segs)
+        win.page_export = ExportCenterPage()
+        try:
+            # 1) Ghi nhận đợt mới gen/timing là câu #4..#6 -> Đã dịch 3/6, bắt đầu từ #4 (3 câu)
+            win._record_latest_generated_indices([3, 4, 5])
+            win._sync_translation_batch_ui()
+            self.assertEqual(win.page_export.spin_batch_start.value(), 4)
+            self.assertEqual(win.page_export.spin_batch_count.value(), 3)
+            self.assertIn("Đã dịch 3/6 câu", win.page_export.lbl_batch_progress.text())
+            self.assertIn("Câu #4 đến #6", win.page_export.lbl_batch_progress.text())
+
+            # 2) Xóa câu #4 (s4) vừa gen -> còn s5 (#4 mới) và s6 (#5 mới), bắt đầu vẫn là #4, số câu giảm còn 2
+            segs.pop(3)
+            win._sync_translation_batch_ui()
+            self.assertEqual(win.page_export.spin_batch_start.value(), 4)
+            self.assertEqual(win.page_export.spin_batch_count.value(), 2)
+            self.assertIn("Đã dịch 3/5 câu", win.page_export.lbl_batch_progress.text())
+            self.assertIn("Câu #4 đến #5", win.page_export.lbl_batch_progress.text())
+
+            # 3) Chèn timing mới vào giữa ở vị trí #2 (s_mid) -> ô bắt đầu nhảy đúng về #2
+            segs.insert(1, {"stt": "2", "id": "s_mid", "start": "00:00:02,200", "end": "00:00:02,800", "text": "[ Chưa có nội dung ]"})
+            win._record_latest_generated_indices([1])
+            win._sync_translation_batch_ui()
+            self.assertEqual(win.page_export.spin_batch_start.value(), 2)
+            self.assertIn("Đã dịch 3/6 câu", win.page_export.lbl_batch_progress.text())
+
+            # 4) Xóa câu timing mới ở giữa (s_mid) -> không còn s_mid, tự quay về cụm chưa dịch mới nhất ở cuối (#4..#5)
+            segs.pop(1)
+            win._sync_translation_batch_ui()
+            self.assertEqual(win.page_export.spin_batch_start.value(), 4)
+            self.assertEqual(win.page_export.spin_batch_count.value(), 2)
+            self.assertIn("Đã dịch 3/5 câu", win.page_export.lbl_batch_progress.text())
+
+            # 5) Xóa nốt 2 câu cuối chưa dịch -> hoàn thành 3/3
+            segs.pop()
+            segs.pop()
+            win._sync_translation_batch_ui()
+            self.assertIn("Đã hoàn thành dịch toàn bộ (3/3 câu)", win.page_export.lbl_batch_progress.text())
+            self.assertEqual(win.page_export.spin_batch_start.value(), 3)
+        finally:
+            win.page_export.deleteLater()

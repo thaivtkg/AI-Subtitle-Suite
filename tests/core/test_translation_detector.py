@@ -2,6 +2,7 @@ import unittest
 from core.utils.translation_detector import (
     is_vietnamese_translated,
     find_first_untranslated_index,
+    find_latest_untranslated_start_index,
     count_translated_segments,
 )
 
@@ -73,6 +74,46 @@ class TestTranslationDetector(unittest.TestCase):
         self.assertEqual(t2, 2)
         self.assertEqual(tot2, 2)
         self.assertIsNone(find_first_untranslated_index(all_translated))
+        self.assertIsNone(find_latest_untranslated_start_index(all_translated))
+
+    def test_tc_trans_09_proper_nouns_counted_as_translated_without_false_positive_english(self):
+        # Tên riêng Latinh giữ nguyên trong bản dịch Tiếng Việt -> True
+        for name in ("Dark Lilith.", "Dark Lilith...", "Pure Mermaid.", "Pure Mermaid", "Sailor Angel!"):
+            self.assertTrue(is_vietnamese_translated(name), f"Expected True for proper noun: {name}")
+
+        # Nếu vẫn trùng nguyên original_text -> vẫn là False (chưa dịch)
+        self.assertFalse(is_vietnamese_translated({"text": "Dark Lilith", "original_text": "Dark Lilith"}))
+
+        # Câu tiếng Anh thường hoặc có số / chữ thường -> vẫn False
+        for eng in ("Original line 6", "Hello world", "What Up", "Lord, help my world."):
+            self.assertFalse(is_vietnamese_translated(eng), f"Expected False for English: {eng}")
+
+    def test_tc_trans_10_find_latest_untranslated_start_targets_newest_block(self):
+        # Có 1 câu chưa dịch sót ở #2, nhưng đợt mới gen/timing nằm ở #6..#8 -> trả về 6
+        segs = [
+            {"stt": "1", "text": "Đã dịch 1"},
+            {"stt": "2", "text": "[ Chưa có nội dung ]"},
+            {"stt": "3", "text": "Dark Lilith."},
+            {"stt": "4", "text": "Đã dịch 4"},
+            {"stt": "5", "text": "Pure Mermaid"},
+            {"stt": "6", "text": "本当顔見ててください"},
+            {"stt": "7", "text": "かわいい"},
+            {"stt": "8", "text": "まだダメよ"},
+        ]
+        self.assertEqual(find_latest_untranslated_start_index(segs), 6)
+        translated, total = count_translated_segments(segs)
+        self.assertEqual((translated, total), (4, 8))
+
+        # Khi chèn 1 timing mới ở giữa (#4) trong khi #5..#6 đã dịch -> trả về 4
+        mid_gap = [
+            {"stt": "1", "text": "Đã dịch 1"},
+            {"stt": "2", "text": "Đã dịch 2"},
+            {"stt": "3", "text": "Đã dịch 3"},
+            {"stt": "4", "text": "[ Chưa có nội dung ]"},
+            {"stt": "5", "text": "Đã dịch 5"},
+            {"stt": "6", "text": "Đã dịch 6"},
+        ]
+        self.assertEqual(find_latest_untranslated_start_index(mid_gap), 4)
 
 
 if __name__ == "__main__":

@@ -47,14 +47,14 @@ class TestHotkeysDialog(unittest.TestCase):
         page = HelpCenterPage()
         self.assertTrue(page._shortcuts.isHidden())
 
-    def test_hotkeys_dialog_cat_studio_group(self):
-        """AUD-UX-003: Kiểm tra Nhóm 4 CAT Translation Studio tồn tại đầy đủ trong bảng phím tắt."""
+    def test_hotkeys_dialog_excludes_cat_studio_group(self):
+        """Nhóm CAT Translation Studio đã bị gỡ bỏ khỏi bảng phím tắt."""
         from PySide6.QtWidgets import QLabel
         dialog = HotkeysCheatsheetDialog()
         labels = [lbl.text() for lbl in dialog.findChildren(QLabel)]
-        self.assertTrue(any("CAT TRANSLATION STUDIO" in t for t in labels))
-        self.assertTrue(any("AI Translate" in t for t in labels))
-        self.assertTrue(any("Add to Glossary" in t for t in labels))
+        self.assertFalse(any("CAT TRANSLATION STUDIO" in t for t in labels))
+        self.assertFalse(any("AI Translate" in t for t in labels))
+        self.assertFalse(any("Add to Glossary" in t for t in labels))
         dialog.close()
 
 

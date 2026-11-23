@@ -2,7 +2,6 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from core.project.project_state import TimingState
-from core.project.transcription_context import TranscriptionContext
 from core.subtitle_generation.faster_whisper_service import FasterWhisperService
 from core.subtitle_generation.generation_validator import SubtitleGenerationValidator
 from core.subtitle_generation.subtitle_generation_batch import SubtitleGenerationBatch
@@ -23,7 +22,6 @@ def _make_panel(tmp_path):
     mock_project.project_id = "proj_anti_loop"
     mock_project.source.path = str(tmp_path / "video.mp4")
     mock_project.source.fingerprint = "fp_anti_loop"
-    mock_project.transcription_context = TranscriptionContext(glossary=["黒崎 -> Kurosaki"])
     mock_project.state.task_mode = "asr"
     mock_project.state.dirty = True
     mock_project.state.timing = TimingState()
@@ -128,7 +126,7 @@ def test_decoder_loop_suppression_large_v3_only_and_compression_drop(tmp_path):
         assert captured["no_speech_threshold"] == 0.6
         assert captured["condition_on_previous_text"] is False
         assert captured.get("initial_prompt") is None
-        assert captured["hotwords"] == "黒崎"
+        assert captured.get("hotwords") is None
         assert [s.text for s in res_lv3.segments] == ["大丈夫だよ"]
 
         # 2. kotoba-whisper MUST NOT receive repetition_penalty / no_repeat_ngram_size, and keeps condition=False
@@ -442,12 +440,8 @@ def test_kotoba_hard_guard_30_term_glossary_single_call_pass(qapp, tmp_path):
     assert calls[0]["condition_on_previous_text"] is False
     assert calls[0]["word_timestamps"] is False
 
-    # 3) UI + TimingBatchWorker clear/override Glossary for kotoba
+    # 3) UI + TimingBatchWorker enforce clean ASR (initial_prompt=None, hotwords=None) for kotoba
     panel, project = _make_panel(tmp_path)
-    project.transcription_context = TranscriptionContext(
-        context="Học viện ma thuật.", glossary=glossary_entries
-    )
-    panel.generation_service.compile_prompt_context.return_value = MagicMock(text=natural_ctx)
     panel.cmb_specialized_model.setCurrentIndex(panel.cmb_specialized_model.findData("kotoba-whisper-v2.2"))
     panel_req = panel._build_asr_request()
     assert panel_req.prompt_context == ""
@@ -522,9 +516,9 @@ def test_empty_glossary_and_large_v3_separation_and_ui_hints(qapp, tmp_path):
         )
         service.transcribe_batch(req_glossary_only, batch, lambda: False)
         assert captured["initial_prompt"] is None
-        assert captured["hotwords"] == "魔物 マンコ チンポ"
+        assert captured["hotwords"] is None
 
-        # 3) Glossary + Story Summary (Context: ...) => Story Summary is stripped (initial_prompt=None), glossary stays in space-separated hotwords
+        # 3) Even if legacy request carries prompt_context/hotwords => stripped to None/None
         req_with_ctx = SubtitleGenerationRequest(
             request_id="r_ctx",
             project_id="p1",
@@ -541,7 +535,7 @@ def test_empty_glossary_and_large_v3_separation_and_ui_hints(qapp, tmp_path):
         )
         service.transcribe_batch(req_with_ctx, batch, lambda: False)
         assert captured["initial_prompt"] is None
-        assert captured["hotwords"] == "魔物 マンコ"
+        assert captured["hotwords"] is None
 
     # UI: Speech Pad hint = 250–350ms, Live-Action / Tokusatsu preset updated
     large_profile = SubtitleGenerationPanel._MODEL_VAD_PROFILES["large"]
@@ -571,80 +565,7 @@ def test_prompt_echo_guard_and_single_shot_retry_rescue_and_drop(tmp_path):
     assert SubtitleGenerationValidator.is_prompt_echo("黒崎と御影が来たよ", initial_prompt=None, hotwords=hotwords) is False
     assert SubtitleGenerationValidator.is_prompt_echo("魔物が襲ってきたよ", initial_prompt=None, hotwords=hotwords) is False
 
-    # 3) Batch <= 30s: Echo detected -> single-shot retry without prompt/hotwords rescues real speech
-    service = FasterWhisperService(device="cpu")
-    service.current_model_size = "large-v3"
-    call_history = []
-
-    class _RescueModel:
-        def transcribe(self, _wav, **opts):
-            call_history.append(dict(opts))
-            if len(call_history) == 1:
-                return iter([SimpleNamespace(start=1.0, end=2.5, text="魔物、マンコ、チンポ", words=None)]), SimpleNamespace(language="ja")
-            return iter([SimpleNamespace(start=1.0, end=2.5, text="本当だ、見て！", words=None)]), SimpleNamespace(language="ja")
-
-    service.model = _RescueModel()
-    req = SubtitleGenerationRequest(
-        request_id="r_echo_rescue",
-        project_id="p1",
-        source_fingerprint="fp1",
-        video_path="v.mp4",
-        model_size="large-v3",
-        compute_type="int8",
-        language="ja",
-        use_vad=False,
-        min_silence_ms=300,
-        word_timestamps=True,
-        prompt_context="",
-        hotwords=hotwords,
-    )
-    batch_short = SubtitleGenerationBatch("b_short", 0, 10000, "RUNNING", 1, "", "")
-    with patch.object(service, "_extract_batch_audio", return_value=("fake.wav", None)):
-        res_rescue = service.transcribe_batch(req, batch_short, lambda: False)
-
-    assert len(call_history) == 2
-    assert call_history[0]["hotwords"] == hotwords
-    assert call_history[1]["initial_prompt"] is None
-    assert call_history[1]["hotwords"] is None
-    assert call_history[1]["condition_on_previous_text"] is False
-    assert [s.text for s in res_rescue.segments] == ["本当だ、見て！"]
-
-    # 4) Batch > 30s with real WAV slice: Echo -> slice retry returns moaning -> cleanly dropped
-    import wave
-
-    wav_path = tmp_path / "long_batch.wav"
-    with wave.open(str(wav_path), "wb") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(16000)
-        wf.writeframes(b"\x00\x00" * (16000 * 40))
-
-    slice_calls = []
-
-    class _DropModel:
-        def transcribe(self, audio_path, **opts):
-            slice_calls.append((audio_path, dict(opts)))
-            if len(slice_calls) == 1:
-                return iter([SimpleNamespace(start=35.0, end=37.0, text="魔物、マンコ、チンポ", words=None)]), SimpleNamespace(language="ja")
-            return iter([SimpleNamespace(start=0.1, end=1.4, text="あっあっあっあっあっあっ", words=None)]), SimpleNamespace(language="ja")
-
-    service.model = _DropModel()
-    batch_long = SubtitleGenerationBatch("b_long", 0, 40000, "RUNNING", 1, "", "")
-    slice_tmp = str(tmp_path / "temp_slice_dir")
-    os_temp = slice_tmp
-    import os
-    os.makedirs(os_temp, exist_ok=True)
-    with patch.object(service, "_extract_batch_audio", return_value=(str(wav_path), os_temp)):
-        res_drop = service.transcribe_batch(req, batch_long, lambda: False)
-
-    assert len(slice_calls) == 2
-    assert slice_calls[1][0] != str(wav_path)
-    assert slice_calls[1][1]["initial_prompt"] is None
-    assert slice_calls[1][1]["hotwords"] is None
-    assert slice_calls[1][1]["condition_on_previous_text"] is False
-    assert res_drop.segments == []
-
-    # 5) TimingBatchWorker and BatchSegmentScanWorker also drop echoed text cleanly
+    # 3) TimingBatchWorker drops echoed text cleanly
     worker = TimingBatchWorker(
         TimingRunRequest(
             video_path="v.mp4",
@@ -659,27 +580,6 @@ def test_prompt_echo_guard_and_single_shot_retry_rescue_and_drop(tmp_path):
         0,
         0,
     ) == []
-
-    class _EchoScanSvc:
-        def load_model(self, *_args):
-            pass
-
-        def transcribe_batch(self, _request, batch, _cancel):
-            from core.subtitle_generation.subtitle_generation_result import SubtitleGenerationResult, WhisperSegmentResult
-            return SubtitleGenerationResult(batch.batch_id, [WhisperSegmentResult(0, 1500, "魔物、マンコ、チンポ")])
-
-    scan_worker = BatchSegmentScanWorker(
-        [{"id": "s1", "index": 0, "start_ms": 0, "end_ms": 1500, "context_prompt": ""}],
-        req,
-        _EchoScanSvc(),
-    )
-    completed_scan = []
-    errors_scan = []
-    scan_worker.segment_completed_signal.connect(lambda seg_id, text: completed_scan.append((seg_id, text)))
-    scan_worker.segment_error_signal.connect(lambda seg_id, err: errors_scan.append((seg_id, err)))
-    scan_worker.run()
-    assert completed_scan == []
-    assert len(errors_scan) == 1 and errors_scan[0][0] == "s1"
 
 
 def test_v3_legacy_preset_normalization_and_dynamic_tokusatsu_hints(qapp, tmp_path):
@@ -722,7 +622,6 @@ def test_v3_max_speech_duration_enforcement_and_manual_clip_preservation(tmp_pat
     import numpy as np
     import wave
     import os
-    from core.agent.vad_timing_service import detect_speech_intervals_vad
 
     # 1) Energy-dip splitting on a continuous 14s waveform with quiet valley around 5.2s and 10.1s
     sr = 16000
@@ -738,13 +637,6 @@ def test_v3_max_speech_duration_enforcement_and_manual_clip_preservation(tmp_pat
     assert bounded[-1] == (15.0, 18.5)
     # First split selects the low-energy valley near 5.2s
     assert 5.05 <= bounded[0][1] <= 5.35
-
-    # Agent VAD interval helper also caps any continuous chunk > 6.0s
-    with patch("core.agent.vad_timing_service.get_speech_timestamps", return_value=[{"start": 0, "end": 14 * sr}]):
-        with patch("core.agent.vad_timing_service.VadOptions", side_effect=lambda **kw: kw):
-            intervals = detect_speech_intervals_vad(audio, max_speech_duration_s=6.0)
-    assert len(intervals) >= 3
-    assert all((item["end_ms"] - item["start_ms"]) <= 6000 for item in intervals)
 
     # 2) FasterWhisperService.transcribe_batch() pre-splits oversized VAD runs (15s continuous) to <= 6.0s slices,
     #    while preserving short manual clips (<= 6.0s) in a single untransformed call.
@@ -913,14 +805,8 @@ def test_v3_low_cps_courtesy_hallucination_guard_and_preservation(tmp_path):
 
 
 def test_v3_glossary_parity_across_full_selected_and_rescan_modes(qapp, tmp_path):
-    """Glossary thuần hotwords (initial_prompt=None) đồng nhất qua Full Video, Gen Sub Selected, Rescan Audio và chặn trên Kotoba."""
+    """Chuẩn hóa ASR sạch (initial_prompt=None, hotwords=None) đồng nhất qua Full Video, Gen Sub Selected, Rescan Audio ở cả large-v3 và Kotoba."""
     panel, project = _make_panel(tmp_path)
-    project.transcription_context = TranscriptionContext(
-        context="",
-        glossary=["黒崎 -> Kurosaki", "御影 = Mikage", "魔物"],
-    )
-    compiled_str = "Terminology: 黒崎 -> Kurosaki, 御影 = Mikage, 魔物."
-    panel.generation_service.compile_prompt_context.return_value = MagicMock(text=compiled_str)
 
     win = MainWindow.__new__(MainWindow)
     win.sub_editor = None
@@ -937,7 +823,7 @@ def test_v3_glossary_parity_across_full_selected_and_rescan_modes(qapp, tmp_path
     service.model = _ParityModel()
     batch = SubtitleGenerationBatch("b_p", 0, 3000, "RUNNING", 1, "", "")
 
-    # 1) large-v3 across Full Video, Gen Sub Selected, and Rescan Audio -> identical hotwords + initial_prompt=None
+    # 1) large-v3 across Full Video, Gen Sub Selected, and Rescan Audio -> strict initial_prompt=None & hotwords=None
     panel.cmb_specialized_model.setCurrentIndex(0)
     panel.cmb_model.setCurrentIndex(panel.cmb_model.findData("large-v3"))
     panel.cmb_vad_preset.setCurrentIndex(panel.cmb_vad_preset.findData("live_action"))
@@ -957,7 +843,7 @@ def test_v3_glossary_parity_across_full_selected_and_rescan_modes(qapp, tmp_path
     assert len(captured_opts) == 3
     for opts in captured_opts:
         assert opts["initial_prompt"] is None
-        assert opts["hotwords"] == "黒崎 御影 魔物"
+        assert opts["hotwords"] is None
 
     # 2) kotoba-whisper across all 3 modes -> strict initial_prompt=None & hotwords=None on call #1
     captured_opts.clear()
@@ -1062,30 +948,8 @@ def test_v3_apply_preset_rescan_checkbox_full_control_and_legacy_project_restore
 
 
 def test_v31_story_summary_isolated_from_asr_across_all_presets_and_modes(qapp, tmp_path):
-    """Tách triệt để Tóm tắt cốt truyện (357 chữ) khỏi initial_prompt ASR ở MỌI Preset và cả 3 chế độ, giữ nguyên cho dịch LLM."""
-    from core.transcription.prompt_context_builder import PromptContextBuilder
-    from core.transcription.token_counter import ApproximateTokenCounter
-
-    story_summary_357 = (
-        "ピュアマーメイドは邪悪な組織サタン・ダイモンと戦うヒロインである。"
-        "ある夜、怪人たちの罠にかかり、秘密基地の奥へと連れ去られてしまう。"
-        "必死に抵抗しながらも、彼女は仲間を救うために最後まで諦めずに立ち向かう。"
-        "敵幹部は冷酷に嘲笑いながら彼女の衣装を狙い、緊迫した攻防が繰り広げられる。"
-        "果たしてピュアマーメイドはサタン・ダイモンの陰謀を打ち砕き、平和を取り戻すことができるのか。"
-        "激闘の末に隠された真実が今明らかになる。"
-    )
-    glossary_30 = [f"ピュアマーメイド -> Pure Mermaid", "サタン・ダイモン -> Satan Daimon"] + [
-        f"用語{i:02d} -> Term{i:02d}" for i in range(3, 31)
-    ]
-
+    """Chuẩn hóa ASR sạch (initial_prompt=None, hotwords=None) ở MỌI Preset và cả 3 chế độ cho cả large-v3 lẫn kotoba-whisper."""
     panel, project = _make_panel(tmp_path)
-    project.transcription_context = TranscriptionContext(
-        context=story_summary_357,
-        glossary=glossary_30,
-    )
-    # 1) PromptContextBuilder (dùng cho dịch LLM / trích xuất từ điển) vẫn giữ nguyên Tóm tắt cốt truyện
-    compiled = PromptContextBuilder(ApproximateTokenCounter()).build(project.transcription_context, max_tokens=500)
-    assert "ピュアマーメイドは邪悪な組織サタン・ダイモン" in compiled.text
 
     win = MainWindow.__new__(MainWindow)
     win.sub_editor = None
@@ -1102,7 +966,7 @@ def test_v31_story_summary_isolated_from_asr_across_all_presets_and_modes(qapp, 
     service.model = _SpyModel()
     batch = SubtitleGenerationBatch("b_iso", 0, 3400, "RUNNING", 1, "", "")
 
-    # 2) Kiểm chứng mọi Preset trên large-v3 ở cả 3 chế độ (Full Video, Gen Sub Selected, Rescan Audio)
+    # 1) Kiểm chứng mọi Preset trên large-v3 ở cả 3 chế độ (Full Video, Gen Sub Selected, Rescan Audio)
     panel.cmb_specialized_model.setCurrentIndex(0)
     panel.cmb_model.setCurrentIndex(panel.cmb_model.findData("large-v3"))
     service.current_model_size = "large-v3"
@@ -1118,16 +982,16 @@ def test_v31_story_summary_isolated_from_asr_across_all_presets_and_modes(qapp, 
         with patch.object(service, "_extract_batch_audio", return_value=("fake.wav", None)):
             for req in (req_full, req_selected, req_rescan):
                 assert req.prompt_context == ""
-                assert req.reference_context == story_summary_357
+                assert req.hotwords == ""
+                assert req.reference_context == ""
                 service.transcribe_batch(req, batch, lambda: False)
 
         assert len(captured) == 3
         for opts in captured:
             assert opts["initial_prompt"] is None
-            assert "ピュアマーメイド" in opts["hotwords"]
-            assert "サタン・ダイモン" in opts["hotwords"]
+            assert opts["hotwords"] is None
 
-    # 3) Kotoba-whisper tiếp tục giữ initial_prompt=None và hotwords=None
+    # 2) Kotoba-whisper tiếp tục giữ initial_prompt=None và hotwords=None
     captured.clear()
     panel.cmb_specialized_model.setCurrentIndex(panel.cmb_specialized_model.findData("kotoba-whisper-v2.0"))
     service.current_model_size = "kotoba-whisper-v2.0"
@@ -1142,67 +1006,51 @@ def test_v31_story_summary_isolated_from_asr_across_all_presets_and_modes(qapp, 
         assert opts["hotwords"] is None
 
 
-def test_v31_high_cps_hallucination_guard_cjk_only_and_clean_retry():
-    """High-CPS Guard chặn câu bịa tốc độ bất khả thi cho CJK (ja/zh/ko), bỏ qua Latin, và retry 1 lượt sạch."""
+def test_v31_high_cps_hallucination_guard_cjk_only_and_clean_drop():
+    """High-CPS Guard chặn câu bịa tốc độ bất khả thi cho CJK (ja/zh/ko), bỏ qua Latin, và loại sạch trực tiếp ở lượt ASR chuẩn."""
     hallucinated_narration = "ピュアマーメイドは、サタン・ダイモンの衣装を倒すことができる。彼女は彼らにとっても魅力的な光景だった。"
-    hotwords = "ピュアマーメイド サタン・ダイモン 魔物"
-    summary = "ピュアマーメイドは邪悪な組織サタン・ダイモンと戦うヒロインである。"
 
     # 1) MUST BLOCK (True): JA 51 raw / 46 clean chars in 2.64s (cps > 14.0)
     assert SubtitleGenerationValidator.is_high_cps_hallucination(
         hallucinated_narration, duration_s=2.64, language="ja"
     ) is True
 
-    # 2) MUST BLOCK (True): Condition 2 (12.0 < cps <= 14.0 AND >= 2 terms overlapping Glossary/Summary)
-    assert SubtitleGenerationValidator.is_high_cps_hallucination(
-        hallucinated_narration,
-        duration_s=3.4,
-        language="ja",
-        hotwords=hotwords,
-        reference_context=summary,
-    ) is True
-
-    # 3) MUST KEEP (False): Fast anime dialogue (20 chars / 2.2s = 9.1 cps)
+    # 2) MUST KEEP (False): Fast anime dialogue (20 chars / 2.2s = 9.1 cps)
     assert SubtitleGenerationValidator.is_high_cps_hallucination(
         "早く逃げないと間に合わなくなるぞみんな",
         duration_s=2.2,
         language="ja",
-        hotwords=hotwords,
     ) is False
 
-    # 4) MUST KEEP (False): Short clip (10 chars / 0.6s -> dur < 1.5 and len < 18)
+    # 3) MUST KEEP (False): Short clip (10 chars / 0.6s -> dur < 1.5 and len < 18)
     assert SubtitleGenerationValidator.is_high_cps_hallucination(
         "やめて助けてくれよ",
         duration_s=0.6,
         language="ja",
-        hotwords=hotwords,
     ) is False
 
-    # 5) MUST KEEP (False): Fast English (55 chars / 2.8s = 19.6 cps -> non-CJK ignored)
+    # 4) MUST KEEP (False): Fast English / Vietnamese (non-CJK ignored)
     en_fast = "Quickly grab the glowing crystal before the portal collapses completely"
     assert SubtitleGenerationValidator.is_high_cps_hallucination(
-        en_fast, duration_s=2.8, language="en", hotwords=hotwords
+        en_fast, duration_s=2.8, language="en"
     ) is False
     assert SubtitleGenerationValidator.is_high_cps_hallucination(
         "Nhanh lên lấy ngay viên pha lê trước khi cánh cổng đóng lại hoàn toàn",
         duration_s=2.8,
         language="vi",
-        hotwords=hotwords,
     ) is False
 
-    # 6) End-to-end FasterWhisperService retry: call #1 hallucinates High-CPS with hotwords -> call #2 clean rescues real speech
+    # 5) End-to-end FasterWhisperService drop path: clean ASR pass drops High-CPS hallucination directly
     service = FasterWhisperService(device="cpu")
     service.current_model_size = "large-v3"
     calls = []
 
-    class _RescueHighCpsModel:
+    class _StillHighCpsModel:
         def transcribe(self, _wav, **opts):
             calls.append(dict(opts))
-            if len(calls) == 1:
-                return iter([SimpleNamespace(start=0.2, end=2.84, text=hallucinated_narration, words=None)]), SimpleNamespace(language="ja")
-            return iter([SimpleNamespace(start=0.2, end=2.84, text="よく見せてやる", words=None)]), SimpleNamespace(language="ja")
+            return iter([SimpleNamespace(start=0.2, end=2.84, text=hallucinated_narration, words=None)]), SimpleNamespace(language="ja")
 
-    service.model = _RescueHighCpsModel()
+    service.model = _StillHighCpsModel()
     req = SubtitleGenerationRequest(
         request_id="r_hcps",
         project_id="p1",
@@ -1214,33 +1062,13 @@ def test_v31_high_cps_hallucination_guard_cjk_only_and_clean_retry():
         use_vad=False,
         min_silence_ms=300,
         word_timestamps=True,
-        prompt_context="",
-        hotwords=hotwords,
-        reference_context=summary,
     )
     batch = SubtitleGenerationBatch("b_hcps", 0, 3400, "RUNNING", 1, "", "")
     with patch.object(service, "_extract_batch_audio", return_value=("fake.wav", None)):
-        res_rescue = service.transcribe_batch(req, batch, lambda: False)
-
-    assert len(calls) == 2
-    assert calls[0]["hotwords"] == hotwords
-    assert calls[1]["initial_prompt"] is None
-    assert calls[1]["hotwords"] is None
-    assert calls[1]["condition_on_previous_text"] is False
-    assert [s.text for s in res_rescue.segments] == ["よく見せてやる"]
-
-    # 7) Drop path: if clean retry STILL violates High-CPS -> dropped cleanly ([]), and never leaks to previous_text
-    calls.clear()
-
-    class _StillHighCpsModel:
-        def transcribe(self, _wav, **opts):
-            calls.append(dict(opts))
-            return iter([SimpleNamespace(start=0.2, end=2.84, text=hallucinated_narration, words=None)]), SimpleNamespace(language="ja")
-
-    service.model = _StillHighCpsModel()
-    with patch.object(service, "_extract_batch_audio", return_value=("fake.wav", None)):
         res_drop = service.transcribe_batch(req, batch, lambda: False)
-    assert len(calls) == 2
+    assert len(calls) == 1
+    assert calls[0]["initial_prompt"] is None
+    assert calls[0]["hotwords"] is None
     assert res_drop.segments == []
 
     _, ctx_prompt = resolve_tier3_context(

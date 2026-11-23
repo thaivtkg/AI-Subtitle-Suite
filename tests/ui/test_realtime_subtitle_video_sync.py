@@ -113,22 +113,17 @@ def test_ac_live_03_undo_redo_syncs_realtime_to_video_player(main_window, qtbot)
     assert win.video_player.subtitle_overlay.render_input.text == "Sửa lần 1"
 
 
-def test_ac_live_04_tm_and_asr_scan_sync_realtime_to_video_player(main_window, qtbot):
+def test_ac_live_04_asr_scan_sync_realtime_to_video_player(main_window, qtbot):
     """
-    AC-LIVE-04: Áp dụng gợi ý TM hoặc quét lại ASR đoạn đơn lập tức phản ánh
+    AC-LIVE-04: Quét lại ASR đoạn đơn lập tức phản ánh
     nội dung mới lên Video Player mà không cần bấm Play video.
     """
     win = main_window
     assert win.video_player.subtitle_overlay.render_input.text == "Câu một ban đầu"
 
-    # 1. Quét lại giọng nói ASR đoạn đơn hoàn tất
+    # Quét lại giọng nói ASR đoạn đơn hoàn tất
     win._on_segment_scan_finished("seg_sync_1", "Nội dung nhận diện mới từ ASR")
     assert win.video_player.subtitle_overlay.render_input.text == "Nội dung nhận diện mới từ ASR"
-
-    # 2. Áp dụng gợi ý TM
-    win.sub_editor.select_segment(0)
-    win._on_tm_match_applied("Bản dịch gợi ý từ TM")
-    assert win.video_player.subtitle_overlay.render_input.text == "Bản dịch gợi ý từ TM"
 
 
 def test_playback_syncs_current_editor_including_empty_segments_without_text_clipping(main_window, qtbot):

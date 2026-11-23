@@ -38,11 +38,10 @@ def _create_sample_project(project_dir: str, active_page: str, tmp_path):
         json.dump({"active_page": active_page}, f)
 
 
-def test_open_project_restores_translation_tab(app, tmp_path):
+def test_open_project_redirects_legacy_translation_tab_to_workspace(app, tmp_path):
     """
-    PLAN-TAB-PERSISTENCE-RESTORE-001 (Task 3):
-    Khi mở dự án có workspace.json lưu active_page='translation',
-    MainWindow phải mở đúng Tab Dịch thuật AI (_active_nav_index == 8, stack == 7).
+    Khi mở dự án cũ có workspace.json lưu active_page='translation' (đã gỡ bỏ),
+    MainWindow phải tự động điều hướng an toàn về Studio Workspace (_active_nav_index == 1, stack == 1).
     """
     proj_dir = str(tmp_path / "test_trans_project.ai-subtitle")
     _create_sample_project(proj_dir, "translation", tmp_path)
@@ -51,8 +50,8 @@ def test_open_project_restores_translation_tab(app, tmp_path):
     success = win._open_project_by_path(proj_dir)
     assert success is True, "Mở dự án phải thành công"
 
-    assert win._active_nav_index == 8, f"Expected nav index 8 (translation), got {win._active_nav_index}"
-    assert win.stack.currentIndex() == 7, f"Expected stack index 7 (translation), got {win.stack.currentIndex()}"
+    assert win._active_nav_index == 1, f"Expected fallback nav index 1 (workspace), got {win._active_nav_index}"
+    assert win.stack.currentIndex() == 1, f"Expected fallback stack index 1 (workspace), got {win.stack.currentIndex()}"
 
 
 def test_open_project_restores_export_tab(app, tmp_path):

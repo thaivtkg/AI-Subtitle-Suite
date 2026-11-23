@@ -8,7 +8,6 @@ from core.project.project import Project, SourceInfo as ProjectSourceInfo
 from core.project.source_fingerprint import generate_source_info, SourceInfo
 from core.project.project_state import ProjectState, WorkspaceState, TimingState
 from core.subtitle_placement import SubtitlePlacementState
-from core.project.transcription_context import TranscriptionContext
 from core.artifacts.artifact_store import ArtifactStore
 from core.utils.file_utils import atomic_save_json
 from core.timing.timing_checkpoint import TimingCheckpoint
@@ -335,8 +334,6 @@ class ProjectService:
             return
             
         self.current_project.updated_at = datetime.now().isoformat()
-        normalized_context = self.current_project.transcription_context.normalized()
-        self.current_project.transcription_context = normalized_context
         
         # 1. Lưu project.json
         proj_data = {
@@ -346,7 +343,6 @@ class ProjectService:
             "created_at": self.current_project.created_at,
             "updated_at": self.current_project.updated_at,
             "source": asdict(self.current_project.source),
-            "transcription_context": asdict(normalized_context),
         }
         atomic_save_json(os.path.join(self.project_dir, "project.json"), proj_data)
         
@@ -642,12 +638,6 @@ class ProjectService:
             updated_at=p_data["updated_at"],
             source=source_info,
             state=project_state,
-            transcription_context=TranscriptionContext(
-                context=str((p_data.get("transcription_context") or {}).get("context", "")),
-                glossary=list((p_data.get("transcription_context") or {}).get("glossary", [])),
-                domain=str((p_data.get("transcription_context") or {}).get("domain", "general")),
-                lang_pair=str((p_data.get("transcription_context") or {}).get("lang_pair", "")),
-            ).normalized(),
             schema_version=max(2, int(p_data.get("schema_version", 1)))
         )
         self.project_dir = project_dir

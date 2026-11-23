@@ -8,6 +8,7 @@ class WhisperSegmentResult:
     end_ms: int
     text: str
     words: Optional[List[Dict]] = None
+    avg_logprob: Optional[float] = None
 
 
 @dataclass

@@ -624,21 +624,6 @@ class SubtitleGenerationPanel(QWidget):
         self.btn_rollback.clicked.connect(self._on_rollback_clicked)
         # -----------------------------------
 
-
-        context_layout = QHBoxLayout()
-        context_layout.setContentsMargins(0, 6, 0, 0)
-        self.lbl_context_status = QLabel("Context: not configured")
-        self.lbl_context_status.setProperty("class", "Caption")
-        self.lbl_context_status.setWordWrap(True)
-        self.btn_context_edit = QPushButton("Edit context")
-        self.btn_context_edit.setFixedHeight(32)
-        self.btn_context_edit.setProperty("variant", "secondary")
-        self.context_status_label = self.lbl_context_status
-        self.edit_context_btn = self.btn_context_edit
-        context_layout.addWidget(self.lbl_context_status, stretch=1)
-        context_layout.addWidget(self.btn_context_edit)
-        settings_layout.addLayout(context_layout)
-
         settings_layout.addStretch()
         self.settings_scroll_area.setWidget(self.settings_scroll_content)
         layout.addWidget(self.settings_scroll_area, stretch=1)
@@ -764,7 +749,6 @@ class SubtitleGenerationPanel(QWidget):
         self.btn_generate.clicked.connect(self._on_generate_clicked)
         self.btn_resume.clicked.connect(self._on_resume_clicked)
         self.btn_cancel.clicked.connect(self._on_cancel_clicked)
-        self.btn_context_edit.clicked.connect(self.request_context_edit)
         self.generation_service.on_progress = self._update_progress
         self.generation_service.on_error = self._on_error
         self.generation_service.on_finish = self._on_finish
@@ -1783,34 +1767,20 @@ class SubtitleGenerationPanel(QWidget):
         if not video_path:
             QMessageBox.warning(self, "Lỗi", "Không tìm thấy đường dẫn Video gốc trong Dự án.")
             return None
-        from core.subtitle_generation.language_utils import (
-            extract_glossary_hotwords,
-            normalize_to_iso_code,
-        )
-        from core.subtitle_generation.faster_whisper_service import FasterWhisperService
         from core.services.model_manager import ModelManager
 
         effective_model = self._get_effective_model_size()
         spec_info = ModelManager.get_specialized_info(effective_model)
 
-        tx_ctx = getattr(project, "transcription_context", None)
-        ref_story_summary = str(getattr(tx_ctx, "context", "") or "").strip()
         language = self.cmb_language.currentText()
         final_lang = None if (not language or language == "Auto Detect") else language
-        if final_lang is None:
-            win = self.window()
-            proj_ctrl = getattr(getattr(win, "page_translation", None), "project_controller", None)
-            if proj_ctrl and getattr(proj_ctrl, "_is_ja_origin", False):
-                final_lang = "ja"
         if final_lang is None and spec_info is not None:
             final_lang = spec_info.get("language")
 
-        # Tách triệt để Tóm tắt cốt truyện khỏi ASR ở mọi Preset/Model; chỉ dùng Từ điển (hotwords) cho non-Kotoba
+        # Chuẩn hóa ASR sạch: không truyền initial_prompt / hotwords / reference_context
         prompt_text = ""
-        if FasterWhisperService.is_kotoba_model(effective_model) or not ModelManager.supports_word_timestamps(effective_model):
-            hotwords = ""
-        else:
-            hotwords = extract_glossary_hotwords(tx_ctx)
+        hotwords = ""
+        ref_story_summary = ""
 
         min_sil = self.spin_min_silence.value() if hasattr(self, "spin_min_silence") else self._STANDARD_VAD_PRESET["min_silence"]
         vad_thresh = self.spin_vad_threshold.value() if hasattr(self, "spin_vad_threshold") else self._STANDARD_VAD_PRESET["threshold"]

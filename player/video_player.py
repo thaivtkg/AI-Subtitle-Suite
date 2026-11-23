@@ -544,22 +544,7 @@ class VideoPlayerWidget(QWidget):
             self.cancel_segment_playback()
 
     def _apply_style_preset(self, preset: str):
-        preset_clean = (preset or "normal").lower().strip()
-        if preset_clean in ("loud", "whisper"):
-            from core.subtitle_quality.style_preset_resolver import StylePresetResolver
-            base_size = getattr(getattr(self, "subtitle_overlay", None), "font_size", 20)
-            custom_presets = getattr(getattr(self, "subtitle_overlay", None), "custom_presets", None)
-            resolved = StylePresetResolver.resolve_style(
-                preset_clean, {"font_size": base_size}, custom_presets=custom_presets
-            )
-            weight = "bold" if resolved.get("bold") else "normal"
-            fstyle = "italic" if resolved.get("italic") else "normal"
-            self.lbl_sub.setStyleSheet(
-                f"font-weight: {weight}; font-style: {fstyle}; "
-                f"font-size: {resolved['font_size']}px; color: {resolved['font_color']};"
-            )
-        else:
-            self.lbl_sub.setStyleSheet("background: transparent;")
+        self.lbl_sub.setStyleSheet("background: transparent;")
 
     def set_subtitle_text(self, text: str, style_preset: str = "normal"):
         preset = (style_preset or "normal").lower().strip()

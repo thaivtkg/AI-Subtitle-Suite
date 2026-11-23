@@ -75,6 +75,14 @@ def is_vietnamese_translated(text_or_segment: Union[dict, str, None]) -> bool:
     if words and words.issubset(CONVERSATIONAL_PARTICLES):
         return True
 
+    # Tên riêng Latinh ngắn viết hoa chữ cái đầu (vd: "Dark Lilith.", "Pure Mermaid") giữ nguyên trong sub Việt
+    raw_tokens = re.findall(r"[A-Za-z0-9]+", text)
+    if (
+        2 <= len(raw_tokens) <= 3
+        and all(tok[0].isupper() and tok.isalpha() for tok in raw_tokens)
+    ):
+        return True
+
     # Mặc định: Nếu là câu dài hoàn toàn không có dấu tiếng Việt nào -> Coi là chưa dịch
     return len(words) <= 1
 
@@ -90,6 +98,26 @@ def find_first_untranslated_index(segments: list) -> Optional[int]:
         if not is_vietnamese_translated(s):
             return i
     return None
+
+
+def find_latest_untranslated_start_index(segments: list) -> Optional[int]:
+    """
+    Tìm chỉ mục 1-based mở đầu của cụm câu chưa dịch mới nhất (vừa gen/timing ra).
+    Quét từ cuối danh sách để luôn bám cụm câu mới nhất thay vì bị kéo về các câu sót ở đầu;
+    nếu toàn bộ đã dịch trả về None.
+    """
+    if not segments:
+        return None
+    untranslated_mask = [not is_vietnamese_translated(s) for s in segments]
+    if not any(untranslated_mask):
+        return None
+    last_untr = len(segments) - 1
+    while last_untr >= 0 and not untranslated_mask[last_untr]:
+        last_untr -= 1
+    start_untr = last_untr
+    while start_untr > 0 and untranslated_mask[start_untr - 1]:
+        start_untr -= 1
+    return start_untr + 1
 
 
 def count_translated_segments(segments: list) -> tuple[int, int]:

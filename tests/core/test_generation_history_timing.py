@@ -162,7 +162,8 @@ def window(app, project):
     project.close_project()
     win.undo_manager.clear()
     win.revision_tracker.reset_for_new_document()
-    win.tm_manager.close()
+    if hasattr(win, "tm_manager") and win.tm_manager is not None:
+        win.tm_manager.close()
     win.close()
     win.deleteLater()
     QApplication.sendPostedEvents(None, QEvent.DeferredDelete)

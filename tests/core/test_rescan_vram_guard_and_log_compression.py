@@ -9,9 +9,6 @@ from core.subtitle_generation.subtitle_generation_batch import SubtitleGeneratio
 from core.subtitle_generation.subtitle_generation_request import SubtitleGenerationRequest
 from core.timing.timing_run_request import TimingRunRequest
 from workers.TimingBatchWorker import TimingBatchWorker
-from core.translation.models.subtitle import SubtitleModel
-from core.translation.controllers.translation_controller import TranslationController
-from core.translation.controllers.project_controller import ProjectController
 
 
 def test_rescan_uses_large_v3_and_float16_by_default(qapp):
@@ -36,7 +33,7 @@ def test_rescan_uses_large_v3_and_float16_by_default(qapp):
     win.subtitle_whisper_service = MagicMock(device="cuda")
 
     with patch("core.services.model_manager.ModelManager.is_installed", return_value=True), \
-         patch("core.translation.core.hardware_detector.HardwareDetector.get_vram_usage", return_value=(2.0, 8.0)), \
+         patch("core.services.hardware_checker.HardwareChecker.get_vram_usage", return_value=(2.0, 8.0)), \
          patch("workers.SegmentScanWorker.SegmentScanWorker.start"):
         win._on_segment_scan_requested("s1", 1000, 3000)
         assert win.scan_worker.request.model_size == "large-v3"
@@ -67,7 +64,7 @@ def test_rescan_auto_selects_int8_float16_and_2000ms_silence_for_rtx_3050_anime_
 
     # Giả lập GPU RTX 3050 4GB (used 0.8GB, total 4.0GB <= 4.5GB)
     with patch("core.services.model_manager.ModelManager.is_installed", return_value=True), \
-         patch("core.translation.core.hardware_detector.HardwareDetector.get_vram_usage", return_value=(0.8, 4.0)), \
+         patch("core.services.hardware_checker.HardwareChecker.get_vram_usage", return_value=(0.8, 4.0)), \
          patch("workers.SegmentScanWorker.SegmentScanWorker.start"):
         win._on_segment_scan_requested("s1", 1000, 3000)
         assert win.scan_worker.request.model_size == "large-v3"
@@ -90,7 +87,7 @@ def test_faster_whisper_auto_downgrades_to_int8_float16_when_vram_exceeds_65_per
     with patch("faster_whisper.WhisperModel", side_effect=fake_whisper_model), \
          patch("core.services.model_manager.ModelManager.get_model_path_for_inference", return_value="large-v3"), \
          patch("core.services.model_manager.ModelManager.prepare_models_storage", return_value="models"), \
-         patch("core.translation.core.hardware_detector.HardwareDetector.get_vram_usage", return_value=(4.2, 6.0)):
+         patch("core.services.hardware_checker.HardwareChecker.get_vram_usage", return_value=(4.2, 6.0)):
         # 4.2 / 6.0 = 70% > 65% -> tự động nạp bằng int8_float16 thay vì float16
         downgrade, ratio = should_downgrade_to_int8_float16(0.65)
         assert downgrade is True
@@ -131,7 +128,7 @@ def test_faster_whisper_transcribe_batch_rtx_3050_anime_options():
         updated_at="now",
     )
 
-    with patch("core.translation.core.hardware_detector.HardwareDetector.get_vram_usage", return_value=(0.8, 4.0)):
+    with patch("core.services.hardware_checker.HardwareChecker.get_vram_usage", return_value=(0.8, 4.0)):
         service.transcribe_batch(req, batch, lambda: False)
 
     called_kwargs = mock_model.transcribe.call_args[1]
@@ -191,56 +188,13 @@ def test_timing_batch_worker_downgrades_mid_generation_on_high_vram(tmp_path):
          patch("torch.cuda.empty_cache"), \
          patch("faster_whisper.WhisperModel", side_effect=fake_whisper_model), \
          patch("core.services.model_manager.ModelManager.get_model_path_for_inference", return_value="large-v3"), \
-         patch("core.translation.core.hardware_detector.HardwareDetector.get_vram_usage", side_effect=fake_vram), \
+         patch("core.services.hardware_checker.HardwareChecker.get_vram_usage", side_effect=fake_vram), \
          patch("subprocess.run", side_effect=fake_ffmpeg_run):
         worker.run()
 
     assert "float16" in created_computes
     assert "int8_float16" in created_computes
     assert emitted_computes[-1] == "int8_float16"
-
-
-def test_translation_log_is_concise_and_utf8_readable(capsys, qapp):
-    model = SubtitleModel()
-    model.load_data([
-        {
-            "index": 1,
-            "start_time": "00:00:01,000",
-            "end_time": "00:00:03,000",
-            "original": "「この俺様に一体何の」",
-            "translation": "",
-            "status": "PENDING",
-        }
-    ])
-    tc = TranslationController(model)
-    tc._active_translation_index = 0
-    tc._current_index = 0
-    tc.worker = MagicMock(extracted_terms=[])
-
-    # Clear startup output
-    capsys.readouterr()
-
-    tc.on_finished(0, "Ngươi tìm ta đây rốt cuộc có chuyện gì?")
-    out = capsys.readouterr().out
-
-    assert "[MODEL_COMMIT]" not in out
-    assert "[MODEL_AFTER]" not in out
-    assert "[TRANSLATION_CALLBACK]" not in out
-    assert "\\u" not in out
-    assert "[CAT] Câu #1: Ngươi tìm ta đây rốt cuộc có chuyện gì?" in out
-
-
-def test_project_save_suppresses_zero_subtitle_log(capsys, tmp_path):
-    model = SubtitleModel()
-    model.load_data([])
-    pc = ProjectController(model)
-    capsys.readouterr()
-
-    save_file = str(tmp_path / "empty_project.aisrt")
-    pc.saveProject(save_file, "", "Japanese", "Vietnamese", notify=False)
-    out = capsys.readouterr().out
-
-    assert "Saving 0 subtitles" not in out
 
 
 def test_rescan_and_batch_rescan_default_vad_to_true(qapp, tmp_path):
@@ -272,7 +226,7 @@ def test_rescan_and_batch_rescan_default_vad_to_true(qapp, tmp_path):
     win.subtitle_whisper_service = MagicMock(device="cuda")
 
     with patch("core.services.model_manager.ModelManager.is_installed", return_value=True), \
-         patch("core.translation.core.hardware_detector.HardwareDetector.get_vram_usage", return_value=(1.0, 4.0)), \
+         patch("core.services.hardware_checker.HardwareChecker.get_vram_usage", return_value=(1.0, 4.0)), \
          patch.object(SegmentScanWorker, "start"), \
          patch.object(BatchSegmentScanWorker, "start"):
 
@@ -336,7 +290,7 @@ def test_model_size_ordering_and_auto_select_installed_model(qapp):
 
     # 2. Khi chỉ có large-v3 đã tải (large-v3-turbo chưa tải), panel và sync_timing_settings_from_project tự chọn large-v3
     with patch("core.services.model_manager.ModelManager.is_installed", side_effect=lambda m: m == "large-v3"), \
-         patch("core.translation.core.hardware_detector.HardwareDetector.get_vram_usage", return_value=(1.0, 4.0)):
+         patch("core.services.hardware_checker.HardwareChecker.get_vram_usage", return_value=(1.0, 4.0)):
         panel = SubtitleGenerationPanel(MagicMock())
         assert panel.cmb_model.currentData() == "large-v3"
 
@@ -351,7 +305,7 @@ def test_model_size_ordering_and_auto_select_installed_model(qapp):
 
     # 3. Khi tất cả các model đều đã tải trên máy có GPU >= 3.5 GB VRAM -> chọn model tốt nhất là large-v3
     with patch("core.services.model_manager.ModelManager.is_installed", return_value=True), \
-         patch("core.translation.core.hardware_detector.HardwareDetector.get_vram_usage", return_value=(1.0, 4.0)):
+         patch("core.services.hardware_checker.HardwareChecker.get_vram_usage", return_value=(1.0, 4.0)):
         all_installed = {m: True for m in expected_order}
         assert SubtitleGenerationPanel._select_best_model(all_installed) == "large-v3"
 
@@ -412,7 +366,7 @@ def test_cfg9_preset_tunable_and_apply_to_rescan_and_batch(qapp, tmp_path):
     win.subtitle_whisper_service = MagicMock(device="cuda")
 
     with patch("core.services.model_manager.ModelManager.is_installed", return_value=True), \
-         patch("core.translation.core.hardware_detector.HardwareDetector.get_vram_usage", return_value=(1.0, 4.0)), \
+         patch("core.services.hardware_checker.HardwareChecker.get_vram_usage", return_value=(1.0, 4.0)), \
          patch.object(SegmentScanWorker, "start"), \
          patch.object(BatchSegmentScanWorker, "start"):
 

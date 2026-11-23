@@ -25,15 +25,19 @@ def test_switch_page_persists_active_tab_immediately(app, tmp_path):
     proj_service = MockProjectService(str(tmp_path))
     win = MainWindow(project_service=proj_service)
 
-    # 1. Chuyen sang Tab Dich thuat AI (8)
-    win.switch_page(8)
-    assert proj_service.current_project.state.workspace.active_page == "translation"
+    # 1. Chuyen sang Tab Draft Center (4)
+    win.switch_page(4)
+    assert proj_service.current_project.state.workspace.active_page == "draft"
 
     ws_file = os.path.join(str(tmp_path), "workspace.json")
     assert os.path.exists(ws_file), "workspace.json phai duoc ghi ngay khi chuyen tab"
     with open(ws_file, "r", encoding="utf-8") as f:
         data = json.load(f)
-    assert data.get("active_page") == "translation"
+    assert data.get("active_page") == "draft"
+
+    # 1b. Tab legacy (8) tu dong chuyen huong ve Studio Workspace
+    win.switch_page(8)
+    assert proj_service.current_project.state.workspace.active_page == "workspace"
 
     # 2. Chuyen sang Export Center (5)
     win.switch_page(5)

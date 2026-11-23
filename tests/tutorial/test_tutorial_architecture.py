@@ -8,7 +8,7 @@ from typing import Protocol
 
 class TestTutorialArchitectureGuards(unittest.TestCase):
     def setUp(self):
-        self.project_root = Path(__file__).resolve().parent.parent
+        self.project_root = Path(__file__).resolve().parent.parent.parent
         self.core_tutorial_dir = self.project_root / "core" / "tutorial"
         self.tests_dir = self.project_root / "tests"
         self.forbidden_imports = {

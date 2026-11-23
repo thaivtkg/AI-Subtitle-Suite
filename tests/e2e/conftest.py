@@ -233,7 +233,6 @@ class E2EStepRunner:
             4: "Export Center",
             5: "Settings Center",
             6: "Help Center",
-            7: "Dịch thuật AI",
         }
         stack_idx = -1
         if win:
@@ -248,13 +247,6 @@ class E2EStepRunner:
             if stack_idx == -1 and hasattr(win, "_active_nav_index"):
                 stack_idx = getattr(win, "_active_nav_index", -1)
         page_name = STACK_NAMES.get(stack_idx, f"Page {stack_idx}")
-
-        scan_btn = getattr(getattr(win, "sub_editor", None), "reanalyze_audio_style_btn", None)
-        scan_info = (
-            f"isVisible={scan_btn.isVisible()}, isEnabled={scan_btn.isEnabled()}"
-            if scan_btn
-            else "Không tìm thấy nút"
-        )
 
         active_modal = QApplication.activeModalWidget()
         if active_modal:
@@ -318,7 +310,6 @@ class E2EStepRunner:
 🖥️ [2. TRẠNG THÁI GIAO DIỆN HIỆN TẠI (UI SNAPSHOT)]
   - Cửa sổ chính: Visible={win.isVisible() if win else False}, Geometry=({win.x() if win else 0}, {win.y() if win else 0}, {win.width() if win else 0}, {win.height() if win else 0})
   - Trang đang hiển thị (Stack Index): Index {stack_idx} ({page_name})
-  - Nút [🔄 Quét Audio]: {scan_info}
   - Modal Dialog đang chặn: {modal_info}
   - Kim đỏ Timeline: {playhead_str} | Thanh cuộn: {scroll_val}px
 📋 [3. NHẬT KÝ NỘI BỘ ỨNG DỤNG (APP INTERNAL LOGS)]

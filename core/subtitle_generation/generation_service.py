@@ -38,12 +38,6 @@ from core.subtitle_generation.subtitle_generation_result import (
     SubtitleGenerationResult,
     WhisperSegmentResult,
 )
-from core.transcription.prompt_context_builder import (
-    CompiledPromptContext,
-    PromptContextBuilder,
-)
-from core.transcription.token_counter import ApproximateTokenCounter
-from core.project.transcription_context import TranscriptionContext
 from workers.subtitle_generation_worker import SubtitleGenerationWorker
 
 
@@ -56,7 +50,6 @@ class SubtitleGenerationService(QObject):
         super().__init__()
         self.whisper_service = whisper_service
         self.project_service = project_service
-        self.prompt_context_builder = PromptContextBuilder(ApproximateTokenCounter())
         self.checkpoint_manager = SubtitleGenerationCheckpointManager(project_service)
         self.artifact_service = SubtitleArtifactService(project_service)
         self.current_worker: Optional[SubtitleGenerationWorker] = None
@@ -103,11 +96,6 @@ class SubtitleGenerationService(QObject):
             if getattr(cp, "checkpoint_type", "") == "INITIAL" and getattr(cp, "source_id", "default") == source_id:
                 return cp
         return None
-
-    def compile_prompt_context(
-        self, context: TranscriptionContext
-    ) -> CompiledPromptContext:
-        return self.prompt_context_builder.build(context)
 
     @property
     def is_running(self) -> bool:

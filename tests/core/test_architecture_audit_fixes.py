@@ -6,14 +6,10 @@ Verification suite for Architectural, Concurrency & Performance Audit Fixes:
 - AUD-PERF-002: VideoPlayer Temporal Locality O(1) & Bisect Binary Search O(log N)
 - AUD-MEM-001: Safe QThread Lifecycle & Resource Cleanup
 """
-import threading
 from unittest.mock import MagicMock, patch
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from core.translation.llm.model_manager import ModelManager
-from core.translation.controllers.translation_controller import TranslationController
-from core.translation.models.subtitle import SubtitleModel
 from core.subtitle_generation.faster_whisper_service import FasterWhisperService
 from core.subtitle_generation.subtitle_generation_request import SubtitleGenerationRequest
 from core.subtitle_generation.subtitle_generation_batch import SubtitleGenerationBatch
@@ -23,60 +19,6 @@ from player.video_player import VideoPlayerWidget, _parse_time_to_ms, _extract_s
 @pytest.fixture(scope="session")
 def qapp():
     return QApplication.instance() or QApplication([])
-
-
-def test_aud_concur_001_model_manager_mutex_lock():
-    """AUD-CONCUR-001: ModelManager sở hữu RLock độc quyền bảo vệ generate/stream."""
-    mgr = ModelManager.get_instance("ollama")
-    assert hasattr(mgr, "_lock")
-    assert isinstance(mgr._lock, type(threading.RLock()))
-
-    # Xác thực generate acquire lock
-    mgr.backend.generate = MagicMock(return_value="translated text")
-    result = mgr.generate("test prompt")
-    assert result == "translated text"
-    mgr.backend.generate.assert_called_once_with("test prompt", system_prompt="")
-
-
-def test_aud_concur_001_and_mem_001_controller_busy_guard(qapp):
-    """AUD-CONCUR-001 & AUD-MEM-001: is_busy() phát hiện bất kỳ worker nào đang chạy và chặn collision."""
-    model = SubtitleModel()
-    model.load_data([
-        {"original": "Hello", "translation": "Xin chào", "status": "PENDING"},
-        {"original": "World", "translation": "", "status": "PENDING"},
-    ])
-    controller = TranslationController(model)
-
-    assert controller.is_busy() is False
-
-    # Giả lập worker đang chạy
-    mock_worker = MagicMock()
-    mock_worker.isRunning.return_value = True
-    controller.worker = mock_worker
-
-    assert controller.is_busy() is True
-
-    # Khi bận, requestTranslation không được khởi tạo luồng mới
-    factory_mock = MagicMock()
-    controller._worker_factory = factory_mock
-    controller.requestTranslation(1, "English", "Vietnamese", "")
-    factory_mock.assert_not_called()
-
-    # Tương tự cho requestAlternativeTranslation
-    controller.requestAlternativeTranslation(1, "English")
-    factory_mock.assert_not_called()
-
-    # Tương tự cho extractTermsForSubtitle
-    controller.extractTermsForSubtitle(0)
-    factory_mock.assert_not_called()
-
-    # Giả lập worker dừng
-    mock_worker.isRunning.return_value = False
-    assert controller.is_busy() is False
-
-    # Dọn dẹp
-    controller.shutdown()
-    assert controller.worker is None
 
 
 def test_aud_perf_001_ffmpeg_fast_input_seeking():

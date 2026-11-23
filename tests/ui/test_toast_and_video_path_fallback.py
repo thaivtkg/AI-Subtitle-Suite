@@ -47,18 +47,3 @@ def test_gui_get_current_video_path_fallback(qapp, tmp_path):
         assert win.get_current_video_path() == test_video
 
     win.close()
-
-
-def test_subeditor_reanalyze_audio_style_warning_no_crash(qapp):
-    from ui.SubEditor import SubtitleEditorWidget
-
-    editor = SubtitleEditorWidget()
-
-    editor.all_segments = [
-        {"start": "00:00:01,000", "end": "00:00:03,000", "text": "Hello"}
-    ]
-
-    # Without video_path, _on_reanalyze_audio_style_clicked should call Toast.show_warning
-    # and return gracefully without raising AttributeError
-    editor._on_reanalyze_audio_style_clicked([0])
-    editor.close()

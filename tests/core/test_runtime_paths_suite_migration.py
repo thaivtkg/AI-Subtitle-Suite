@@ -54,11 +54,3 @@ def test_branding_in_source_files():
     # 2. ui/Gui.py
     gui_py = (project_root / "ui" / "Gui.py").read_text(encoding="utf-8")
     assert 'self.setWindowTitle("AI Subtitle Suite")' in gui_py
-
-    # 3. AppHeader.qml
-    app_header_qml = (project_root / "ui" / "qml_translation" / "components" / "AppHeader.qml").read_text(encoding="utf-8")
-    assert "AI Subtitle Suite" in app_header_qml
-
-    # 4. StudioLaunchpad.qml
-    launchpad_qml = (project_root / "ui" / "qml_translation" / "components" / "StudioLaunchpad.qml").read_text(encoding="utf-8")
-    assert 'text: "AI Subtitle Suite"' in launchpad_qml

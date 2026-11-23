@@ -20,6 +20,48 @@ class HardwareProfile:
 class HardwareChecker:
     """Detects system hardware and evaluates suitability for subtitle generation models."""
 
+    _cuda_lib = None
+    _cuda_ctx = None
+
+    @classmethod
+    def get_vram_usage(cls) -> tuple[float, float]:
+        """Truy xuất dung lượng VRAM thực tế thời gian thực (used_gb, total_gb)."""
+        try:
+            import ctypes
+            if cls._cuda_lib is None:
+                cls._cuda_lib = ctypes.CDLL("nvcuda.dll")
+                if cls._cuda_lib.cuInit(0) == 0:
+                    dev = ctypes.c_int()
+                    if cls._cuda_lib.cuDeviceGet(ctypes.byref(dev), 0) == 0:
+                        ctx = ctypes.c_void_p()
+                        if cls._cuda_lib.cuDevicePrimaryCtxRetain(ctypes.byref(ctx), dev) == 0:
+                            cls._cuda_ctx = ctx
+                            cls._cuda_lib.cuCtxSetCurrent(ctx)
+            if cls._cuda_lib and cls._cuda_ctx:
+                cls._cuda_lib.cuCtxSetCurrent(cls._cuda_ctx)
+                free = ctypes.c_size_t()
+                total = ctypes.c_size_t()
+                if cls._cuda_lib.cuMemGetInfo_v2(ctypes.byref(free), ctypes.byref(total)) == 0:
+                    t = total.value / (1024 ** 3)
+                    u = (total.value - free.value) / (1024 ** 3)
+                    return round(u, 1), round(t, 1)
+        except Exception:
+            pass
+        try:
+            import subprocess
+            result = subprocess.run(
+                ['nvidia-smi', '--query-gpu=memory.used,memory.total', '--format=csv,noheader,nounits'],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+            )
+            if result.returncode == 0:
+                parts = result.stdout.strip().split(',')
+                if len(parts) >= 2:
+                    return round(float(parts[0]) / 1024, 1), round(float(parts[1]) / 1024, 1)
+        except Exception:
+            pass
+        return -1.0, -1.0
+
     @staticmethod
     def detect() -> HardwareProfile:
         has_cuda = False

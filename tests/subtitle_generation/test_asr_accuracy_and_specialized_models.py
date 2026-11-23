@@ -2,7 +2,6 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from core.project.project_state import TimingState
-from core.project.transcription_context import TranscriptionContext
 from core.services.model_manager import ModelManager
 from core.subtitle_generation.faster_whisper_service import FasterWhisperService
 from core.subtitle_generation.language_utils import (
@@ -35,7 +34,7 @@ def test_model_manager_specialized_models_discovery_and_snapshot_resolution(tmp_
 def test_language_utils_prompt_and_hotwords():
     assert get_initial_prompt_for_language("ja") == ""
 
-    ctx = TranscriptionContext(
+    ctx = SimpleNamespace(
         context="Anime scene",
         glossary=["黒崎 -> Kurosaki", "御影 = Mikage", "黒崎 -> duplicate", "天城"],
     )
@@ -44,9 +43,14 @@ def test_language_utils_prompt_and_hotwords():
 
 def test_faster_whisper_ffmpeg_filter_and_kotoba_options(tmp_path):
     assert FasterWhisperService.build_ffmpeg_audio_filter(speech_filter=False, audio_boost=False) is None
-    assert FasterWhisperService.build_ffmpeg_audio_filter(speech_filter=False, audio_boost=True) == "volume=2.0"
+    assert FasterWhisperService.build_ffmpeg_audio_filter(speech_filter=False, audio_boost=True) == (
+        "volume=2.0,alimiter=limit=0.95:attack=5:release=50"
+    )
     assert FasterWhisperService.build_ffmpeg_audio_filter(speech_filter=True, audio_boost=False) == (
         "highpass=f=80,lowpass=f=7800,dynaudnorm=f=150:g=15"
+    )
+    assert FasterWhisperService.build_ffmpeg_audio_filter(speech_filter=True, audio_boost=True) == (
+        "highpass=f=80,lowpass=f=7800,dynaudnorm=f=150:g=15:m=20:p=0.92,alimiter=limit=0.95:attack=5:release=50"
     )
 
     service = FasterWhisperService(device="cpu")
@@ -162,7 +166,6 @@ def test_subtitle_generation_panel_specialized_model_box_and_rescan(qapp, tmp_pa
     mock_project.source.fingerprint = "fp"
     mock_project.state.timing = TimingState()
     mock_project.state.task_mode = "asr"
-    mock_project.transcription_context = TranscriptionContext(glossary=["黒崎 -> Kurosaki"])
     gen_service.project_service.current_project = mock_project
     gen_service.compile_prompt_context.return_value = SimpleNamespace(text="")
 
@@ -192,7 +195,7 @@ def test_subtitle_generation_panel_specialized_model_box_and_rescan(qapp, tmp_pa
 
         win = MainWindow.__new__(MainWindow)
         win.subtitle_whisper_service = MagicMock(device="cuda")
-        with patch("core.translation.core.hardware_detector.HardwareDetector.get_vram_usage", return_value=(1.0, 4.0)):
+        with patch("core.services.hardware_checker.HardwareChecker.get_vram_usage", return_value=(1.0, 4.0)):
             model_name, _ = win._resolve_rescan_model_and_compute(panel._timing_settings())
             assert model_name == "kotoba-whisper-v2.0"
 
@@ -357,7 +360,7 @@ def test_distilled_kotoba_models_disable_word_timestamps_everywhere():
     assert kotoba_kw.get("hotwords") is None
     assert kotoba_kw["condition_on_previous_text"] is False
 
-    # Standard large-v3 keeps word_timestamps, natural initial_prompt, and space-separated hotwords
+    # Standard large-v3 keeps word_timestamps and enforces clean ASR (initial_prompt=None, hotwords=None)
     std_req = TimingRunRequest(
         video_path="dummy.mp4",
         start_ms=0,
@@ -373,8 +376,8 @@ def test_distilled_kotoba_models_disable_word_timestamps_everywhere():
     )
     assert std_kw["word_timestamps"] is True
     assert std_kw["hallucination_silence_threshold"] == 1.0
-    assert std_kw["initial_prompt"] == "こんにちは。"
-    assert std_kw["hotwords"] == "黒崎 御影"
+    assert std_kw["initial_prompt"] is None
+    assert std_kw["hotwords"] is None
 
     # FasterWhisperService.transcribe_batch also disables word_timestamps when kotoba is loaded
     service = FasterWhisperService(device="cpu")
@@ -532,7 +535,6 @@ def test_custom_vad_preset_persists_across_timing_run_reset_and_mode_switch(qapp
 
 def test_segment_scan_request_and_tier3_omit_prompts_for_kotoba(tmp_path):
     from types import SimpleNamespace
-    from core.project.transcription_context import TranscriptionContext
     from core.subtitle_generation.subtitle_generation_request import SubtitleGenerationRequest
     from core.subtitle_generation.subtitle_generation_result import (
         SubtitleGenerationResult,
@@ -550,7 +552,6 @@ def test_segment_scan_request_and_tier3_omit_prompts_for_kotoba(tmp_path):
     project = MagicMock()
     project.project_id = "p_scan"
     project.source.fingerprint = "fp_scan"
-    project.transcription_context = TranscriptionContext(glossary=["黒崎 -> Kurosaki"])
 
     with patch("core.services.model_manager.ModelManager.is_installed", return_value=True):
         req_kotoba = win._build_segment_scan_request(
@@ -581,7 +582,7 @@ def test_segment_scan_request_and_tier3_omit_prompts_for_kotoba(tmp_path):
         )
         assert req_large.model_size == "large-v3"
         assert req_large.prompt_context == ""
-        assert req_large.hotwords == "黒崎"
+        assert req_large.hotwords == ""
 
     # SegmentScanWorker must not expand context_window or inject context_prompt on kotoba Tier 3
     captured_tiers = []
@@ -629,7 +630,7 @@ def test_segment_scan_request_and_tier3_omit_prompts_for_kotoba(tmp_path):
     assert tier3_vad is False
     assert tier3_word_ts is False
     assert tier3_prompt == ""
-    assert tier3_start == 3850
+    assert tier3_start == 3940
     assert tier3_end == 4950
     assert completed == [("seg-k", "大丈夫だよ")]
 
@@ -954,7 +955,7 @@ def test_ja_hidden_initial_prompt_hotwords_and_natural_formatting():
         )
         service.transcribe_batch(req_lv3, batch, is_cancelled=lambda: False)
         assert captured.get("initial_prompt") is None
-        assert captured["hotwords"] == "黒崎 御影"
+        assert captured.get("hotwords") is None
 
         # kotoba-whisper ALWAYS forces initial_prompt=None and hotwords=None
         service.current_model_size = "kotoba-whisper-v2.0"

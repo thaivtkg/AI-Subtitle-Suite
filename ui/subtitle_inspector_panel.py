@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QFormLayout, QCheckBox,
     QSpinBox, QDoubleSpinBox, QComboBox, QPushButton, QColorDialog,
-    QFontComboBox, QGroupBox, QLabel, QHBoxLayout,
+    QFontComboBox, QGroupBox,
 )
 from PySide6.QtCore import QSignalBlocker, Signal, Qt, Slot
 from PySide6.QtGui import QColor
@@ -13,14 +13,11 @@ class SubtitleInspectorPanel(QWidget):
 
     style_changed = Signal(dict)
     preview_toggled = Signal(bool)
-    preset_changed = Signal(str)
-    presets_configured = Signal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.text_color = QColor(255, 255, 255)
         self.outline_color = QColor(0, 0, 0)
-        self.custom_presets: dict = {}
         self._setup_ui()
         self._connect_signals()
 
@@ -32,36 +29,6 @@ class SubtitleInspectorPanel(QWidget):
         self.chk_preview = QCheckBox("Hiển thị Preview Phụ đề")
         self.chk_preview.setChecked(True)
         layout.addWidget(self.chk_preview)
-
-        preset_group = QGroupBox("🎯 Tùy biến câu đang chọn")
-        preset_layout = QVBoxLayout(preset_group)
-        preset_layout.setSpacing(6)
-        preset_form = QFormLayout()
-        preset_form.setSpacing(8)
-        self.cmb_preset = QComboBox()
-        self.cmb_preset.addItem("Normal (Mặc định)", "normal")
-        self.cmb_preset.addItem("⚡ Loud (Nhấn mạnh)", "loud")
-        self.cmb_preset.addItem("🤫 Whisper (Thì thầm)", "whisper")
-        self.cmb_preset.currentIndexChanged.connect(
-            lambda _idx: self.preset_changed.emit(self.cmb_preset.currentData() or "normal")
-        )
-        preset_row = QHBoxLayout()
-        preset_row.setSpacing(6)
-        preset_row.addWidget(self.cmb_preset, stretch=1)
-        self.btn_config_presets = QPushButton("⚙️ Cấu hình...")
-        self.btn_config_presets.setCursor(Qt.PointingHandCursor)
-        self.btn_config_presets.clicked.connect(self._open_preset_config_dialog)
-        preset_row.addWidget(self.btn_config_presets)
-        preset_form.addRow("Preset câu đang chọn:", preset_row)
-        preset_layout.addLayout(preset_form)
-        self.lbl_preset_hint = QLabel(
-            "• ⚡ Loud: Tự động phóng to +20%, In đậm, Màu vàng chanh\n"
-            "• 🤫 Whisper: Tự động thu nhỏ -15%, In nghiêng, Màu bạc xám"
-        )
-        self.lbl_preset_hint.setWordWrap(True)
-        self.lbl_preset_hint.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-size: 11px; border: none;")
-        preset_layout.addWidget(self.lbl_preset_hint)
-        layout.addWidget(preset_group)
 
         style_group = QGroupBox("🌐 Style mặc định toàn dự án (Base Style)")
         form_layout = QFormLayout(style_group)
@@ -235,13 +202,6 @@ class SubtitleInspectorPanel(QWidget):
         if emit:
             self._on_style_changed()
 
-    def set_current_preset(self, preset: str):
-        """Đồng bộ hiển thị preset của câu đang chọn."""
-        preset_clean = (preset or "normal").lower().strip()
-        idx = self.cmb_preset.findData(preset_clean)
-        blocker = QSignalBlocker(self.cmb_preset)
-        self.cmb_preset.setCurrentIndex(max(0, idx))
-
     def set_style(self, style: dict):
         """Khôi phục toàn bộ style từ dự án đã lưu."""
         if not style or not isinstance(style, dict):
@@ -280,40 +240,6 @@ class SubtitleInspectorPanel(QWidget):
         if "position_edit_mode" in style:
             self.chk_position_edit.setChecked(bool(style["position_edit_mode"]))
         del blockers
-
-    def _open_preset_config_dialog(self):
-        from ui.preset_config_dialog import PresetConfigDialog
-        dlg = PresetConfigDialog(self.custom_presets, self)
-        dlg.presets_configured.connect(self._on_presets_configured_from_dialog)
-        dlg.exec()
-
-    def _on_presets_configured_from_dialog(self, new_presets: dict):
-        self.update_preset_hints(new_presets)
-        self.presets_configured.emit(new_presets)
-
-    def update_preset_hints(self, custom_presets: dict | None = None):
-        """Tự động cập nhật nhãn gợi ý hiển thị thông số Loud / Whisper hiện hành."""
-        from core.subtitle_quality.style_preset_resolver import StylePresetResolver
-        import copy
-        self.custom_presets = copy.deepcopy(custom_presets or {})
-        defaults = StylePresetResolver.get_default_presets()
-
-        def _fmt(key: str, icon_label: str) -> str:
-            cfg = {**defaults[key], **(self.custom_presets.get(key) or {})}
-            scale = float(cfg.get("scale", 1.0))
-            delta_pct = int(round((scale - 1.0) * 100))
-            scale_str = f"Phóng to +{delta_pct}%" if delta_pct >= 0 else f"Thu nhỏ {delta_pct}%"
-            parts = [scale_str]
-            if cfg.get("bold"):
-                parts.append("In đậm")
-            if cfg.get("italic"):
-                parts.append("In nghiêng")
-            parts.append(f"Màu {str(cfg.get('font_color', '#FFFFFF')).upper()}")
-            return f"• {icon_label}: " + ", ".join(parts)
-
-        self.lbl_preset_hint.setText(
-            _fmt("loud", "⚡ Loud") + "\n" + _fmt("whisper", "🤫 Whisper")
-        )
 
     def emit_current_style(self):
         """Emit the current style snapshot after the panel is connected."""

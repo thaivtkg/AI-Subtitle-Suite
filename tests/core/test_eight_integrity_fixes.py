@@ -6,13 +6,8 @@ import unittest
 from unittest.mock import MagicMock, patch
 from PySide6.QtCore import QCoreApplication, QThreadPool
 
-from core.batch.batch_models import BatchJob, BatchSession, BatchStatus
-from core.batch.batch_manager import BatchManager, ExportService
 from core.export.subtitle_parser import parse_srt_content
 from core.services.project_service import ProjectService
-from core.artifacts.artifact_store import ArtifactStore
-from core.artifacts.artifact import Artifact
-from core.artifacts.artifact_types import ArtifactType, ArtifactStatus
 
 if not QCoreApplication.instance():
     app = QCoreApplication(sys.argv)
@@ -157,106 +152,6 @@ class TestEightIntegrityFixes(unittest.TestCase):
         self.assertEqual(segments[0]["text"], "")
         self.assertEqual(segments[1]["stt"], "2")
         self.assertEqual(segments[1]["text"], "Subtitle Two text content")
-
-    # 5. [P1] Batch dùng service giả nhưng báo hoàn tất
-    def test_tc5_batch_nonexistent_file_fails_with_proper_status(self):
-        manager = BatchManager()
-        non_existent = os.path.join(self.temp_dir, "ghost_video.mp4")
-        job = BatchJob(id="job_ghost", input_file=non_existent)
-        session = BatchSession("s_ghost", "tiny", "en", "srt", [job])
-        
-        manager.start_session(session)
-        QThreadPool.globalInstance().waitForDone()
-        QCoreApplication.processEvents()
-        
-        self.assertEqual(job.status, BatchStatus.FAILED)
-        self.assertIn("not found", job.error_message.lower())
-        self.assertIsNone(job.output_path)
-
-    def test_tc5b_batch_valid_file_generates_verified_output(self):
-        vid_path = os.path.join(self.temp_dir, "clip.mp4")
-        with open(vid_path, "wb") as f: f.write(b"fake media")
-        
-        manager = BatchManager()
-        job = BatchJob(id="job_real", input_file=vid_path)
-        session = BatchSession("s_real", "tiny", "en", "srt", [job])
-        
-        def fake_whisper_run(input_file, *args, **kwargs):
-            art_file = os.path.join(self.temp_dir, "clip_art.srt")
-            with open(art_file, "w", encoding="utf-8") as f:
-                f.write("1\n00:00:00,000 --> 00:00:01,000\nGenerated line\n\n")
-            art = Artifact(
-                artifact_id="art_real_1",
-                artifact_type=ArtifactType.SUBTITLE,
-                path=art_file,
-                created_at="2026-01-01T00:00:00",
-                updated_at="2026-01-01T00:00:00",
-                source_project_id="s_real",
-                status=ArtifactStatus.READY
-            )
-            manager.artifact_store.register(art)
-            return "art_real_1"
-
-        with patch("core.batch.batch_manager.FasterWhisperService.run", side_effect=fake_whisper_run):
-            manager.start_session(session)
-            QThreadPool.globalInstance().waitForDone()
-            QCoreApplication.processEvents()
-            
-        self.assertEqual(job.status, BatchStatus.COMPLETED)
-        self.assertIsNotNone(job.output_path)
-        self.assertTrue(os.path.exists(job.output_path))
-        with open(job.output_path, "r", encoding="utf-8") as f:
-            self.assertIn("Generated line", f.read())
-
-    # 6. [P1] Bật dịch batch luôn lỗi khởi tạo dịch vụ
-    def test_tc6_batch_translation_init_with_valid_provider_and_prompt_builder(self):
-        vid_path = os.path.join(self.temp_dir, "trans_clip.mp4")
-        with open(vid_path, "wb") as f: f.write(b"fake media")
-        
-        manager = BatchManager()
-        mock_provider = MagicMock()
-        mock_provider.translate.return_value = "1\n00:00:00,000 --> 00:00:01,000\nCâu dịch tiếng Việt\n\n"
-        
-        job = BatchJob(id="job_trans", input_file=vid_path)
-        session = BatchSession(
-            session_id="s_trans",
-            model_size="tiny",
-            target_lang="vi",
-            output_format="srt",
-            jobs=[job],
-            translation_config={
-                "enabled": True,
-                "provider_instance": mock_provider,
-                "target_lang": "Vietnamese"
-            }
-        )
-        
-        def fake_whisper_run(input_file, *args, **kwargs):
-            art_file = os.path.join(self.temp_dir, "trans_whisper.srt")
-            with open(art_file, "w", encoding="utf-8") as f:
-                f.write("1\n00:00:00,000 --> 00:00:01,000\nOriginal text\n\n")
-            art = Artifact(
-                artifact_id="art_w_1",
-                artifact_type=ArtifactType.SUBTITLE,
-                path=art_file,
-                created_at="2026-01-01T00:00:00",
-                updated_at="2026-01-01T00:00:00",
-                source_project_id="s_trans",
-                status=ArtifactStatus.READY
-            )
-            manager.artifact_store.register(art)
-            return "art_w_1"
-
-        with patch("core.batch.batch_manager.FasterWhisperService.run", side_effect=fake_whisper_run):
-            manager.start_session(session)
-            QThreadPool.globalInstance().waitForDone()
-            QCoreApplication.processEvents()
-            
-        self.assertEqual(job.status, BatchStatus.COMPLETED)
-        self.assertTrue(os.path.exists(job.output_path))
-        with open(job.output_path, "r", encoding="utf-8") as f:
-            content = f.read()
-            self.assertIn("Câu dịch tiếng Việt", content)
 
     # 7. [P2] Hai video khác nhau có thể dùng chung bundle dự án
     def test_tc7_bundle_collision_isolation_different_extensions(self):

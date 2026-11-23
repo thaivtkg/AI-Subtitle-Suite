@@ -82,7 +82,6 @@ class TestGenerationPanelLayout(unittest.TestCase):
             "chk_word_timestamps",
             "cmb_batch_mode",
             "spin_batch_val",
-            "btn_context_edit",
         ):
             with self.subTest(control=name):
                 self.assertTrue(content.isAncestorOf(getattr(panel, name)))

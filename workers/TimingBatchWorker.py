@@ -505,30 +505,9 @@ class TimingBatchWorker(QThread):
         if req_patience is not None:
             # Cap beam patience at 1.0 for Timing Draft so slow high-patience beams never stall cancel/progress.
             kwargs["patience"] = min(1.0, float(req_patience))
-        # Distilled models (kotoba/distil) degrade/drop segments when fed Whisper prompt/hotwords tokens.
-        if FasterWhisperService.is_large_v3_model(model_size):
-            from core.subtitle_generation.language_utils import (
-                extract_natural_initial_prompt,
-                extract_terminology_terms,
-                merge_hotwords,
-            )
-
-            req_prompt = str(getattr(self.request, "initial_prompt", "") or "").strip()
-            req_hotwords = str(getattr(self.request, "hotwords", "") or "").strip()
-            kwargs["initial_prompt"] = extract_natural_initial_prompt(req_prompt, effective_lang)
-            merged_hw = merge_hotwords(
-                req_hotwords,
-                extract_terminology_terms(req_prompt),
-                sep=" ",
-            )
-            kwargs["hotwords"] = merged_hw or None
-        elif FasterWhisperService.resolve_word_timestamps(model_size, True):
-            req_prompt = str(getattr(self.request, "initial_prompt", "") or "").strip()
-            if req_prompt:
-                kwargs["initial_prompt"] = req_prompt
-            req_hotwords = str(getattr(self.request, "hotwords", "") or "").strip()
-            if req_hotwords:
-                kwargs["hotwords"] = req_hotwords
+        # Chuẩn hóa ASR sạch: luôn ép initial_prompt=None và hotwords=None ở mọi model/chế độ
+        kwargs["initial_prompt"] = None
+        kwargs["hotwords"] = None
         FasterWhisperService._enforce_kotoba_guard(model_size, kwargs)
         return kwargs
 

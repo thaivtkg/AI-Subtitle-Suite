@@ -106,8 +106,21 @@ class TimelineContainer(QWidget):
         self.generate_gap_button = QPushButton("Generate")
         self.generate_gap_button.setEnabled(False)
         self.play_segment_button = QPushButton("Play Segment")
+        self.play_segment_button.setObjectName("btn_play_segment")
         self.play_segment_button.setEnabled(False)
         self.play_segment_button.hide()
+        self.export_audio_button = QPushButton("Xuất Audio")
+        self.export_audio_button.setObjectName("btn_export_segment_audio")
+        self.export_audio_button.setToolTip(
+            "Xuất đoạn âm thanh của segment đang chọn (WAV / MP3, giữ chất lượng âm thanh gốc)"
+        )
+        self.export_audio_button.setStyleSheet(
+            "background-color: #1E293B; color: #38BDF8; border: 1px solid #38BDF8; "
+            "border-radius: 6px; padding: 2px 10px; font-weight: 600;"
+        )
+        self.export_audio_button.setEnabled(False)
+        self.export_audio_button.hide()
+        gap_layout.setSpacing(8)
         gap_layout.addWidget(QLabel("Start"))
         gap_layout.addWidget(self.start_range_edit)
         gap_layout.addWidget(QLabel("End"))
@@ -118,6 +131,7 @@ class TimelineContainer(QWidget):
         gap_layout.addWidget(self.create_manual_gap_button)
         gap_layout.addWidget(self.generate_gap_button)
         gap_layout.addWidget(self.play_segment_button)
+        gap_layout.addWidget(self.export_audio_button)
         gap_layout.addWidget(self.range_validation, stretch=1)
         self.layout.addWidget(self.gap_row)
         self.gap_row.hide()
@@ -146,6 +160,7 @@ class TimelineWidget(QScrollArea):
     range_generation_requested = Signal(int, int)
     generation_range_selected = Signal()
     play_segment_requested = Signal()
+    export_audio_requested = Signal()
     workflow_reset = Signal()
     timing_edit_started = Signal()
     manual_timing_requested = Signal(int, int)
@@ -224,6 +239,8 @@ class TimelineWidget(QScrollArea):
         self.container.create_manual_gap_button.clicked.connect(self._emit_manual_timing_creation)
         self.container.generate_gap_button.clicked.connect(self._emit_range_generation)
         self.container.play_segment_button.clicked.connect(self.play_segment_requested.emit)
+        self.export_audio_button = self.container.export_audio_button
+        self.export_audio_button.clicked.connect(self.export_audio_requested.emit)
         self.btn_snap_overlap = self.container.btn_snap_overlap
         self.btn_snap_overlap.clicked.connect(lambda: self.snap_overlap_requested.emit(""))
         self.container.track.overlap_status_changed.connect(self._on_overlap_status_changed)
@@ -247,22 +264,47 @@ class TimelineWidget(QScrollArea):
             return segment
         return None
 
+    def _selected_valid_segments(self):
+        track = self.container.track
+        if self.generation_range is not None or not track.selected_ids:
+            return []
+        return [
+            s
+            for s in track.segments
+            if s.segment_id in track.selected_ids and 0 <= s.start_ms < s.end_ms <= self.duration_ms
+        ]
+
     def refresh_segment_focus(self):
         segment = self.focused_segment
         focused = segment is not None
-        self.container.start_range_edit.setReadOnly(focused)
-        self.container.end_range_edit.setReadOnly(focused)
+        selected_segments = [] if focused else self._selected_valid_segments()
+        multi_selected = len(selected_segments) > 1
+        has_exportable = focused or multi_selected
+
+        self.container.start_range_edit.setReadOnly(focused or multi_selected)
+        self.container.end_range_edit.setReadOnly(focused or multi_selected)
         self.container.play_segment_button.setVisible(focused)
         self.container.play_segment_button.setEnabled(focused)
-        self.container.generate_gap_button.setVisible(not focused)
-        self.container.create_manual_gap_button.setVisible(not focused)
+        self.container.export_audio_button.setVisible(has_exportable)
+        self.container.export_audio_button.setEnabled(has_exportable)
+        self.container.generate_gap_button.setVisible(not has_exportable)
+        self.container.create_manual_gap_button.setVisible(not has_exportable)
         if segment:
             self._show_range_row()
+            self.container.export_audio_button.setText("Xuất Audio")
             self.container.start_range_edit.setText(self._format_ms(segment.start_ms))
             self.container.end_range_edit.setText(self._format_ms(segment.end_ms))
             self.container.range_duration.setText(self._format_ms(segment.end_ms - segment.start_ms))
             self.container.range_validation.setText("Kéo mép trái/phải để chỉnh thời gian.")
             self.container.waveform.set_selected_range(segment.start_ms, segment.end_ms)
+        elif multi_selected:
+            self._show_range_row()
+            total_ms = sum(max(0, s.end_ms - s.start_ms) for s in selected_segments)
+            self.container.export_audio_button.setText(f"Xuất Audio ({len(selected_segments)} đoạn)")
+            self.container.start_range_edit.clear()
+            self.container.end_range_edit.clear()
+            self.container.range_duration.setText(self._format_ms(total_ms))
+            self.container.range_validation.setText(f"Đã chọn {len(selected_segments)} đoạn phụ đề.")
 
     @staticmethod
     def _format_ms(value):
@@ -341,6 +383,9 @@ class TimelineWidget(QScrollArea):
         self.container.create_manual_gap_button.show()
         self.container.play_segment_button.hide()
         self.container.play_segment_button.setEnabled(False)
+        self.container.export_audio_button.hide()
+        self.container.export_audio_button.setEnabled(False)
+        self.container.export_audio_button.setText("Xuất Audio")
         self.container.start_range_edit.setReadOnly(False)
         self.container.end_range_edit.setReadOnly(False)
         if self.duration_ms > 0:

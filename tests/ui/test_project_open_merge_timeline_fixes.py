@@ -280,21 +280,3 @@ class TestProjectOpenMergeAndTimelineFixes(unittest.TestCase):
             finally:
                 win.close()
                 win.deleteLater()
-
-    def test_tm_manager_recovers_corrupt_database_file(self):
-        """A corrupt non-SQLite tm.db file should be backed up to .corrupt and rebuilt cleanly."""
-        from core.database.tm_manager import TranslationMemoryManager
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = os.path.join(tmpdir, "tm.db")
-            with open(db_path, "wb") as f:
-                f.write(b"[mov,mp4,m4a] moov atom not found\n" + b"\x00" * 512)
-
-            tm = TranslationMemoryManager(db_path=db_path)
-            try:
-                tm.add_segment("Hello", "Xin chao")
-                matches = tm.find_matches("Hello")
-                self.assertTrue(matches)
-                self.assertTrue(os.path.exists(f"{db_path}.corrupt"))
-            finally:
-                tm.close()

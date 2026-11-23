@@ -58,7 +58,6 @@ from core.artifacts.artifact_store import ArtifactStore
 from core.app_context import StartupContext
 from core.debug_logging import DebugConfig, debug_log
 from core.media_import.media_import_service import MediaImportService
-from core.project.transcription_context import TranscriptionContext
 from core.project.source_fingerprint import generate_source_info
 from core.queue_manager import QueueManager
 from core.recovery.atomic_snapshot_store import AtomicSnapshotStore
@@ -91,7 +90,6 @@ from player.pip_player import PiPPlayerWindow, PiPWorkspacePlaceholderWidget
 from ui.animations.animation_types import SubtitleAppearMode, SubtitleDisappearMode
 from ui.animations.subtitle_animation_controller import SubtitleTextEffect
 from ui.components.animated_stack import AnimatedStack
-from ui.components.transcription_context_panel import TranscriptionContextPanel
 from ui.dialogs.media_import_dialog import MediaImportDialog
 from ui.dialogs.new_project_dialog import NewProjectDialog
 from ui.dialogs.recovery_center_dialog import RecoveryCenterDialog
@@ -100,8 +98,6 @@ from ui.activity_log import ActivityLogView
 from ui.pages.draft_center_page import DraftCenterPage
 from ui.pages.export_center_page import ExportCenterPage
 from ui.pages.help_center_page import HelpCenterPage
-from ui.pages.translation_studio_page import TranslationStudioPage
-from ui.pages.ai_agent_mission_control_page import AIAgentMissionControlPage
 from ui.help.first_run_banner import FirstRunBanner
 from ui.help.first_run_controller import FirstRunController
 from ui.help.shortcut_provider import RuntimeShortcutProvider
@@ -116,8 +112,6 @@ from ui.queue_widget import QueueWidget
 from ui.SubEditor import SubtitleEditorWidget
 from ui.subtitle_generation_panel import SubtitleGenerationPanel
 from ui.subtitle_inspector_panel import SubtitleInspectorPanel
-from core.database.tm_manager import TranslationMemoryManager
-from ui.components.tm_matches_panel import TMMatchesPanel
 from core.subtitle_editing.hydration import hydrate_original_text
 
 from ui.theme import Theme
@@ -274,6 +268,8 @@ class MainWindow(QMainWindow):
         self._manual_mark_in_ms: int | None = None
         self.scan_worker = None
         self._batch_scan_worker = None
+        self._audio_export_worker = None
+        self._last_audio_export_dir = ""
 
         # Lắng nghe Signal vẽ sóng âm từ luồng phụ gửi lên
         self.waveform_ready_signal.connect(self._on_waveform_ready_slot)
@@ -298,7 +294,6 @@ class MainWindow(QMainWindow):
             self,
         )
         self.workspace_service = WorkspaceService(self, self.project_service)
-        self.tm_manager = TranslationMemoryManager()
         self.output_dir = ""
         self.revision_tracker.dirty_changed.connect(self._update_window_title_dirty_marker)
         self.revision_tracker.clean_point_reached.connect(
@@ -520,8 +515,6 @@ class MainWindow(QMainWindow):
         tools_menu.setObjectName("ToolsMenu")
         act_mm = tools_menu.addAction("Model Manager", self.action_open_model_manager)
         act_mm.setIcon(get_icon("box", "#94A3B8", 16))
-        act_gm = tools_menu.addAction("Glossary Manager", self.action_open_glossary_manager)
-        act_gm.setIcon(get_icon("book", "#94A3B8", 16))
         tools_menu.addSeparator()
         act_rc = tools_menu.addAction("Recovery Center", self.open_recovery_center)
         act_rc.setIcon(get_icon("shield", "#94A3B8", 16))
@@ -541,13 +534,13 @@ class MainWindow(QMainWindow):
         self.btn_hotkeys.clicked.connect(self.action_show_hotkeys)
         topbar_layout.addWidget(self.btn_hotkeys)
 
-        self.btn_ai_drawer = QPushButton("Bảng Điều Khiển AI", self)
+        self.btn_ai_drawer = QPushButton("Bảng Tạo Sub", self)
         self.btn_ai_drawer.setObjectName("btn_ai_drawer")
         self.btn_ai_drawer.setFixedHeight(28)
         self.btn_ai_drawer.setIcon(get_icon("sparkles", "#94A3B8", 15))
         self.btn_ai_drawer.setIconSize(QSize(15, 15))
         self.btn_ai_drawer.setCursor(Qt.PointingHandCursor)
-        self.btn_ai_drawer.setToolTip("Mở/Đóng Bảng Điều Khiển AI & Thuật Ngữ (Summary / Glossary)")
+        self.btn_ai_drawer.setToolTip("Mở/Đóng Bảng Tạo Phụ Đề & Cấu Hình ASR/VAD")
         self.btn_ai_drawer.setStyleSheet("""
             QPushButton#btn_ai_drawer {
                 background: #1E293B;
@@ -718,6 +711,8 @@ class MainWindow(QMainWindow):
         self.undo_manager.state_changed.connect(self.sub_editor.update_draft_progress)
         if hasattr(self.sub_editor, "manual_add_requested"):
             self.sub_editor.manual_add_requested.connect(self._on_add_manual_timing_triggered)
+        if hasattr(self.sub_editor, "delete_requested"):
+            self.sub_editor.delete_requested.connect(self._on_delete_selected_subtitles)
         self.video_player = VideoPlayerWidget()
         self.video_player.setMinimumHeight(200)
         if hasattr(self.video_player, "replace_video_requested"):
@@ -747,8 +742,6 @@ class MainWindow(QMainWindow):
             self.video_player.player.durationChanged.connect(self.pip_window.set_duration)
             self.video_player.player.playingChanged.connect(self.pip_window.set_playing)
         
-        self.tm_matches_panel = TMMatchesPanel()
-        
         self.top_horizontal_splitter.addWidget(self.sub_editor)
         self.top_horizontal_splitter.addWidget(self.video_stack)
         self.top_horizontal_splitter.setStretchFactor(0, 6) # Subtitle Editor (60%)
@@ -766,16 +759,11 @@ class MainWindow(QMainWindow):
         )
         self.sub_editor.live_edit_applied.connect(self.video_player.sub_controller.update_live_data)
         
-        # TM Signals
-        self.sub_editor.request_tm_suggestion.connect(self._on_request_tm_suggestion)
         self.sub_editor.segment_scan_requested.connect(self._on_segment_scan_requested)
         if hasattr(self.sub_editor, "force_asr_scan_requested"):
             self.sub_editor.force_asr_scan_requested.connect(self._on_force_asr_scan_requested)
         self.sub_editor.batch_scan_requested.connect(self._on_batch_segment_scan_requested)
-        self.sub_editor.send_to_translation_requested.connect(self._on_send_selected_to_translation)
         self.sub_editor.segment_focused.connect(lambda s, e: self._on_segment_focused(s, e, auto_play=True))
-        self.sub_editor.commit_segment.connect(self._on_commit_segment)
-        self.tm_matches_panel.match_applied.connect(self._on_tm_match_applied)
         self.sub_editor.live_edit_applied.connect(
             lambda *args: self.project_service.mark_dirty()
             if getattr(self, 'project_service', None) and not self.sub_editor.is_rendering
@@ -802,7 +790,6 @@ class MainWindow(QMainWindow):
         self.generation_panel.timing_cancel_requested.connect(
             self.timing_service.cancel_timing
         )
-        self.generation_panel.request_context_edit.connect(self._show_context_inspector)
         self.timing_service.progress_signal.connect(self._on_timing_progress)
         self.timing_service.log_signal.connect(self._on_timing_log)
         self.timing_service.batch_completed_signal.connect(
@@ -931,21 +918,9 @@ class MainWindow(QMainWindow):
 
         add_nav_tab(self.generation_panel, "Tạo Sub", "waveform")
         
-        self.context_panel = TranscriptionContextPanel(self)
-        self.context_panel.set_language_getter(
-            lambda: self.generation_panel.cmb_language.currentText()
-        )
-        self.generation_panel.cmb_language.currentTextChanged.connect(
-            self.context_panel.on_video_language_changed
-        )
-        self.context_panel.context_committed.connect(
-            self.on_transcription_context_committed
-        )
-        add_nav_tab(self.context_panel, "Ngữ Cảnh", "puzzle")
-        
         self.inspector_panel = SubtitleInspectorPanel()
         self.subtitle_inspector = self.inspector_panel
-        add_nav_tab(self.inspector_panel, "Preset", "sliders")
+        add_nav_tab(self.inspector_panel, "Style", "sliders")
         
         from ui.quality_inspector_panel import QualityInspectorPanel
         self.quality_inspector_panel = QualityInspectorPanel(self)
@@ -973,8 +948,6 @@ class MainWindow(QMainWindow):
         self._dock_tab_liquid = None
         self.inspector_panel.preview_toggled.connect(self._on_preview_toggled)
         self.inspector_panel.style_changed.connect(self._on_subtitle_style_changed)
-        self.inspector_panel.preset_changed.connect(self._on_inspector_preset_changed)
-        self.inspector_panel.presets_configured.connect(self._on_style_presets_configured)
         self.video_player.subtitle_placement_committed.connect(
             self._on_subtitle_placement_committed
         )
@@ -1017,6 +990,9 @@ class MainWindow(QMainWindow):
         )
         self.timeline_widget.manual_timing_requested.connect(
             self._on_manual_range_timing_requested
+        )
+        self.timeline_widget.export_audio_requested.connect(
+            self._on_export_segment_audio_requested
         )
         self.timeline_widget.setMinimumHeight(190)
 
@@ -1290,11 +1266,45 @@ class MainWindow(QMainWindow):
         self.btn_timeline_batch_scan.clicked.connect(self._on_timeline_batch_scan_clicked)
         tl_tb_layout.addWidget(self.btn_timeline_batch_scan, alignment=Qt.AlignVCenter)
 
+        self.btn_timeline_batch_delete = QPushButton("Xóa đã chọn")
+        self.btn_timeline_batch_delete.setObjectName("btn_timeline_batch_delete")
+        self.btn_timeline_batch_delete.setIcon(get_icon("trash", "#F87171", 15))
+        self.btn_timeline_batch_delete.setIconSize(QSize(15, 15))
+        self.btn_timeline_batch_delete.setFixedHeight(28)
+        self.btn_timeline_batch_delete.setEnabled(False)
+        self.btn_timeline_batch_delete.setToolTip(
+            "Xóa các câu phụ đề đang chọn trên Bảng hoặc Timeline (Delete)"
+        )
+        self.btn_timeline_batch_delete.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Theme.SURFACE_ELEVATED};
+                border: 1px solid {Theme.BORDER};
+                border-radius: 6px;
+                padding: 0px 10px;
+                font-size: 11px;
+                font-weight: 500;
+                color: #F1F5F9;
+            }}
+            QPushButton:hover {{
+                border-color: #EF4444;
+                background-color: {Theme.SURFACE_SOFT};
+                color: #FFFFFF;
+            }}
+            QPushButton:disabled {{
+                color: {Theme.TEXT_MUTED};
+                border-color: {Theme.BORDER};
+                background-color: transparent;
+            }}
+        """)
+        self.btn_timeline_batch_delete.clicked.connect(
+            lambda: self._on_delete_selected_subtitles()
+        )
+        tl_tb_layout.addWidget(self.btn_timeline_batch_delete, alignment=Qt.AlignVCenter)
+
         tl_tb_layout.addWidget(_make_toolbar_vsep(), alignment=Qt.AlignVCenter)
 
-        # Quét Audio & Chồng lấn
+        # Chồng lấn
         for action_btn in (
-            self.sub_editor.reanalyze_audio_style_btn,
             self.sub_editor.fix_overlap_btn,
         ):
             action_btn.setFixedHeight(28)
@@ -1332,11 +1342,16 @@ class MainWindow(QMainWindow):
             self.project_service, self.timeline_widget, self.timeline_data_provider,
             undo_manager=self.undo_manager, selection_controller=self.selection_controller,
         )
+        if hasattr(self.timeline_controller, "delete_selected_requested"):
+            self.timeline_controller.delete_selected_requested.connect(
+                self._on_timeline_delete_selected_requested
+            )
         self.sub_editor.live_edit_applied.connect(
             lambda *_: self.timeline_controller.sync_from_editor_segments(
                 self.sub_editor.all_segments
             )
         )
+        self.sub_editor.live_edit_applied.connect(lambda *_: self._sync_translation_batch_ui())
         self.timeline_controller.sync_from_editor_segments(self.sub_editor.all_segments)
         self.undo_manager.state_changed.connect(self.timeline_controller._refresh_ui)
         self.video_sync = TimelineVideoSync(self.video_player, self.timeline_widget, self.timeline_controller.state_manager)
@@ -1467,26 +1482,6 @@ class MainWindow(QMainWindow):
         self.tour_engine.tour_completed.connect(
             lambda _guide_id: self.page_help.refresh()
         )
-
-        # Page 8 (Index 7): AI Subtitle Translation CAT Studio
-        self.page_translation = TranslationStudioPage(self)
-        self.page_translation.translation_committed.connect(self._on_translation_committed)
-        self.page_translation.batch_translations_updated.connect(self._on_batch_translations_updated)
-        if hasattr(self, "sub_editor") and self.sub_editor:
-            self.sub_editor.segment_split_applied.connect(self.page_translation.handle_segment_split)
-            self.sub_editor.segment_split_undone.connect(self.page_translation.handle_segment_split_undo)
-            self.sub_editor.segments_merge_applied.connect(self.page_translation.handle_segments_merged)
-            self.sub_editor.segments_merge_undone.connect(self.page_translation.handle_segments_merge_undo)
-        self.stack.addWidget(self.page_translation)
-
-        # Page 9 (Index 8): AI Agent Mission Control Page
-        self.page_ai_agent = AIAgentMissionControlPage(parent=self)
-        if hasattr(self.page_ai_agent, "controller") and self.page_ai_agent.controller:
-            self.page_ai_agent.controller.whisper_service = getattr(self, "subtitle_whisper_service", None)
-            self.page_ai_agent.controller.step_completed.connect(self._on_agent_step_completed)
-            self.page_ai_agent.controller.step_reverted.connect(self._on_agent_step_reverted)
-            self.page_ai_agent.controller.plan_completed.connect(self._on_agent_plan_completed)
-        self.stack.addWidget(self.page_ai_agent)
 
         right_layout.addWidget(self.stack, stretch=1)
 
@@ -1651,32 +1646,6 @@ class MainWindow(QMainWindow):
             if project_service is not None and project is not None:
                 project_service.mark_dirty()
 
-    def _on_style_presets_configured(self, new_presets: dict):
-        """Áp dụng thông số tùy biến của Loud/Whisper lên Overlay, lưu vào ProjectState và làm mới Preview."""
-        project = getattr(getattr(self, "project_service", None), "current_project", None)
-        if project and hasattr(project, "state"):
-            project.state.style_presets = copy.deepcopy(new_presets)
-            self.project_service.mark_dirty()
-        if hasattr(self, "inspector_panel") and hasattr(self.inspector_panel, "update_preset_hints"):
-            self.inspector_panel.update_preset_hints(new_presets)
-        if hasattr(self, "video_player") and self.video_player:
-            if hasattr(self.video_player, "subtitle_overlay"):
-                self.video_player.subtitle_overlay.set_custom_presets(new_presets)
-            if hasattr(self.video_player, "refresh_current_subtitle"):
-                self.video_player.refresh_current_subtitle()
-
-    def _on_inspector_preset_changed(self, preset: str):
-        """Thay đổi preset cho các câu đang chọn khi người dùng đổi trên tab Style."""
-        if not hasattr(self, "sub_editor") or not self.sub_editor.all_segments:
-            return
-        selected = self.sub_editor.get_selected_or_current_indices()
-        if selected:
-            self.sub_editor._set_style_preset_for_indices(selected, preset)
-            if hasattr(self, "project_service") and self.project_service:
-                self.project_service.mark_dirty()
-            if hasattr(self, "video_player") and hasattr(self.video_player, "refresh_current_subtitle"):
-                self.video_player.refresh_current_subtitle()
-
     def _sync_subtitle_placement_from_project(self):
         project = getattr(getattr(self, "project_service", None), "current_project", None)
         saved_style = getattr(getattr(project, "state", None), "subtitle_style", None)
@@ -1687,29 +1656,8 @@ class MainWindow(QMainWindow):
                 self._on_subtitle_style_changed(saved_style)
                 if project and hasattr(project, "state"):
                     project.state.dirty = was_dirty
-        saved_presets = getattr(getattr(project, "state", None), "segment_styles", None)
-        saved_style_presets = getattr(getattr(project, "state", None), "style_presets", None) or {}
-        if hasattr(self, "inspector_panel") and hasattr(self.inspector_panel, "update_preset_hints"):
-            self.inspector_panel.update_preset_hints(saved_style_presets)
-        if hasattr(self, "video_player") and self.video_player and hasattr(self.video_player, "subtitle_overlay"):
-            self.video_player.subtitle_overlay.set_custom_presets(saved_style_presets)
-        if saved_presets and hasattr(self, "sub_editor") and self.sub_editor.all_segments:
-            for i, s in enumerate(self.sub_editor.all_segments):
-                stt_key = str(s.get("stt", i + 1))
-                sid = str(s.get("id", ""))
-                preset = saved_presets.get(stt_key) or saved_presets.get(sid)
-                if preset:
-                    s["style_preset"] = preset
-            self.sub_editor.render_page()
-            curr_idx = getattr(self.sub_editor, "current_index", 0)
-            if curr_idx < 0:
-                curr_idx = 0
-            if 0 <= curr_idx < len(self.sub_editor.all_segments) and hasattr(self, "inspector_panel"):
-                active_preset = self.sub_editor.all_segments[curr_idx].get("style_preset", "normal")
-                self.inspector_panel.set_current_preset(active_preset)
         if hasattr(self, "video_player") and self.video_player and hasattr(self.video_player, "refresh_current_subtitle"):
             self.video_player.refresh_current_subtitle()
-        project = getattr(getattr(self, "project_service", None), "current_project", None)
         placement = getattr(getattr(project, "state", None), "subtitle_placement", None)
         if placement is not None:
             self._apply_subtitle_placement(placement, mark_dirty=False)
@@ -1883,6 +1831,8 @@ class MainWindow(QMainWindow):
             if track and track.selected_ids != segment_ids:
                 track.set_selection(set(segment_ids))
                 track.update()
+            if hasattr(self.timeline_widget, "refresh_segment_focus"):
+                self.timeline_widget.refresh_segment_focus()
         self._update_timeline_batch_scan_button()
 
     def _on_global_selection_changed(self, index, segment_id, source):
@@ -1898,9 +1848,6 @@ class MainWindow(QMainWindow):
 
         from core.subtitle_editing.selection_controller import SelectionSource
         if source in (SelectionSource.PLAYBACK, SelectionSource.TIMELINE):
-            if hasattr(self, "inspector_panel") and 0 <= index < len(self.sub_editor.all_segments):
-                preset = self.sub_editor.all_segments[index].get("style_preset", "normal")
-                self.inspector_panel.set_current_preset(preset)
             return
 
         if index >= 0 and index < len(self.sub_editor.all_segments):
@@ -1927,11 +1874,6 @@ class MainWindow(QMainWindow):
         self.sub_editor.sync_playback_highlight(target_idx)
 
     def _on_segment_focused(self, start_ms, end_ms, auto_play: bool = False):
-        if hasattr(self, "inspector_panel") and hasattr(self, "sub_editor") and self.sub_editor.all_segments:
-            curr_idx = self.sub_editor.current_index
-            if 0 <= curr_idx < len(self.sub_editor.all_segments):
-                preset = self.sub_editor.all_segments[curr_idx].get("style_preset", "normal")
-                self.inspector_panel.set_current_preset(preset)
         if hasattr(self, 'video_player') and self.video_player:
             if auto_play:
                 self.video_player.play_segment(start_ms, end_ms)
@@ -2029,13 +1971,7 @@ class MainWindow(QMainWindow):
     def _resolve_scan_language(self, settings: dict) -> tuple[str | None, str]:
         scan_lang = settings.get("language", None)
         if not scan_lang or scan_lang == "Auto Detect":
-            proj_ctrl = getattr(getattr(self, "page_translation", None), "project_controller", None)
-            if proj_ctrl and getattr(proj_ctrl, "_is_ja_origin", False):
-                scan_lang = "ja"
-            elif hasattr(self, "page_translation") and hasattr(self.page_translation, "translation_controller"):
-                tc_lang = getattr(self.page_translation.translation_controller, "currentSourceLanguage", None)
-                if tc_lang and tc_lang != "Auto Detect":
-                    scan_lang = tc_lang
+            scan_lang = None
         from core.subtitle_generation.language_utils import normalize_to_iso_code
         iso_lang = normalize_to_iso_code(scan_lang)
         return iso_lang, ""
@@ -2050,7 +1986,7 @@ class MainWindow(QMainWindow):
         scan_mode: str = "asr",
         force_no_vad: bool = False,
     ):
-        iso_lang, prompt_ctx = self._resolve_scan_language(settings)
+        iso_lang, _ = self._resolve_scan_language(settings)
         apply_preset = bool((settings or {}).get("apply_preset_to_rescan", False))
         is_custom_or_cfg9 = apply_preset
         if force_no_vad:
@@ -2072,17 +2008,10 @@ class MainWindow(QMainWindow):
             and self.sub_editor.current_editor.chk_boost_audio.isChecked()
         )
         model_size, compute_type = self._resolve_rescan_model_and_compute(settings)
-        from core.services.model_manager import ModelManager
-        from core.subtitle_generation.language_utils import extract_glossary_hotwords
-        tx_ctx = getattr(project, "transcription_context", None)
-        ref_story_summary = str(getattr(tx_ctx, "context", "") or "").strip()
-        # Tách triệt để Tóm tắt cốt truyện khỏi initial_prompt ASR ở mọi Preset/Model
+        # Chuẩn hóa ASR sạch: không truyền initial_prompt / hotwords / reference_context
         prompt_ctx = ""
-        if ModelManager.supports_word_timestamps(model_size) and "kotoba" not in str(model_size or "").lower():
-            hotwords = extract_glossary_hotwords(tx_ctx)
-        else:
-            # Distilled models (kotoba/distil) hallucinate non-speech or empty text when fed prompt/hotwords.
-            hotwords = ""
+        hotwords = ""
+        ref_story_summary = ""
         from core.subtitle_generation.subtitle_generation_request import SubtitleGenerationRequest
         return SubtitleGenerationRequest(
             request_id=request_id,
@@ -2314,11 +2243,6 @@ class MainWindow(QMainWindow):
                 else:
                     self.sub_editor.all_segments[abs_idx]["text"] = text
                 self.sub_editor.all_segments[abs_idx]["original_text"] = text
-                self.sub_editor.all_segments[abs_idx]["translation"] = ""
-                self.sub_editor.all_segments[abs_idx]["translation_status"] = "PENDING"
-    
-                if hasattr(self, "page_translation") and hasattr(self.page_translation, "update_segment_source"):
-                    self.page_translation.update_segment_source(str(segment_id), text)
                 if self.sub_editor.current_index == abs_idx:
                     self.sub_editor.current_editor.text_edit.setText(text)
                 self.sub_editor.render_page()
@@ -2344,48 +2268,139 @@ class MainWindow(QMainWindow):
                 self.sub_editor.show_scan_recovery_banner(segment_id, error_msg)
 
     def _get_selected_sub_indices(self) -> list[int]:
-        """Lấy danh sách các index câu phụ đề đang được chọn trên Bảng hoặc Timeline."""
+        """Lấy danh sách các index câu phụ đề đang được chọn (ưu tiên selection_controller)."""
         if not hasattr(self, "sub_editor") or not self.sub_editor or not self.sub_editor.all_segments:
             return []
-        # 1. Ưu tiên kiểm tra chọn nhiều dòng trên Bảng SubEditor
-        tbl_selected = self.sub_editor._get_selected_source_indices()
-        if len(tbl_selected) > 1:
-            return tbl_selected
-        # 2. Kiểm tra chọn nhiều khối trên Timeline Track
+        total = len(self.sub_editor.all_segments)
+
+        # Thu thập dự phòng từ Track (cho trường hợp thao tác trực tiếp trên track.selected_ids)
+        track_indices: list[int] = []
         if hasattr(self, "timeline_widget") and self.timeline_widget:
             track = getattr(getattr(self.timeline_widget, "container", None), "track", None)
             if track and hasattr(track, "selected_ids") and track.selected_ids:
                 track_ids = set(track.selected_ids)
-                indices = [
+                track_indices = sorted(
                     i for i, seg in enumerate(self.sub_editor.all_segments)
                     if seg.get("id") in track_ids
-                ]
-                if len(indices) > 1:
-                    return sorted(indices)
-                if len(indices) == 1:
-                    return indices
+                )
+
+        # 1. Ưu tiên nguồn chân lý SubtitleSelectionController (chuẩn cả đa chọn xuyên trang từ Timeline lẫn Bảng)
+        sel_ctrl = getattr(self, "selection_controller", None)
+        if sel_ctrl is not None:
+            ctrl_indices = sorted(
+                {
+                    int(i)
+                    for i in (getattr(sel_ctrl, "selected_indices", []) or [])
+                    if isinstance(i, int) and not isinstance(i, bool) and 0 <= i < total
+                }
+            )
+            if len(ctrl_indices) > 1:
+                return ctrl_indices
+            if len(track_indices) > 1:
+                return track_indices
+            tbl_selected = self.sub_editor._get_selected_source_indices()
+            if len(tbl_selected) > 1:
+                return tbl_selected
+            if ctrl_indices:
+                return ctrl_indices
+
+        # 2. Fallback: Track hoặc Bảng SubEditor
+        if track_indices:
+            return track_indices
+        tbl_selected = self.sub_editor._get_selected_source_indices()
+        if tbl_selected:
+            return tbl_selected
+
         # 3. Fallback câu đang focus (1 câu)
         indices = self.sub_editor.get_selected_or_current_indices()
-        if indices:
-            return indices
-        return []
+        return indices if indices else []
 
     def _update_timeline_batch_scan_button(self):
-        """Cập nhật trạng thái và số lượng câu phụ đề trên nút Gen Sub của Timeline."""
-        if not hasattr(self, "btn_timeline_batch_scan"):
+        """Cập nhật trạng thái và số lượng câu phụ đề trên nút Gen Sub & Xóa của Timeline."""
+        has_scan = hasattr(self, "btn_timeline_batch_scan")
+        has_del = hasattr(self, "btn_timeline_batch_delete")
+        if not has_scan and not has_del:
             return
         selected = self._get_selected_sub_indices()
         count = len(selected)
-        prefix = "🎙️ " if "🎙️" in self.btn_timeline_batch_scan.text() else ""
-        if count > 1:
-            self.btn_timeline_batch_scan.setText(f"{prefix}Gen Sub ({count} câu)")
-            self.btn_timeline_batch_scan.setEnabled(True)
-        elif count == 1:
-            self.btn_timeline_batch_scan.setText(f"{prefix}Gen Sub (1 câu)")
-            self.btn_timeline_batch_scan.setEnabled(True)
+        if has_scan:
+            prefix = "🎙️ " if "🎙️" in self.btn_timeline_batch_scan.text() else ""
+            if count > 1:
+                self.btn_timeline_batch_scan.setText(f"{prefix}Gen Sub ({count} câu)")
+                self.btn_timeline_batch_scan.setEnabled(True)
+            elif count == 1:
+                self.btn_timeline_batch_scan.setText(f"{prefix}Gen Sub (1 câu)")
+                self.btn_timeline_batch_scan.setEnabled(True)
+            else:
+                self.btn_timeline_batch_scan.setText(f"{prefix}Gen Sub đã chọn")
+                self.btn_timeline_batch_scan.setEnabled(False)
+        if has_del:
+            if count > 1:
+                self.btn_timeline_batch_delete.setText(f"Xóa ({count} câu)")
+                self.btn_timeline_batch_delete.setEnabled(True)
+            elif count == 1:
+                self.btn_timeline_batch_delete.setText("Xóa (1 câu)")
+                self.btn_timeline_batch_delete.setEnabled(True)
+            else:
+                self.btn_timeline_batch_delete.setText("Xóa đã chọn")
+                self.btn_timeline_batch_delete.setEnabled(False)
+
+    def _on_timeline_delete_selected_requested(self, segment_ids: set):
+        """Chuyển yêu cầu xóa từ TimelineController về luồng xóa thống nhất."""
+        if not hasattr(self, "sub_editor") or not self.sub_editor or not self.sub_editor.all_segments:
+            return
+        ids = set(segment_ids or ())
+        indices = sorted(
+            i for i, seg in enumerate(self.sub_editor.all_segments)
+            if seg.get("id") in ids
+        )
+        self._on_delete_selected_subtitles(explicit_indices=indices if indices else None)
+
+    def _on_delete_selected_subtitles(self, explicit_indices=None) -> bool:
+        """Luồng xóa đơn / hàng loạt thống nhất cho Bảng SubEditor, Timeline Toolbar & phím Delete."""
+        if not hasattr(self, "sub_editor") or not self.sub_editor:
+            return False
+        if self._is_any_ai_process_running():
+            Toast.show_warning(
+                self,
+                "Không thể xóa phụ đề khi tiến trình AI đang chạy. Vui lòng đợi hoặc hủy tiến trình trước.",
+            )
+            return False
+
+        total = len(self.sub_editor.all_segments or [])
+        if explicit_indices is not None:
+            indices = sorted(
+                {
+                    int(i)
+                    for i in explicit_indices
+                    if isinstance(i, int) and not isinstance(i, bool) and 0 <= i < total
+                }
+            )
         else:
-            self.btn_timeline_batch_scan.setText(f"{prefix}Gen Sub đã chọn")
-            self.btn_timeline_batch_scan.setEnabled(False)
+            indices = self._get_selected_sub_indices()
+
+        if not indices:
+            Toast.show_info(self, "Chưa chọn câu phụ đề nào để xóa.")
+            return False
+
+        count = len(indices)
+        if count >= 2:
+            reply = QMessageBox.question(
+                self,
+                "Xác nhận xóa hàng loạt",
+                f"Bạn có chắc muốn xóa {count} câu phụ đề đã chọn? (Có thể hoàn tác bằng Ctrl+Z)",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return False
+
+        deleted = self.sub_editor.trigger_delete(explicit_indices=indices)
+        if deleted > 0:
+            self._update_timeline_batch_scan_button()
+            Toast.show_info(self, f"Đã xóa {deleted} câu phụ đề (Ctrl+Z để hoàn tác).")
+            return True
+        return False
 
 
     def _on_timeline_track_overlap_changed(self, count: int):
@@ -2594,12 +2609,8 @@ class MainWindow(QMainWindow):
                     seg["id"] = sid
                     seg["text"] = text
                     seg["original_text"] = text
-                    seg["translation"] = ""
-                    seg["translation_status"] = "PENDING"
                     updated = True
                     break
-            if hasattr(self, "page_translation") and hasattr(self.page_translation, "update_segment_source"):
-                self.page_translation.update_segment_source(str(seg_id), text)
             if updated:
                 curr_idx = self.sub_editor.current_index
                 if 0 <= curr_idx < len(self.sub_editor.all_segments):
@@ -2658,37 +2669,39 @@ class MainWindow(QMainWindow):
         self._batch_scan_worker.error_signal.connect(on_error)
         self._batch_scan_worker.start()
 
-    def _on_request_tm_suggestion(self, original_text):
-        if not hasattr(self, 'tm_manager'): return
-        matches = self.tm_manager.find_matches(original_text)
-        self.tm_matches_panel.update_matches(matches)
-
-    def _on_commit_segment(self, original, translated, prev_orig, next_orig, qc_flags=None):
-        if not hasattr(self, 'tm_manager'): return
-        if not original or original == "[Unknown Source]": return
-        if qc_flags and any(flag in ["format_injection", "missing_term"] for flag in qc_flags): return
-        
-        self.tm_manager.add_segment(
-            source_text=original,
-            target_text=translated,
-            prev_source_text=prev_orig,
-            next_source_text=next_orig
-        )
-
     def _sync_live_subtitle_on_undo_redo(self):
+        segs = getattr(self.sub_editor, "all_segments", []) or []
+        if not segs:
+            self.sub_editor.current_index = -1
+            if getattr(self, "selection_controller", None) is not None:
+                from core.subtitle_editing.selection_controller import SelectionSource
+                self.selection_controller.clear_selection(SelectionSource.PROGRAMMATIC)
+            self.sub_editor.update_empty_state()
+        elif self.sub_editor.current_index >= len(segs):
+            valid_idx = len(segs) - 1
+            if getattr(self, "selection_controller", None) is not None:
+                from core.subtitle_editing.selection_controller import SelectionSource
+                self.selection_controller.select(
+                    valid_idx, segs[valid_idx].get("id"), SelectionSource.PROGRAMMATIC
+                )
+            else:
+                self.sub_editor.current_index = valid_idx
+                self.sub_editor._load_current_editor()
+
         controller = getattr(self, "timeline_controller", None)
         if controller is not None:
-            controller.sync_from_editor_segments(self.sub_editor.all_segments)
+            controller.sync_from_editor_segments(segs)
         if hasattr(self, "video_player") and hasattr(self.video_player, "sub_controller"):
-            self.video_player.sub_controller.update_live_data(self.sub_editor.all_segments)
+            self.video_player.sub_controller.update_live_data(segs)
         if hasattr(self, "video_player") and hasattr(self.video_player, "refresh_current_subtitle"):
             self.video_player.refresh_current_subtitle()
-
-    def _on_tm_match_applied(self, target_text):
-        self.sub_editor.current_editor.text_edit.setPlainText(target_text)
-        self.sub_editor.current_editor.commit_pending_edit()
-        if hasattr(self, "video_player") and hasattr(self.video_player, "refresh_current_subtitle"):
-            self.video_player.refresh_current_subtitle()
+        self._update_timeline_batch_scan_button()
+        if (
+            getattr(self, "project_service", None) is not None
+            and getattr(self.project_service, "current_project", None) is not None
+            and callable(getattr(self.project_service, "mark_dirty", None))
+        ):
+            self.project_service.mark_dirty()
 
     def _setup_global_shortcuts(self):
         self.shortcut_undo = QShortcut(QKeySequence("Ctrl+Z"), self)
@@ -2958,6 +2971,7 @@ class MainWindow(QMainWindow):
     def _on_manual_range_timing_requested(self, start_ms: int, end_ms: int):
         idx = self.sub_editor.trigger_add(start_ms, self._get_current_video_duration_ms(), end_ms=end_ms)
         if idx >= 0:
+            self._record_latest_generated_indices([idx])
             if hasattr(self, "timeline_widget") and hasattr(self.timeline_widget, "clear_gap_selection"):
                 self.timeline_widget.clear_gap_selection()
             if getattr(self, "timeline_controller", None):
@@ -2966,6 +2980,246 @@ class MainWindow(QMainWindow):
                 self.project_service.mark_dirty()
             if hasattr(self, "_update_timeline_batch_scan_button"):
                 self._update_timeline_batch_scan_button()
+            self._sync_translation_batch_ui()
+
+    def _resolve_active_export_video_path(self) -> str:
+        candidates = []
+        project = getattr(getattr(self, "project_service", None), "current_project", None)
+        if project is not None:
+            candidates.append(getattr(getattr(project, "source", None), "video_path", None))
+        if hasattr(self, "queue_mgr") and self.queue_mgr:
+            candidates.append(getattr(self.queue_mgr, "active_vid", None))
+        if hasattr(self, "video_player") and self.video_player:
+            candidates.append(getattr(self.video_player, "_original_video_path", None))
+        for path in candidates:
+            if path and os.path.isfile(str(path)):
+                return str(path)
+        return ""
+
+    def _collect_exportable_segments(self) -> list[tuple[int, int, int]]:
+        from ui.SubEditor import time_str_to_ms
+
+        indices = self._get_selected_sub_indices() if hasattr(self, "_get_selected_sub_indices") else []
+        all_segs = getattr(getattr(self, "sub_editor", None), "all_segments", None) or []
+        collected: list[tuple[int, int, int]] = []
+        for idx in indices:
+            if not (0 <= idx < len(all_segs)):
+                continue
+            seg = all_segs[idx]
+            raw_s = seg.get("start_ms", seg.get("start", 0))
+            raw_e = seg.get("end_ms", seg.get("end", 0))
+            start_ms = int(raw_s) if isinstance(raw_s, (int, float)) and not isinstance(raw_s, bool) else int(time_str_to_ms(str(raw_s or "00:00:00,000")))
+            end_ms = int(raw_e) if isinstance(raw_e, (int, float)) and not isinstance(raw_e, bool) else int(time_str_to_ms(str(raw_e or "00:00:00,000")))
+            if 0 <= start_ms < end_ms:
+                stt = int(seg.get("stt") or (idx + 1))
+                collected.append((stt, start_ms, end_ms))
+        collected.sort(key=lambda item: (item[0], item[1], item[2]))
+        return collected
+
+    def _on_export_segment_audio_requested(self):
+        from PySide6.QtWidgets import QFileDialog, QInputDialog, QProgressDialog
+        from core.audio.segment_audio_exporter import (
+            AudioExportItem,
+            DEFAULT_EDGE_FADE_MS,
+            DEFAULT_MERGE_GAP_MS,
+            SegmentAudioExportWorker,
+            format_merged_audio_filename,
+            format_segment_audio_filename,
+        )
+        from ui.toast import Toast
+
+        worker = getattr(self, "_audio_export_worker", None)
+        if worker is not None and worker.isRunning():
+            Toast.show_info(self, "Đang xuất âm thanh, vui lòng chờ hoàn tất.")
+            return
+
+        video_path = self._resolve_active_export_video_path()
+        if not video_path:
+            Toast.show_warning(self, "Không tìm thấy tệp video nguồn để xuất âm thanh.")
+            return
+
+        selected = self._collect_exportable_segments()
+        if not selected:
+            Toast.show_info(self, "Chưa chọn đoạn phụ đề hợp lệ để xuất âm thanh.")
+            return
+
+        default_dir = (
+            self._last_audio_export_dir
+            if self._last_audio_export_dir and os.path.isdir(self._last_audio_export_dir)
+            else os.path.dirname(video_path)
+        )
+        export_items: list[AudioExportItem] = []
+        merge_output_path: str | None = None
+        merge_format = "wav"
+        merge_gap_ms = DEFAULT_MERGE_GAP_MS
+        merge_edge_fade_ms = DEFAULT_EDGE_FADE_MS
+
+        if len(selected) == 1:
+            stt, start_ms, end_ms = selected[0]
+            default_name = format_segment_audio_filename(stt, start_ms, end_ms, "wav")
+            save_path, selected_filter = QFileDialog.getSaveFileName(
+                self,
+                "Xuất đoạn âm thanh",
+                os.path.join(default_dir, default_name),
+                "WAV Audio (*.wav);;MP3 Audio (*.mp3)",
+            )
+            if not save_path:
+                return
+            ext = os.path.splitext(save_path)[1].lstrip(".").lower()
+            if ext in ("wav", "mp3"):
+                fmt = ext
+            elif "mp3" in (selected_filter or "").lower():
+                fmt = "mp3"
+                save_path = f"{save_path}.mp3"
+            else:
+                fmt = "wav"
+                save_path = f"{save_path}.wav"
+            self._last_audio_export_dir = os.path.dirname(save_path)
+            export_items.append(AudioExportItem(stt, start_ms, end_ms, save_path, fmt))
+        else:
+            mode_options = [
+                "Xuất từng đoạn riêng (.wav)",
+                "Xuất từng đoạn riêng (.mp3)",
+                "Gộp thành 1 file theo STT (.wav)",
+                "Gộp thành 1 file theo STT (.mp3)",
+            ]
+            choice, ok = QInputDialog.getItem(
+                self,
+                "Chọn kiểu xuất âm thanh",
+                f"Xuất {len(selected)} đoạn âm thanh (theo thứ tự STT, giữ âm thanh gốc):",
+                mode_options,
+                0,
+                False,
+            )
+            if not ok:
+                return
+            fmt = "mp3" if ".mp3" in choice.lower() else "wav"
+            is_merge = "gộp" in choice.lower()
+            if is_merge:
+                gap_val, gap_ok = QInputDialog.getInt(
+                    self,
+                    "Khoảng nghỉ giữa các đoạn",
+                    f"Khoảng nghỉ im lặng giữa các đoạn (ms, 0 = nối sát; tự thêm fade nhẹ {DEFAULT_EDGE_FADE_MS}ms chống tách tiếng):",
+                    DEFAULT_MERGE_GAP_MS,
+                    0,
+                    5000,
+                    100,
+                )
+                if not gap_ok:
+                    return
+                merge_gap_ms = int(gap_val)
+                default_name = format_merged_audio_filename([s[0] for s in selected], fmt)
+                filters = (
+                    "MP3 Audio (*.mp3);;WAV Audio (*.wav)"
+                    if fmt == "mp3"
+                    else "WAV Audio (*.wav);;MP3 Audio (*.mp3)"
+                )
+                save_path, selected_filter = QFileDialog.getSaveFileName(
+                    self,
+                    f"Gộp & xuất {len(selected)} đoạn âm thanh theo STT",
+                    os.path.join(default_dir, default_name),
+                    filters,
+                )
+                if not save_path:
+                    return
+                ext = os.path.splitext(save_path)[1].lstrip(".").lower()
+                if ext in ("wav", "mp3"):
+                    fmt = ext
+                elif "mp3" in (selected_filter or "").lower():
+                    fmt = "mp3"
+                    save_path = f"{save_path}.mp3"
+                else:
+                    fmt = "wav"
+                    save_path = f"{save_path}.wav"
+                self._last_audio_export_dir = os.path.dirname(save_path)
+                merge_output_path = save_path
+                merge_format = fmt
+                for stt, start_ms, end_ms in selected:
+                    export_items.append(AudioExportItem(stt, start_ms, end_ms, save_path, fmt))
+            else:
+                out_dir = QFileDialog.getExistingDirectory(
+                    self,
+                    f"Chọn thư mục lưu {len(selected)} đoạn âm thanh (.{fmt})",
+                    default_dir,
+                )
+                if not out_dir:
+                    return
+                self._last_audio_export_dir = out_dir
+                for stt, start_ms, end_ms in selected:
+                    fname = format_segment_audio_filename(stt, start_ms, end_ms, fmt)
+                    export_items.append(
+                        AudioExportItem(stt, start_ms, end_ms, os.path.join(out_dir, fname), fmt)
+                    )
+
+        progress = None
+        if len(export_items) > 1:
+            total_steps = len(export_items) + 1 if merge_output_path else len(export_items)
+            init_label = (
+                f"Đang cắt & gộp 0/{len(export_items)} đoạn theo STT..."
+                if merge_output_path
+                else f"Đang xuất 0/{len(export_items)} đoạn âm thanh..."
+            )
+            progress = QProgressDialog(init_label, "Hủy", 0, total_steps, self)
+            progress.setWindowTitle("Xuất đoạn âm thanh")
+            progress.setWindowModality(Qt.WindowModal)
+            progress.setMinimumDuration(0)
+            progress.setAutoClose(False)
+            progress.setAutoReset(False)
+            progress.show()
+
+        if hasattr(self, "timeline_widget") and hasattr(self.timeline_widget, "export_audio_button"):
+            self.timeline_widget.export_audio_button.setEnabled(False)
+
+        worker = SegmentAudioExportWorker(
+            video_path,
+            export_items,
+            parent=self,
+            merge_output_path=merge_output_path,
+            merge_format=merge_format,
+            merge_gap_ms=merge_gap_ms,
+            merge_edge_fade_ms=merge_edge_fade_ms,
+        )
+        self._audio_export_worker = worker
+
+        def _cleanup_worker(w=worker, dlg=progress):
+            if dlg is not None:
+                dlg.close()
+                dlg.deleteLater()
+            if getattr(self, "_audio_export_worker", None) is w:
+                self._audio_export_worker = None
+            if hasattr(self, "timeline_widget") and hasattr(self.timeline_widget, "refresh_segment_focus"):
+                self.timeline_widget.refresh_segment_focus()
+
+        if progress is not None:
+            progress.canceled.connect(worker.cancel)
+            worker.progress_signal.connect(
+                lambda done, total, name, dlg=progress: (
+                    dlg.setValue(done),
+                    dlg.setLabelText(f"Đang xử lý {done}/{total}: {name}"),
+                )
+            )
+
+        def _on_finished(paths: list):
+            was_cancelled = getattr(worker, "_is_cancelled", False)
+            if was_cancelled:
+                Toast.show_info(self, f"Đã hủy xuất âm thanh (đã lưu {len(paths)} tệp).")
+            elif merge_output_path and paths:
+                Toast.show_success(
+                    self,
+                    f"Đã gộp và xuất {len(selected)} đoạn theo STT: {os.path.basename(paths[0])}",
+                )
+            elif len(paths) == 1:
+                Toast.show_success(self, f"Đã xuất âm thanh: {os.path.basename(paths[0])}")
+            elif paths:
+                Toast.show_success(self, f"Đã xuất {len(paths)} đoạn âm thanh vào thư mục đã chọn.")
+
+        def _on_error(err: str):
+            Toast.show_warning(self, f"Lỗi xuất âm thanh: {err}")
+
+        worker.finished_signal.connect(_on_finished)
+        worker.error_signal.connect(_on_error)
+        worker.finished.connect(_cleanup_worker)
+        worker.start()
 
     def _on_add_manual_timing_triggered(self, *_args):
         if (
@@ -2986,12 +3240,14 @@ class MainWindow(QMainWindow):
             self._get_current_video_duration_ms()
         )
         if idx >= 0:
+            self._record_latest_generated_indices([idx])
             if getattr(self, "timeline_controller", None):
                 self.timeline_controller.sync_from_editor_segments(self.sub_editor.all_segments)
             if getattr(self, "project_service", None):
                 self.project_service.mark_dirty()
             if hasattr(self, "_update_timeline_batch_scan_button"):
                 self._update_timeline_batch_scan_button()
+            self._sync_translation_batch_ui()
 
     def _on_manual_mark_in(self):
         if isinstance(QApplication.focusWidget(), (QLineEdit, QTextEdit, QPlainTextEdit)):
@@ -3080,8 +3336,7 @@ class MainWindow(QMainWindow):
                                 self.video_player.toggle_playback()
                             return True
                         if event.key() == Qt.Key_Delete:
-                            if hasattr(self, "sub_editor") and self.sub_editor:
-                                self.sub_editor.trigger_delete()
+                            self._on_delete_selected_subtitles()
                             return True
                         if event.key() == Qt.Key_Insert:
                             self._on_add_manual_timing_triggered()
@@ -3220,64 +3475,9 @@ class MainWindow(QMainWindow):
         self.switch_page(tab_id)
 
     def switch_page(self, original_index, animate: bool = True):
-        prev_nav_index = getattr(self, "_active_nav_index", None)
-
-        # Cầu nối Dữ liệu (Data Sync Bridge): Khi rời khỏi trang AI Agent (tab 9) sang bất kỳ tab nào
-        if prev_nav_index == 9 and original_index != 9:
-            self._sync_from_ai_agent_page()
-
-        # Cầu nối Dữ liệu 2 chiều (Bi-directional Data Sync Bridge): Khi chuyển sang trang AI Agent (tab 9)
-        if original_index == 9:
-            if hasattr(self, "page_ai_agent") and self.page_ai_agent:
-                if hasattr(self.page_ai_agent, "controller") and self.page_ai_agent.controller:
-                    self.page_ai_agent.controller.whisper_service = getattr(self, "subtitle_whisper_service", None)
-                proj_dir = getattr(self.project_service, "project_dir", None)
-                if proj_dir and hasattr(self.page_ai_agent, "controller") and hasattr(self.page_ai_agent.controller, "context_ledger"):
-                    self.page_ai_agent.controller.context_ledger.project_dir = str(proj_dir)
-            if hasattr(self, "page_ai_agent") and self.page_ai_agent and hasattr(self, "sub_editor"):
-                if hasattr(self.sub_editor, "all_segments") and self.sub_editor.all_segments is not None:
-                    import copy
-                    synced = copy.deepcopy(self.sub_editor.all_segments)
-                    self.page_ai_agent.controller._active_segments = synced
-                    if hasattr(self.page_ai_agent, "col_inspect") and hasattr(self.page_ai_agent.col_inspect, "inspection_card"):
-                        card = self.page_ai_agent.col_inspect.inspection_card
-                        if not self.page_ai_agent.controller.is_waiting_plan_approval():
-                            card.current_segments = copy.deepcopy(synced)
-                            rows = getattr(card, "_rows", None)
-                            if isinstance(rows, list) and rows:
-                                last_res = getattr(self.page_ai_agent.controller, "_last_step_result", None)
-                                has_last_style = isinstance(last_res, dict) and bool(last_res.get("style"))
-                                if not synced and not has_last_style:
-                                    card.show_placeholder()
-                                else:
-                                    payload = {"segments": synced}
-                                    if has_last_style:
-                                        payload["style"] = last_res["style"]
-                                    current_step = self.page_ai_agent.controller.active_plan.current_step() if self.page_ai_agent.controller.active_plan else None
-                                    target_ids = last_res.get("indices") if current_step and current_step.tool_name == "run_asr" and isinstance(last_res, dict) else None
-                                    card.render_result("Cập nhật từ Workspace", payload, target_ids=target_ids)
-            if hasattr(self, "video_player") and getattr(self.video_player, "video_path", None):
-                self._sync_agent_video_context(self.video_player.video_path)
-
-        # Cầu nối Dữ liệu (Data Sync Bridge): Khi rời khỏi trang Dịch thuật
-        if prev_nav_index == 8 and original_index != 8:
-            if hasattr(self, "page_translation") and self.page_translation and hasattr(self, "sub_editor"):
-                self.page_translation.export_subtitles_to_studio(self.sub_editor.all_segments)
-                self.sub_editor.render_page()
-                if hasattr(self, "video_player"):
-                    self.video_player.refresh_current_subtitle()
-
-        # Cầu nối Dữ liệu (Data Sync Bridge): Khi chuyển sang trang Dịch thuật
-        if original_index == 8:
-            if hasattr(self, "page_translation") and self.page_translation and hasattr(self, "sub_editor"):
-                target_indices = None
-                if getattr(self, "_pending_translation_indices", None):
-                    target_indices = list(self._pending_translation_indices)
-                    self._pending_translation_indices = []
-                if target_indices is not None:
-                    self.page_translation.load_subtitles_from_studio(self.sub_editor.all_segments, selected_indices=target_indices)
-                else:
-                    self.page_translation.sync_translations_from_studio(self.sub_editor.all_segments)
+        # Tương thích ngược dự án cũ lưu tab Dịch thuật (8) / AI Agent (9) -> chuyển êm về Studio Workspace (1)
+        if original_index in (8, 9):
+            original_index = 1
         self._active_nav_index = original_index
         if original_index == 0 and hasattr(self, "page_dashboard") and hasattr(self.page_dashboard, "refresh_recent_projects"):
             self.page_dashboard.refresh_recent_projects()
@@ -3296,10 +3496,8 @@ class MainWindow(QMainWindow):
             5: 4,  # Export Center
             6: 5,  # Settings Center
             7: 6,  # Help Center
-            8: 7,  # Dịch thuật AI
-            9: 8,  # Phòng Điều Hành AI Agent
         }
-        target_stack_index = NAV_TO_STACK.get(original_index, min(original_index, 8))
+        target_stack_index = NAV_TO_STACK.get(original_index, min(original_index, 6))
         self.stack.setCurrentIndex(target_stack_index, duration=180 if animate else 0)
         if hasattr(self, "spotlight_overlay") and self.spotlight_overlay:
             self.spotlight_overlay.raise_()
@@ -3509,31 +3707,6 @@ class MainWindow(QMainWindow):
             self.append_log(f"[HARDWARE] Đã áp dụng cấu hình đề xuất: Model={model}, Compute={compute}")
             self.switch_page(1)
 
-    def _on_send_selected_to_translation(self, selected_indices: list[int]):
-        self._pending_translation_indices = list(selected_indices)
-        self.switch_page(8)
-
-    def _on_translation_committed(self, index: int, text: str):
-        if hasattr(self, "sub_editor") and self.sub_editor and 0 <= index < len(self.sub_editor.all_segments):
-            if not self.sub_editor.all_segments[index].get("original_text"):
-                self.sub_editor.all_segments[index]["original_text"] = self.sub_editor.all_segments[index].get("text", "")
-            self.sub_editor.all_segments[index]["translation"] = text
-            self.sub_editor.all_segments[index]["text"] = text
-            self.sub_editor.all_segments[index]["translation_status"] = "ACCEPTED"
-            if hasattr(self, "project_service") and self.project_service:
-                self.project_service.mark_dirty()
-            if hasattr(self, "video_player"):
-                self.video_player.refresh_current_subtitle()
-
-    def _on_batch_translations_updated(self, cat_data: list):
-        if hasattr(self, "sub_editor") and hasattr(self, "page_translation"):
-            self.page_translation.export_subtitles_to_studio(self.sub_editor.all_segments)
-            self.sub_editor.render_page()
-            if hasattr(self, "project_service") and self.project_service:
-                self.project_service.mark_dirty()
-            if hasattr(self, "video_player"):
-                self.video_player.refresh_current_subtitle()
-
     def _apply_liquid_to_all_listboxes(self):
         """Tự động cấy hiệu ứng kính lỏng đàn hồi cho toàn bộ QListWidget trong ứng dụng."""
         try:
@@ -3573,10 +3746,6 @@ class MainWindow(QMainWindow):
         valid_exts = ('.mp4', '.mkv', '.avi', '.mov', '.flv', '.wmv')
         valid_files = [u.toLocalFile() for u in urls if u.toLocalFile().lower().endswith(valid_exts)]
 
-        if len(valid_files) > 1:
-            self._start_batch_flow(valid_files)
-            return
-
         added = []
         for f in valid_files:
             if self.queue_mgr.add_video(f):
@@ -3584,17 +3753,6 @@ class MainWindow(QMainWindow):
         if added:
             self._start_metadata_worker(added)
             self.on_queue_item_clicked(added[-1], fresh_project=True)
-
-    def _start_batch_flow(self, file_paths: list):
-        from ui.batch.batch_setup_dialog import BatchSetupDialog
-        dialog = BatchSetupDialog(file_paths, parent=self)
-        if dialog.exec() and dialog.result_session:
-            from ui.batch.batch_progress_dashboard import BatchProgressDashboard
-            from core.batch.batch_manager import BatchManager
-            self._batch_manager = BatchManager(parent=self)
-            dashboard = BatchProgressDashboard(dialog.result_session, self._batch_manager, parent=self)
-            self.setCentralWidget(dashboard)
-            self._batch_manager.start_session(dialog.result_session)
 
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
@@ -3693,8 +3851,6 @@ class MainWindow(QMainWindow):
             self.page_settings.font_combo.setCurrentText(s["font_name"])
         if "font_size" in s:
             self.page_settings.size_spin.setValue(s["font_size"])
-        if "auto_audio_style" in s and hasattr(self.page_settings, "chk_auto_audio_style"):
-            self.page_settings.chk_auto_audio_style.setChecked(bool(s["auto_audio_style"]))
 
     def _persist_canonical_setting(self, key, value):
         if key == "output_dir" and isinstance(value, str):
@@ -3995,66 +4151,6 @@ class MainWindow(QMainWindow):
             if getattr(self, "quality_inspector_panel", None):
                 self.quality_inspector_panel.set_segments([])
 
-    def _sync_from_ai_agent_page(self):
-        """Live Sync: Đồng bộ danh sách phụ đề từ AI Agent (Tab 9) sang SubEditor."""
-        if hasattr(self, "page_ai_agent") and hasattr(self, "sub_editor"):
-            agent_segs = self.page_ai_agent.get_current_segments()
-            if agent_segs and agent_segs != self.sub_editor.all_segments:
-                import copy
-                self.sub_editor.all_segments = copy.deepcopy(agent_segs)
-                if hasattr(self.sub_editor, "render_page"):
-                    self.sub_editor.render_page()
-                self.sub_editor.sync_to_controller()
-                if hasattr(self, "video_player") and hasattr(self.video_player, "refresh_current_subtitle"):
-                    self.video_player.refresh_current_subtitle()
-
-    @Slot(int, object, list)
-    def _on_agent_step_reverted(self, step_idx: int, step: object, reverted_segments: list):
-        if hasattr(self, "sub_editor"):
-            import copy
-            self.sub_editor.all_segments = copy.deepcopy(reverted_segments)
-            if hasattr(self.sub_editor, "render_page"):
-                self.sub_editor.render_page()
-            self.sub_editor.sync_to_controller()
-            if hasattr(self, "video_player") and hasattr(self.video_player, "refresh_current_subtitle"):
-                self.video_player.refresh_current_subtitle()
-
-    @Slot(int, object, dict)
-    def _on_agent_step_completed(self, step_idx: int, step: object, result: dict):
-        tool_name = getattr(step, "tool_name", "")
-        if tool_name == "apply_subtitle_style":
-            style_data = result.get("style", {})
-            if style_data and hasattr(self, "_on_subtitle_style_changed"):
-                self._on_subtitle_style_changed(style_data)
-        self._sync_from_ai_agent_page()
-        if tool_name == "translate_subtitles":
-            if hasattr(self, "page_translation") and self.page_translation and hasattr(self, "sub_editor"):
-                self.page_translation.sync_translations_from_studio(self.sub_editor.all_segments)
-
-    @Slot(object)
-    def _on_agent_plan_completed(self, plan: object):
-        self._sync_from_ai_agent_page()
-        if hasattr(self, "page_translation") and self.page_translation and hasattr(self, "sub_editor"):
-            self.page_translation.sync_translations_from_studio(self.sub_editor.all_segments)
-
-    def _sync_agent_video_context(self, vid_path: str):
-        if not hasattr(self, "page_ai_agent") or not self.page_ai_agent:
-            return
-        if not vid_path:
-            return
-        controller = getattr(self.page_ai_agent, "controller", None)
-        if not controller:
-            return
-        controller.context_ledger.video_path = vid_path
-        proj_dir = getattr(self.project_service, "project_dir", None)
-        if proj_dir:
-            controller.context_ledger.project_dir = str(proj_dir)
-        dur_func = getattr(self, "_queue_video_duration_ms", None)
-        if callable(dur_func):
-            controller.context_ledger.duration_ms = dur_func(vid_path)
-        if hasattr(self.page_ai_agent, "col_chat"):
-            self.page_ai_agent.col_chat.update_ledger(controller.context_ledger)
-
     def on_queue_item_clicked(
         self, item_ref, fresh_project=False, project_id=None, project_root=None
     ):
@@ -4072,7 +4168,6 @@ class MainWindow(QMainWindow):
                 queue_data = items.get(item_ref, {})
         vid_path = queue_data.get("video_path", item_ref)
         self.current_vid = vid_path
-        self._sync_agent_video_context(vid_path)
 
         bound_project_id = (
             project_id if project_id is not None else queue_data.get("project_id")
@@ -4634,9 +4729,6 @@ class MainWindow(QMainWindow):
 
             project = self.project_service.current_project
             settings = self.page_settings
-            from core.subtitle_generation.language_utils import extract_glossary_hotwords
-            from core.subtitle_generation.faster_whisper_service import FasterWhisperService
-            from core.services.model_manager import ModelManager
 
             gen_panel = getattr(self, "generation_panel", None)
             queue_model = (
@@ -4644,16 +4736,12 @@ class MainWindow(QMainWindow):
                 if gen_panel is not None and hasattr(gen_panel, "_get_effective_model_size")
                 else settings.model_combo.currentData()
             )
-            queue_lang, _default_ja_prompt = self._resolve_scan_language(
+            queue_lang, _ = self._resolve_scan_language(
                 gen_panel._timing_settings() if gen_panel is not None and hasattr(gen_panel, "_timing_settings") else {}
             )
-            tx_ctx = getattr(project, "transcription_context", None)
-            ref_story_summary = str(getattr(tx_ctx, "context", "") or "").strip()
+            ref_story_summary = ""
             prompt_text = ""
-            if FasterWhisperService.is_kotoba_model(queue_model) or not ModelManager.supports_word_timestamps(queue_model):
-                hotwords = ""
-            else:
-                hotwords = extract_glossary_hotwords(tx_ctx)
+            hotwords = ""
             queue_cond_prev = (
                 bool(gen_panel.chk_condition_on_previous_text.isChecked())
                 if gen_panel is not None and hasattr(gen_panel, "chk_condition_on_previous_text")
@@ -4966,6 +5054,8 @@ class MainWindow(QMainWindow):
             prev_count = len(self.sub_editor.all_segments)
             self.sub_editor.load_srt_file(artifact.path)
             new_count = len(self.sub_editor.all_segments)
+            if new_count > prev_count:
+                self._record_latest_generated_indices(list(range(prev_count, new_count)))
             if getattr(self, "quality_inspector_panel", None):
                 self.quality_inspector_panel.set_segments(self.sub_editor.all_segments)
             self.video_player.sub_controller.load_srt(artifact.path)
@@ -4981,6 +5071,7 @@ class MainWindow(QMainWindow):
                 duration_ms, self.timeline_data_provider.get_all_segments()
             )
             self.generation_panel.refresh_batch_mode_availability()
+            self._sync_translation_batch_ui()
         except (OSError, RuntimeError, ValueError) as exc:
             self.append_log(f"[TIMING] Không đồng bộ được Draft lên UI: {exc}")
 
@@ -5139,7 +5230,19 @@ class MainWindow(QMainWindow):
 
     def _load_generated_subtitles_into_ui(self, shadow_srt_path):
         """Reload editor, player and timeline only after a full ASR run completes."""
+        prev_spans = {
+            (str(s.get("start", "")), str(s.get("end", "")))
+            for s in (getattr(self.sub_editor, "all_segments", None) or [])
+        }
         self._load_context_subtitles(shadow_srt_path)
+        new_indices = [
+            i
+            for i, s in enumerate(getattr(self.sub_editor, "all_segments", None) or [])
+            if (str(s.get("start", "")), str(s.get("end", ""))) not in prev_spans
+        ]
+        if new_indices:
+            self._record_latest_generated_indices(new_indices)
+            self._sync_translation_batch_ui()
         self._apply_auto_audio_style_if_enabled()
         if getattr(self, "quality_inspector_panel", None):
             self.quality_inspector_panel.set_segments(self.sub_editor.all_segments)
@@ -5200,28 +5303,7 @@ class MainWindow(QMainWindow):
         return None
 
     def _apply_auto_audio_style_if_enabled(self) -> bool:
-        chk = getattr(getattr(self, "page_settings", None), "chk_auto_audio_style", None)
-        if not chk or not chk.isChecked():
-            return False
-        video_path = self.get_current_video_path()
-        if not video_path and hasattr(self, "generation_panel"):
-            req = getattr(self.generation_panel.generation_service, "current_request", None)
-            video_path = getattr(req, "video_path", None)
-        if not video_path or not os.path.exists(video_path):
-            return False
-        if not getattr(self, "sub_editor", None) or not self.sub_editor.all_segments:
-            return False
-        try:
-            from core.subtitle_quality.audio_energy_analyzer import AudioEnergyAnalyzer
-            peaks = AudioEnergyAnalyzer.get_peaks_data(video_path)
-            AudioEnergyAnalyzer.analyze_segments(peaks, self.sub_editor.all_segments)
-            self.sub_editor.render_page()
-            self.sub_editor.save_draft(silent=True)
-            Toast.show_toast(self, "⚡ Đã tự động tối ưu Style phụ đề theo năng lượng âm thanh.", duration_ms=3000)
-            return True
-        except Exception as e:
-            print(f"[AutoAudioStyle] Lỗi phân tích âm thanh: {e}")
-            return False
+        return False
 
     def on_hardsub_finished(self, msg, out_video_path):
         from core.artifacts.artifact_types import ArtifactType
@@ -5242,13 +5324,6 @@ class MainWindow(QMainWindow):
             self.subtitle_generation_service.on_finish = None
             self.subtitle_generation_service.cancel_generation()
             self._restore_panel_callbacks()
-        if hasattr(self, "page_translation") and self.page_translation:
-            try:
-                controller = getattr(self.page_translation, "translation_controller", None)
-                if controller and hasattr(controller, "cancelTranslation"):
-                    controller.cancelTranslation()
-            except Exception:
-                pass
 
         if hasattr(self, "scan_worker") and self.scan_worker and self.scan_worker.isRunning():
             self.scan_worker.cancel()
@@ -5343,32 +5418,8 @@ class MainWindow(QMainWindow):
         if out_d and os.path.exists(out_d):
             os.startfile(out_d)
 
-    def on_transcription_context_committed(
-        self, new_context: TranscriptionContext
-    ) -> None:
-        project = self.project_service.current_project
-        if project is None:
-            return
-        normalized = new_context.normalized()
-        current = getattr(project, "transcription_context", TranscriptionContext())
-        if current.normalized() == normalized:
-            return
-        project.transcription_context = normalized
-        self.project_service.mark_dirty()
-        self._refresh_transcription_context_views(sync_editor=False)
-
     def _refresh_transcription_context_views(self, *, sync_editor: bool = True) -> None:
-        project = getattr(self.project_service, "current_project", None)
-        if project is None or not hasattr(self, "context_panel"):
-            return
-        context = getattr(project, "transcription_context", TranscriptionContext())
-        compiled = self.subtitle_generation_service.compile_prompt_context(context)
-        if sync_editor:
-            self.context_panel.set_context(context)
-        self.context_panel.set_prompt_diagnostics(compiled)
-        self.generation_panel.set_context_status(
-            compiled, configured=bool(context.context.strip() or context.glossary)
-        )
+        return None
 
     def _restore_recovery_entry(
         self,
@@ -5477,21 +5528,11 @@ class MainWindow(QMainWindow):
             self._rollback_recovery_session_switch()
             return False
 
-    def _show_context_inspector(self) -> None:
-        self.generation_drawer.show()
-        self.dock_tabs.setCurrentWidget(self.context_panel)
-
     def capture_recovery_working_state(self) -> RecoveryWorkingState:
         workspace = self.workspace_service.capture_workspace() or {}
         project = self.project_service.current_project
         source = getattr(project, "source", None)
         session = getattr(self.recovery_manager, "_active_session", None)
-        context = getattr(project, "transcription_context", None)
-        context_data = (
-            asdict(context.normalized())
-            if isinstance(context, TranscriptionContext)
-            else {}
-        )
         return RecoveryWorkingState(
             schema_version=2.0,
             session_id=session.session_id if session else "",
@@ -5502,7 +5543,7 @@ class MainWindow(QMainWindow):
             edit_revision=self.revision_tracker.edit_revision,
             segments=copy.deepcopy(getattr(self.sub_editor, "all_segments", [])),
             workspace_state=copy.deepcopy(workspace),
-            transcription_context=context_data,
+            transcription_context={},
         )
 
     def _autosave_session_identity(self):
@@ -5571,13 +5612,6 @@ class MainWindow(QMainWindow):
                 self.timeline_data_provider.get_all_segments(),
                 None,
             )
-        context_data = getattr(state, "transcription_context", None)
-        project = getattr(self.project_service, "current_project", None)
-        if context_data and project:
-            project.transcription_context = TranscriptionContext(
-                context=context_data.get("context", ""),
-                glossary=context_data.get("glossary", []),
-            ).normalized()
         self.global_undo_manager.clear()
         manifest = getattr(getattr(self.recovery_manager, "_active_session", None), "manifest", None)
         self.revision_tracker.restore_from_snapshot(
@@ -5661,17 +5695,8 @@ class MainWindow(QMainWindow):
             "font_size": self.page_settings.size_spin.value(),
             "canonical_auto_save_enabled": self.canonical_save_coordinator.enabled,
             "canonical_auto_save_delay_ms": self.canonical_save_coordinator.delay_ms,
-            "auto_audio_style": getattr(self.page_settings, "chk_auto_audio_style", None).isChecked() if hasattr(self.page_settings, "chk_auto_audio_style") else False,
         })
         save_settings(settings)
-        
-        if hasattr(self, "page_translation") and self.page_translation:
-            try:
-                controller = getattr(self.page_translation, "translation_controller", None)
-                if controller and hasattr(controller, "cancelTranslation"):
-                    controller.cancelTranslation()
-            except Exception:
-                pass
 
         if hasattr(self, 'worker') and self.worker and self.worker.isRunning():
             self.worker.cancel()
@@ -5888,6 +5913,7 @@ class MainWindow(QMainWindow):
         if getattr(self, "project_service", None):
             self.project_service.mark_dirty()
         # Tự động trượt con trỏ sang câu tiếp theo
+        self._last_generated_segment_ids = []
         next_suggested_start = max_updated_idx + 2
         self._sync_translation_batch_ui(suggested_start=next_suggested_start)
         Toast.show_success(
@@ -5895,19 +5921,53 @@ class MainWindow(QMainWindow):
             f"Đã nạp bản dịch cho {updated_count} câu thành công! Đợt tiếp theo sẵn sàng từ câu #{next_suggested_start}."
         )
 
+    def _record_latest_generated_indices(self, indices: list[int]):
+        """Ghi nhận ID các câu vừa được gen/timing mới nhất để ô Bắt đầu luôn trỏ đúng vào đợt mới."""
+        segs = getattr(getattr(self, "sub_editor", None), "all_segments", None) or []
+        tracked_ids = []
+        for idx in indices:
+            if 0 <= idx < len(segs):
+                seg = segs[idx]
+                sid = seg.get("id")
+                if sid:
+                    tracked_ids.append(str(sid))
+        self._last_generated_segment_ids = tracked_ids
+
     def _sync_translation_batch_ui(self, suggested_start: int = None):
         if not hasattr(self, "page_export") or not hasattr(self.page_export, "update_translation_progress"):
             return
         segs = getattr(self.sub_editor, "all_segments", [])
         total = len(segs)
         if total == 0:
+            self._last_generated_segment_ids = []
             self.page_export.update_translation_progress(1, 0, 0)
             return
-        from core.utils.translation_detector import is_vietnamese_translated, find_first_untranslated_index
+        from core.utils.translation_detector import (
+            is_vietnamese_translated,
+            find_latest_untranslated_start_index,
+        )
         translated_count = sum(1 for s in segs if is_vietnamese_translated(s))
         if suggested_start is None:
-            first_untranslated = find_first_untranslated_index(segs)
-            suggested_start = first_untranslated
+            tracked_ids = list(getattr(self, "_last_generated_segment_ids", None) or [])
+            tracked_start = None
+            if tracked_ids:
+                tracked_set = set(tracked_ids)
+                surviving_untranslated = []
+                for idx_1, seg in enumerate(segs, 1):
+                    sid = str(seg.get("id") or "")
+                    if sid and sid in tracked_set and not is_vietnamese_translated(seg):
+                        surviving_untranslated.append((idx_1, sid))
+                if surviving_untranslated:
+                    tracked_start = surviving_untranslated[0][0]
+                    self._last_generated_segment_ids = [sid for _, sid in surviving_untranslated]
+                else:
+                    # Toàn bộ câu trong đợt mới đã bị xóa hoặc đã dịch xong -> xóa dấu vết cũ
+                    self._last_generated_segment_ids = []
+            suggested_start = (
+                tracked_start
+                if tracked_start is not None
+                else find_latest_untranslated_start_index(segs)
+            )
         self.page_export.update_translation_progress(suggested_start, total, translated_count)
 
     def _continue_draft_from_center(self, draft_path):
@@ -5977,8 +6037,6 @@ class MainWindow(QMainWindow):
 
     def _flush_canonical_save_before_transition(self):
         sub_editor = getattr(self, "sub_editor", None)
-        if getattr(self, "_active_nav_index", None) == 9:
-            self._sync_from_ai_agent_page()
 
         commit_pending_edit = getattr(sub_editor, "commit_pending_edit", None)
         if commit_pending_edit:
@@ -6072,6 +6130,7 @@ class MainWindow(QMainWindow):
             self.workspace_service.restore_workspace()
             self.generation_panel.check_resumable_state()
             self._refresh_transcription_context_views()
+            self._last_generated_segment_ids = []
             self._sync_translation_batch_ui()
             from core.utils.recent_projects import add_recent_project
             add_recent_project(project_data["bundle_path"], project_data["name"], result.local_path)
@@ -6128,9 +6187,6 @@ class MainWindow(QMainWindow):
         if reason == "autosave" and bool(getattr(getattr(self, "subtitle_generation_service", None), "is_running", False)):
             return True
 
-        if getattr(self, "_active_nav_index", None) == 9:
-            self._sync_from_ai_agent_page()
-
         commit_pending_edit = getattr(sub_editor, "commit_pending_edit", None)
         if commit_pending_edit:
             commit_pending_edit()
@@ -6162,24 +6218,8 @@ class MainWindow(QMainWindow):
             # 1. Chụp lại trạng thái giao diện
             if hasattr(self, "inspector_panel"):
                 project.state.subtitle_style = self.inspector_panel.get_current_style()
-                project.state.style_presets = copy.deepcopy(getattr(self.inspector_panel, "custom_presets", {}))
-            if hasattr(self, "sub_editor") and getattr(self.sub_editor, "all_segments", None) is not None:
-                project.state.segment_styles = {
-                    str(s.get("stt", i + 1)): s.get("style_preset", "normal")
-                    for i, s in enumerate(self.sub_editor.all_segments)
-                    if s.get("style_preset") and s.get("style_preset") != "normal"
-                }
             self.workspace_service.capture_workspace()
 
-            # Giai đoạn 4 & 5: Lưu artifacts/translation/project.aisrt (Không gọi export/render làm gián đoạn Video Workspace)
-            if hasattr(self, "page_translation") and self.page_translation:
-                proj_dir = getattr(self.project_service, "project_dir", None)
-                if proj_dir and os.path.exists(proj_dir):
-                    trans_dir = os.path.join(proj_dir, "artifacts", "translation")
-                    os.makedirs(trans_dir, exist_ok=True)
-                    aisrt_path = os.path.join(trans_dir, "project.aisrt")
-                    self.page_translation.save_translation_project(aisrt_path)
-            
             # 2. ÉP GHI DỮ LIỆU TIMELINE XUỐNG ĐÚNG FILE ĐANG MỞ (PERSISTENCE)
             if hasattr(self, 'sub_editor') and getattr(self.sub_editor, 'all_segments', None) is not None:
                 project = self.project_service.current_project
@@ -6490,8 +6530,6 @@ class MainWindow(QMainWindow):
 
         self.project_service.relink_project_video(proj_dir, new_path, force=True)
         self.current_vid = new_path
-        if hasattr(self, "_sync_agent_video_context"):
-            self._sync_agent_video_context(new_path)
 
         # Keep project_dir mapping synchronized and remove stale mapping for the old corrupted video
         if old_path and self._queue_project_dirs.get(old_path) == proj_dir:
@@ -6702,28 +6740,15 @@ class MainWindow(QMainWindow):
             if dur_ms <= 0:
                 dur_ms = 3600000
 
-            # Giai đoạn 5: Tự động nạp file .aisrt nếu có vào page_translation
-            aisrt_path = os.path.join(project_dir, "artifacts", "translation", "project.aisrt")
-            translation_loaded = False
-            if hasattr(self, "page_translation") and self.page_translation and os.path.exists(aisrt_path):
-                self.page_translation.load_translation_project(aisrt_path)
-                if hasattr(self, "sub_editor") and self.sub_editor:
-                    self.page_translation.export_subtitles_to_studio(self.sub_editor.all_segments)
-                    self.page_translation.sync_translations_from_studio(self.sub_editor.all_segments)
-                translation_loaded = True
-
             # --- NẠP DỮ LIỆU (tránh render trùng lặp nếu restore_workspace đã nạp khớp) ---
             track_segs = getattr(getattr(getattr(self.timeline_widget, "container", None), "track", None), "segments", None)
             needs_timeline_reload = (
-                translation_loaded
-                or getattr(self.timeline_widget, "duration_ms", 0) != dur_ms
+                getattr(self.timeline_widget, "duration_ms", 0) != dur_ms
                 or track_segs is None
                 or len(track_segs) != len(self.sub_editor.all_segments)
             )
             if needs_timeline_reload:
                 self.timeline_data_provider.load_runtime_data(self.sub_editor.all_segments, dur_ms)
-                if translation_loaded:
-                    self.sub_editor.render_page()
 
                 waveform_data = None
                 if hasattr(self.timeline_widget, 'container') and hasattr(self.timeline_widget.container, 'waveform'):
@@ -6738,6 +6763,7 @@ class MainWindow(QMainWindow):
             self.generation_panel.set_video_duration(dur_ms)
             self.generation_panel.check_resumable_state()
             self._refresh_transcription_context_views()
+            self._last_generated_segment_ids = []
             self._sync_translation_batch_ui()
 
             from core.utils.recent_projects import add_recent_project
@@ -6814,12 +6840,6 @@ class MainWindow(QMainWindow):
     def action_open_model_manager(self):
         from ui.dialogs.model_manager_dialog import ModelManagerDialog
         dialog = ModelManagerDialog(self)
-        self._close_other_floating_dialogs(except_dialog=dialog)
-        dialog.exec()
-
-    def action_open_glossary_manager(self):
-        from ui.glossary.glossary_manager_dialog import GlossaryManagerDialog
-        dialog = GlossaryManagerDialog(parent=self)
         self._close_other_floating_dialogs(except_dialog=dialog)
         dialog.exec()
 

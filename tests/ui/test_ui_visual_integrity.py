@@ -23,9 +23,6 @@ from ui.timeline.waveform_view import WaveformView
 from ui.timeline.timeline_ruler import TimeRuler
 from ui.quality_inspector_panel import QualityInspectorPanel
 from ui.subtitle_inspector_panel import SubtitleInspectorPanel
-from ui.batch.batch_progress_dashboard import BatchProgressDashboard
-from ui.components.tm_matches_panel import TMMatchesPanel
-from ui.components.transcription_context_panel import TranscriptionContextPanel
 from ui.dialogs.new_project_dialog import NewProjectDialog
 from ui.dialogs.media_import_dialog import MediaImportDialog
 from ui.dialogs.hardware_check_dialog import HardwareCheckDialog
@@ -170,7 +167,6 @@ class TestUIVisualIntegrity:
         from ui.subtitle_generation_panel import SubtitleGenerationPanel
 
         widgets_to_test = [
-            BatchProgressDashboard(MagicMock(), MagicMock()),
             SubtitleGenerationPanel(MagicMock()),
             DashboardPage(),
         ]
@@ -221,16 +217,12 @@ class TestUIVisualIntegrity:
         assert len(all_issues) == 0, f"Phát hiện lỗi trong các Page: {all_issues}"
 
     def test_tc_ui_audit_05_all_panels_visual_and_text_integrity(self):
-        """TC-UI-AUDIT-05: Dò quét toàn bộ 5 Panels chuyên dụng:
-        - QualityInspectorPanel, SubtitleInspectorPanel, BatchProgressDashboard,
-          TMMatchesPanel, TranscriptionContextPanel.
+        """TC-UI-AUDIT-05: Dò quét các Panel chuyên dụng còn lại:
+        - QualityInspectorPanel, SubtitleInspectorPanel.
         """
         panels = [
             ("QualityInspectorPanel", QualityInspectorPanel()),
             ("SubtitleInspectorPanel", SubtitleInspectorPanel()),
-            ("BatchProgressDashboard", BatchProgressDashboard(MagicMock(), MagicMock())),
-            ("TMMatchesPanel", TMMatchesPanel()),
-            ("TranscriptionContextPanel", TranscriptionContextPanel()),
         ]
 
         all_issues = []

@@ -1,4 +1,4 @@
-from PySide6.QtCore import QEvent, QObject, Qt
+from PySide6.QtCore import QEvent, QMetaMethod, QObject, Qt, Signal
 
 from core.timeline.timeline_commands import (
     DeleteSegmentCommand,
@@ -18,7 +18,9 @@ from ui.toast import Toast
 
 class TimelineController(QObject):
     """Điều phối Tương tác UI -> Cập nhật State Machine -> Đẩy lệnh vào Artifact Store"""
-    
+
+    delete_selected_requested = Signal(set)
+
     def __init__(self, project_service, ui_widget, data_provider, undo_manager=None, selection_controller=None):
         super().__init__()
         self.project = project_service
@@ -38,6 +40,8 @@ class TimelineController(QObject):
         self.ui.container.track.edit_committed.connect(self.handle_edit_commit)
         self.ui.container.track.segment_clicked.connect(self._on_track_selection_changed)
         self.ui.container.track.selection_cleared.connect(self._clear_selection)
+        if hasattr(self.ui.container.track, "action_delete_requested"):
+            self.ui.container.track.action_delete_requested.connect(self._on_track_action_delete_requested)
         if hasattr(self.ui, "snap_overlap_requested"):
             self.ui.snap_overlap_requested.connect(self.snap_overlap)
         self.ui.generation_range_selected.connect(self._clear_selection)
@@ -378,16 +382,27 @@ class TimelineController(QObject):
         else:
             Toast.show_info(self.ui.window(), "Hãy giữ Ctrl và Click chuột chọn ít nhất 2 khối để gộp.")
 
-    def _trigger_delete(self):
+    def _on_track_action_delete_requested(self, segment_ids=None):
+        self._trigger_delete(explicit_ids=segment_ids)
+
+    def _trigger_delete(self, explicit_ids=None):
         track = self.ui.container.track
-        if track.selected_ids: 
-            cmd = DeleteSegmentCommand(self.project, self.data_provider, track.selected_ids)
-            if cmd.can_execute(None):
-                self._execute_safe(cmd)
-                self.ui.container.track.selected_ids.clear()
-                self._clear_selection()
-        else:
+        target_ids = (
+            set(explicit_ids)
+            if explicit_ids
+            else set(getattr(track, "selected_ids", set()) or set())
+        )
+        if not target_ids:
             Toast.show_info(self.ui.window(), "Chưa chọn khối phụ đề nào để xóa.")
+            return
+        if self.isSignalConnected(QMetaMethod.fromSignal(self.delete_selected_requested)):
+            self.delete_selected_requested.emit(target_ids)
+            return
+        cmd = DeleteSegmentCommand(self.project, self.data_provider, target_ids)
+        if cmd.can_execute(None):
+            self._execute_safe(cmd)
+            self.ui.container.track.selected_ids.clear()
+            self._clear_selection()
 
     def handle_edit_commit(self, segment_id: str, mode: EditMode, delta_ms: int):
         self.ui.timing_edit_started.emit()

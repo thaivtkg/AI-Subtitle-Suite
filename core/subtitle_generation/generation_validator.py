@@ -20,6 +20,8 @@ class SubtitleGenerationValidator:
         "ご視聴ありがとうございました",
         "ご視聴ありがとうございます",
         "視聴ありがとうございました",
+        "ご清聴ありがとうございました",
+        "次の動画でお会いしましょう",
         "チャンネル登録",
         "字幕作成",
         "ご覧いただきありがとうございました",
@@ -47,6 +49,8 @@ class SubtitleGenerationValidator:
     PURE_COURTESY_HALLUCINATIONS = (
         "ご視聴ありがとうございました",
         "ご視聴ありがとうございます",
+        "ご清聴ありがとうございました",
+        "次の動画でお会いしましょう",
         "チャンネル登録",
         "字幕作成",
         "ご覧いただきありがとうございました",
@@ -57,6 +61,11 @@ class SubtitleGenerationValidator:
             "お疲れ様でした",
             "お疲れさまでした",
             "ありがとうございました",
+            "はいありがとうございました",
+            "どうもありがとうございました",
+            "はいどうもありがとうございました",
+            "ごちそうさまでした",
+            "はいごちそうさまでした",
             "また次回",
         }
     )
@@ -294,13 +303,10 @@ class SubtitleGenerationValidator:
         initial_prompt: Optional[str] = None,
         reference_context: Optional[str] = None,
     ) -> bool:
-        """Chặn ảo giác nhồi chữ tốc độ bất khả thi (High-CPS) cho ngôn ngữ CJK (ja/zh/ko)."""
-        from core.subtitle_generation.language_utils import (
-            extract_terminology_terms,
-            normalize_to_iso_code,
-            parse_hotwords_terms,
-        )
+        """Chặn ảo giác nhồi chữ tốc độ bất khả thi (High-CPS > 14.0) cho ngôn ngữ CJK (ja/zh/ko)."""
+        from core.subtitle_generation.language_utils import normalize_to_iso_code
 
+        _ = (hotwords, initial_prompt, reference_context)
         iso = normalize_to_iso_code(language)
         if iso not in cls.CJK_HIGH_CPS_LANGUAGES:
             return False
@@ -315,59 +321,7 @@ class SubtitleGenerationValidator:
             return False
 
         cps = len(clean_text) / dur
-        if cps > 14.0:
-            return True
-        if cps <= 12.0:
-            return False
-
-        # Điều kiện 2: cps > 12.0 và chứa >= 2 từ/cụm từ trùng Từ điển hoặc Tóm tắt dự án
-        candidates: set[str] = set()
-        if hotwords:
-            for term in parse_hotwords_terms(hotwords, max_terms=128):
-                nt = cls._ECHO_STRIP_RE.sub("", term).casefold()
-                if len(nt) >= 2:
-                    candidates.add(nt)
-        for ref_text in (initial_prompt, reference_context):
-            ref_str = str(ref_text or "").strip()
-            if not ref_str:
-                continue
-            term_block = extract_terminology_terms(ref_str, max_terms=128)
-            if term_block:
-                for term in parse_hotwords_terms(term_block, max_terms=128):
-                    nt = cls._ECHO_STRIP_RE.sub("", term).casefold()
-                    if len(nt) >= 2:
-                        candidates.add(nt)
-            for tok in cls._CJK_REF_TOKEN_RE.findall(ref_str):
-                nt = cls._ECHO_STRIP_RE.sub("", tok).casefold()
-                if len(nt) >= 2:
-                    candidates.add(nt)
-            for raw_part in re.split(r"[\s、。,.!?！？・…「」『』()（）\[\]]+", ref_str):
-                nt = cls._ECHO_STRIP_RE.sub("", raw_part).casefold()
-                if 2 <= len(nt) <= 20:
-                    candidates.add(nt)
-
-        if not candidates:
-            return False
-
-        norm_clean = clean_text.casefold()
-        sorted_cands = sorted(candidates, key=len, reverse=True)
-        matched_count = 0
-        pos = 0
-        n_len = len(norm_clean)
-        while pos < n_len:
-            hit = None
-            for cand in sorted_cands:
-                if norm_clean.startswith(cand, pos):
-                    hit = cand
-                    break
-            if hit:
-                matched_count += 1
-                if matched_count >= 2:
-                    return True
-                pos += len(hit)
-            else:
-                pos += 1
-        return False
+        return cps > 14.0
 
     @classmethod
     def is_hallucination(cls, text: str) -> bool:

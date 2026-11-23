@@ -11,7 +11,6 @@ from ui.timeline.subtitle_track import SubtitleTrack
 def test_ac_ui_01_toolbar_buttons_text_and_compact(qapp):
     """AC-UI-01: Tên các nút hành động trên Toolbar được tinh gọn tránh tràn viền"""
     editor = SubtitleEditorWidget()
-    assert "Quét Audio" in editor.reanalyze_audio_style_btn.text()
     assert "Chồng lấn" in editor.fix_overlap_btn.text()
     assert "Chốt Timing" in editor.approve_btn.text()
     assert "Lưu Draft" in editor.save_draft_btn.text()
